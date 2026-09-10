@@ -1,36 +1,75 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# web — the Next.js front end
 
-## Getting Started
+Next.js 16 (App Router) + `@gtmi/strix-react`. This is one of the scaffold's two containers; the
+agent (Fastify + TAC + our API + SSE) is the other and lives at the repo root.
 
-First, run the development server:
+Start here instead of this file: [`../docs/HANDOFF.md`](../docs/HANDOFF.md) for current status and
+architecture. The full README lands at T20.
+
+## Running it
+
+From the **repo root**, not from here:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm dev:all     # agent :8910 + web :3000, ctrl-c stops both
+pnpm dev:web     # web only
+pnpm status      # what's running, what's configured, what's therefore possible
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`web/` has its own `package.json`, its own lockfile and its own `.npmrc` — Next insists on owning its
+project root, and this matches the two-container deploy. So a front-end dependency is added with
+`pnpm --dir web add …`, not at the root.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Four things not to change
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. **`src/app/globals.css` is exactly three lines**, and the import order is load-bearing — it fails
+   *silently* if reversed:
+   ```css
+   @import 'tailwindcss';
+   @import '@gtmi/strix-react/tokens.css';
+   :root, [data-theme='dark'] { color-scheme: dark; }
+   ```
+   Do not copy Strix's own `apps/demo/globals.css`. Its `source(none)` / `@source '../'` trick is
+   specific to that test harness — its header says so — and copying it stops Tailwind detecting
+   `web/src/**`.
+2. **No `next/font`.** Strix ships Whitney SSm and declares all three font tokens itself. The
+   generated Geist wiring was removed deliberately: Next's `@theme inline` block overwrote Strix's
+   font tokens, and its light `--background`/`--foreground` plus `prefers-color-scheme` block are
+   meaningless for a dark-only design system.
+3. **Never add** tsconfig `paths` for `@gtmi/strix-react/*`, `transpilePackages`, a custom PostCSS
+   plugin, or your own `@source`. All four are 0.0.1-era workarounds that now cause harm — the first
+   makes every Strix import `undefined` at runtime. The generated `postcss.config.mjs`
+   (`{ plugins: ['@tailwindcss/postcss'] }`) is already correct.
+4. **`allowImportingTsExtensions: true`** in `tsconfig.json` is required. `shared/` is compiled by
+   both tsconfig projects and the node side needs `.ts` extensions on imports; Turbopack resolves
+   them fine at runtime (verified, not assumed).
 
-## Learn More
+## Strix, accurately
 
-To learn more about Next.js, take a look at the following resources:
+The authoritative component list is the `exports` map in
+`node_modules/@gtmi/strix-react/package.json` — **not `llms.txt`**, which is stale. Per-component
+props are in the shipped `*.manifest.json` files, where `props` is an **array** of
+`{name, type, required, default, description}`, not an object keyed by name.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+There is **no** Table, Chart, Drawer, Accordion, Popover or EmptyState, and Toast/Alert are
+presentational with no queue or provider. Plan around that rather than discovering it mid-build:
+a timeline becomes `ConsoleMessage` + `ToolCall` rows, a detail drawer becomes a `Dialog`, metrics
+become `MetricList`, and a toast queue is ours to write.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+`Typography` has no `heading-*` variants — the axes are `h1`–`h7`, `d1`–`d7`, `body-{l,m,s,xs}`,
+`subhead-*`, `eyebrow-*`, `mono-*`, `cta-*`. Use `<Typography variant="h2" as="h1">` to separate look
+from semantics.
 
-## Deploy on Vercel
+Token names that look obvious may not exist: `surface-base`, `text-primary`, `text-secondary` and
+`surface-neutral-soft` are real; `border-default` is **not**, despite being the obvious guess, and a
+wrong token name generates no CSS and reports nothing. Grep
+`node_modules/@gtmi/strix-react/src/tokens/theme.css` before trusting one. Real border tokens are
+shaped `border-accent`, `border-card-card-primary`, `border-button-outline`.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+`card` and `button` are ambiguous subpaths (`./atoms/*` vs `./icons/*`) — always import the full path.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## AGENTS.md / CLAUDE.md
+
+Both are generated by `create-next-app` and re-added by `next dev`, so they are committed rather than
+deleted — removing them from a diff only recreates an uncommitted change. `AGENTS.md` usefully points
+at `node_modules/next/dist/docs/`, which is worth reading: this Next is newer than most training data.
