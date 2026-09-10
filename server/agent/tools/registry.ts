@@ -98,6 +98,22 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
  * Identical either way for both demo tools, whose arguments are plain `z.string().min(1)`. It is
  * spelled out here because this is the seam T14 and T19 copy, and the symptom of getting it wrong
  * is opaque model behaviour rather than a failure.
+ *
+ * ONE THING THE INPUT PROJECTION DROPS: `additionalProperties: false`, which the output projection
+ * emits. Measured against zod 4.5.4 — `io:'input'` on a plain `z.object` yields no such key. Nothing
+ * today notices, because the AI SDK path never comes through here and does its own strict-mode
+ * conversion from the Zod object. It will matter to whoever describes a tool to a consumer that
+ * requires the keyword: OpenAI strict function calling rejects the schema with
+ * `'additionalProperties' is required to be supplied and to be false` — a 400 mid-turn, which is
+ * exactly the class of failure the comments in this repo exist to pre-empt.
+ *
+ * Two ways forward, and one to rule out. Either declare the tool's arguments with `z.strictObject`,
+ * which gets `required` AND `additionalProperties` right in the input projection at once — but note
+ * it also makes an unexpected key from the model a mid-turn validation failure rather than a
+ * stripped field, which cuts against this codebase's degrade-quiet posture on a live call. Or add
+ * the keyword at the consuming boundary, leaving tool authors unaffected. Do NOT "fix" it by
+ * reverting to `io:'output'`: that trades a missing keyword for an actively false `required` list,
+ * which is the worse of the two.
  */
 export function toJsonSchema(d: ToolDef): unknown {
   return z.toJSONSchema(d.input, { io: 'input' });

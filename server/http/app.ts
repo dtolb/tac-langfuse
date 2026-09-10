@@ -84,7 +84,11 @@ export function buildApp(deps: AppDeps): { app: App; obs: ObsRoutes } {
         // The real catalog (`server/agent/tools/catalog.ts`), so this fixture teaches the tools a
         // reader will actually find. `handoff` is a stand-in for one of T14's TAC built-ins, NOT a
         // catalog tool: it is here so the console's `unavailable` rendering has something to render.
+        // Same four keys `resolve()` publishes, in the same shape — T19 builds the console against
+        // this endpoint, so a fixture missing half the payload teaches half a contract.
+        considered: ['lookup_order', 'get_store_hours', 'handoff'],
         resolved: ['lookup_order', 'get_store_hours'],
+        unknown: [],
         unavailable: ['handoff'],
       },
     });

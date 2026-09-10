@@ -48,7 +48,9 @@ const sessionMetadata: Record<string, unknown> = { [TRACEPARENT_KEY]: conversati
 let traceId: string | undefined;
 
 // ---- two turns, each rehydrating from the stashed traceparent ----
-for (const [index, utterance] of ['how long do refunds take?', 'and for digital orders?'].entries()) {
+// Utterances a `lookup_order` turn would plausibly produce — the resolved tool below is real, so
+// the question should be one it could actually answer.
+for (const [index, utterance] of ['where is my order A4721?', 'and the other one?'].entries()) {
   await withTurnSpan('turn.voice', sessionMetadata[TRACEPARENT_KEY] as string, async (turn) => {
     traceId ??= getActiveTraceId();
 
