@@ -94,10 +94,22 @@ export interface TurnResult {
    */
   readonly modelTtftMs: number | null;
   /**
-   * How long the token STREAM took, on the same origin as `modelTtftMs`. The turn's wall-clock
-   * duration is the `durationMs` on the `turn.end` event, which is a different question.
+   * When the last token arrived, on the SAME origin as `ttftMs` — turn start.
+   *
+   * Same origin deliberately, and it is the fix for a real inversion: this used to be the stream's own
+   * duration, so `ttftMs > totalMs` was reachable any time the work in front of the model exceeded the
+   * stream (a prompt-cache miss on a short answer), and both numbers were individually correct. The
+   * invariant `ttftMs ≤ totalMs ≤ turn.end durationMs` now holds by construction, and
+   * `tests/run-turn.test.ts` asserts the invariant itself so it cannot regress silently.
    */
   readonly totalMs: number | null;
+  /**
+   * The stream's own duration — `totalMs` minus the preamble, the twin of `modelTtftMs`. Kept for the
+   * same reason: it is the number comparable with the AI SDK's generation timings, and `totalMs` is
+   * not. The turn's wall-clock duration, which also covers sending the response, is the `durationMs`
+   * on the `turn.end` event and is a third question again.
+   */
+  readonly modelTotalMs: number | null;
   /** Barge-in on voice. Normal operation, not an error. */
   readonly aborted: boolean;
   /**
@@ -111,7 +123,16 @@ export interface TurnResult {
 
 export interface TurnOutput {
   /**
-   * Consume exactly once, and START consuming promptly.
+   * Consume exactly once, and START consuming BEFORE YOUR NEXT `await`.
+   *
+   * Literally that, not "promptly": the requirement is that the first `next()` on this iterable happens
+   * within one macrotask of `runTurn` returning. `runTurn` cannot know a caller intends to iterate until
+   * it does — a generator body runs no code until its first `next()` — so it waits one `setImmediate`
+   * hop past the model's own settlement before deciding nobody is listening. Microtask work in between
+   * is therefore fine (`await session.ready()`, an awaited guard, a `.then` chain); a real timer, an I/O
+   * round-trip or a `setTimeout` in between is not, and the cost of getting it wrong is quiet — `done`
+   * settles early with `ttftMs`/`totalMs` reported as `null` while your loop goes on to receive every
+   * token. If you must do slow work first, do it BEFORE calling `runTurn`.
    *
    * `done` does not settle until this has been drained (or abandoned mid-flight). That is forced:
    * the timings live in a `FirstTokenMarks` object that is mutated AS the stream drains, so a

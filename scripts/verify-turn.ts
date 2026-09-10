@@ -144,7 +144,10 @@ try {
   console.log(
     `  preambleMs     ${result.ttftMs === null || result.modelTtftMs === null ? 'n/a' : result.ttftMs - result.modelTtftMs}  (prompt fetch + recall + compose + resolve)`,
   );
-  console.log(`  totalMs        ${result.totalMs ?? 'null'}  (stream duration)`);
+  // Same pairing as the two TTFTs above and for the same reason: `totalMs` is on the TURN origin, so
+  // `ttftMs <= totalMs` is readable as a sanity check, and `modelTotalMs` is the stream's own duration.
+  console.log(`  totalMs        ${result.totalMs ?? 'null'}  (from turn start — first token to last)`);
+  console.log(`  modelTotalMs   ${result.modelTotalMs ?? 'null'}  (the stream's own duration)`);
   console.log(`  aborted        ${result.aborted}`);
   console.log(`  usage          in ${result.usage.inputTokens ?? '?'} / out ${result.usage.outputTokens ?? '?'} / total ${result.usage.totalTokens ?? '?'}`);
   console.log(`  text           ${result.text.length} chars`);
@@ -156,7 +159,18 @@ try {
   }
   if (result.text.trim() === '') fail('the model produced no text — a caller would hear silence');
   if (result.ttftMs === null) fail('no ttftMs: the stream never yielded a non-empty text delta');
+  // The `model*` twins come from the same `marks` object, so they are null together with the two above
+  // — checked anyway rather than merely printed, because "printed but unchecked" is how a null that
+  // ISN'T shared would slip through a green run.
+  if (result.modelTtftMs === null) fail('no modelTtftMs: the stream never yielded a non-empty text delta');
   if (result.totalMs === null) fail('no totalMs: `done` read the marks before the stream had drained');
+  if (result.modelTotalMs === null) fail('no modelTotalMs: `done` read the marks before the stream had drained');
+  if (result.ttftMs !== null && result.totalMs !== null && result.ttftMs > result.totalMs) {
+    // Both are on the turn origin, so this cannot happen by construction. Asserted on a live turn
+    // anyway: it is the invariant that was violated on the two-origin version, and the symptom there
+    // was a console timeline reading "first token at 500ms, response complete at 360ms".
+    fail(`ttftMs ${result.ttftMs} > totalMs ${result.totalMs}: the timings are on different origins again`);
+  }
   if (result.aborted) fail('the turn reported itself aborted, but nothing aborted it');
   if (result.toolCalls.length === 0) {
     fail('no tool was called, so the multi-step path was not exercised — check the prompt version still names both demo tools');

@@ -297,12 +297,46 @@ const harness = (over: {
   };
 };
 
+/**
+ * The one invariant that ties the reported durations together: they are all on the TURN origin, so
+ * first token cannot land after the response completed.
+ *
+ * Asserted on EVERY turn this file drives, not in one dedicated test, because the bug it catches is
+ * not a wrong number — it is two individually-correct numbers on different origins. `turn.ttft_ms`
+ * measured from turn start beside a stream-relative `turn.total_ms` reported "first token at 500 ms,
+ * response complete at 360 ms" whenever the preamble outlasted the stream, and every per-number
+ * assertion in this file passed while it did.
+ */
+const expectTimingsMonotonic = (h: Harness, result: TurnResult): void => {
+  if (result.ttftMs !== null && result.totalMs !== null) {
+    expect(result.ttftMs, `ttftMs ${result.ttftMs} must not exceed totalMs ${result.totalMs}`)
+      .toBeLessThanOrEqual(result.totalMs);
+  }
+  const ttft = h.turnSpan.metadata()['turn.ttft_ms'];
+  const total = h.turnSpan.metadata()['turn.total_ms'];
+  if (typeof ttft === 'number' && typeof total === 'number') {
+    expect(ttft, `turn.ttft_ms ${ttft} must not exceed turn.total_ms ${total}`).toBeLessThanOrEqual(total);
+  }
+  // ...and the turn brackets the stream it contains.
+  const turnEnd = h.events.find((e) => e.kind === 'turn.end')?.durationMs;
+  if (typeof total === 'number' && turnEnd !== undefined) expect(total).toBeLessThanOrEqual(turnEnd);
+  // ...and the console timeline is monotonic, which is where an operator actually reads the pair.
+  const firstToken = h.events.find((e) => e.kind === 'llm.first_token')?.durationMs;
+  const response = h.events.find((e) => e.kind === 'llm.response')?.durationMs;
+  if (firstToken !== undefined && response !== undefined) {
+    expect(firstToken, `llm.first_token at ${firstToken}ms must not follow llm.response at ${response}ms`)
+      .toBeLessThanOrEqual(response);
+  }
+};
+
 /** Drive a whole turn to completion the way a caller does: drain `tokens`, then read `done`. */
 const drive = async (h: Harness): Promise<{ text: string; result: TurnResult }> => {
   const { tokens, done } = await runTurn(h.input, h.deps);
   let text = '';
   for await (const delta of tokens) text += delta;
-  return { text, result: await done };
+  const result = await done;
+  expectTimingsMonotonic(h, result);
+  return { text, result };
 };
 
 // ------------------------------------------------------------------ 1. the span tree
@@ -399,11 +433,21 @@ test('BOTH ttfts are reported, and the turn-relative one includes the work in fr
   // What the caller waited through: 500ms from turn start, of which 300ms was the model.
   expect(result.ttftMs).toBe(500);
   expect(result.modelTtftMs).toBe(300);
-  // `totalMs` keeps the model-relative origin — it is the duration of the STREAM, not of the turn.
-  expect(result.totalMs).toBe(360);
+  // `totalMs` is on the SAME origin as `ttftMs`, which is the whole point of the pair. Reported
+  // stream-relative — 360 — it sat BEFORE a first token at 500, and both numbers were correct.
+  expect(result.totalMs).toBe(560);
+  expect(result.modelTotalMs).toBe(360);
+  // And the invariant itself, stated where the inversion used to be encoded. `drive` asserts it on
+  // every turn in this file; repeated here because THIS is the case that violated it.
+  expectTimingsMonotonic(h, result);
 
   expect(h.turnSpan.metadata()['turn.ttft_ms']).toBe(500);
   expect(h.turnSpan.metadata()['turn.ttft_model_ms']).toBe(300);
+  expect(h.turnSpan.metadata()['turn.total_ms']).toBe(560);
+  expect(h.turnSpan.metadata()['turn.total_model_ms']).toBe(360);
+  // The console reads these two as one timeline: "first token at 500ms" then "complete at 360ms" is
+  // read as broken instrumentation, and it is the same inversion one layer out.
+  expect(h.events.find((e) => e.kind === 'llm.response')?.durationMs).toBe(560);
 
   // The live console strip reads the caller-experienced number, and both are in the payload so
   // neither has to be recomputed by a reader.
@@ -482,6 +526,7 @@ test('every documented attribute is set on the turn span, under the exact names'
     'turn.ttft_ms': 40,
     'turn.ttft_model_ms': 40,
     'turn.total_ms': 90,
+    'turn.total_model_ms': 90,
     'turn.aborted': false,
   });
 });
@@ -744,7 +789,54 @@ test('a caller that never touches `tokens` still ends the llm.stream span', asyn
   expect(result.ttftMs).toBeNull();
   expect(result.modelTtftMs).toBeNull();
   expect(result.totalMs).toBeNull();
+  expect(result.modelTotalMs).toBeNull();
   expect(h.kinds()).toContain('turn.end');
+});
+
+test('a caller that AWAITS before its loop still gets timings', async () => {
+  // The sharp edge between the two tests above, and the one that is silent. `consuming` is set in the
+  // generator BODY, which does not run until the first `next()`, while the race's `settled` branch is
+  // registered before `runTurn` returns. So without a macrotask of grace the guarantee rests on the
+  // caller's `for await` landing in the same continuation as `await runTurn(...)` resolving: `done`
+  // settles early, `llm.stream` ends before the stream drains, and the timings report `null` while the
+  // caller goes on to hear the entire answer.
+  //
+  // MEASURED, because the margin turned out to be one hop: with the grace removed, a single bare
+  // `await Promise.resolve()` here still WINS (the caller is one microtask ahead by luck) and two lose.
+  // So a `ready()` that awaits anything internally — the realistic shape, and what T13's voice handler
+  // will be — is already over the line. Nothing today reaches it; that one-hop margin is the reason to
+  // pin it rather than trust it.
+  const sessionReady = async (): Promise<void> => {
+    await Promise.resolve(); // a warm cache read: no I/O, still enough hops to lose the old race
+  };
+  let clock = 0;
+  const h = harness({
+    now: () => clock,
+    model: fakeModel({
+      deltas: async function* () {
+        clock = 120;
+        yield 'on its ';
+        clock = 180;
+        yield 'way';
+        clock = 200;
+      },
+      result: { ...EMPTY_RESULT, text: 'on its way' },
+    }).port,
+  });
+
+  const { tokens, done } = await runTurn(h.input, h.deps);
+  await sessionReady(); // <- the whole test
+  let heard = '';
+  for await (const delta of tokens) heard += delta;
+  const result = await done;
+
+  expect(heard).toBe('on its way');
+  expect(result.ttftMs).toBe(120);
+  expect(result.totalMs).toBe(200);
+  expect(h.turnSpan.metadata()['turn.total_ms']).toBe(200);
+  expectTimingsMonotonic(h, result);
+  // And the step span still closed exactly once, on the drain rather than ahead of it.
+  expect(h.spans.step('llm.stream').endSeq).not.toBeNull();
 });
 
 // ------------------------------------------------------------------ 8. the prompt telemetry link

@@ -366,8 +366,18 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
    * can see STT arrival, the WebSocket frame parse, or TAC's `promptQueues` serialisation; all three
    * happen before `runTurn` is called at all, so no measurement taken in here can include them.
    *
-   * `turn.total_ms` keeps the model-relative origin throughout — it is the duration of the STREAM.
-   * The turn's own wall-clock duration is the `durationMs` on `turn.end`.
+   * EVERY REPORTED DURATION USES THE TURN ORIGIN, and its `_model_` twin uses the stream origin. That
+   * pairing is not tidiness — mixing the two under one prefix makes `ttft_ms > total_ms` reachable, and
+   * it was: `turn.ttft_ms` on the turn origin beside a stream-relative `turn.total_ms` reported "first
+   * token at 500 ms, response complete at 360 ms" whenever the preamble exceeded the stream's own
+   * duration (a prompt-cache miss on a short answer). Both numbers were individually correct, which is
+   * why nothing would have caught it; an operator reads the pair and concludes the instrumentation is
+   * broken. So `turn.total_ms` is turn-relative and `turn.total_model_ms` is the stream duration,
+   * exactly mirroring the TTFT pair, and the invariant `ttft ≤ total ≤ turn.end durationMs` holds by
+   * construction. `tests/run-turn.test.ts` asserts the invariant itself, not just the numbers.
+   *
+   * The turn's own wall-clock duration — which also covers the send of the response — is still the
+   * `durationMs` on `turn.end`, and it remains a different question from either of these.
    */
   const preambleMs = now() - startedAt;
   const sinceTurnStart = (ms: number | null): number | null => (ms === null ? null : ms + preambleMs);
@@ -402,6 +412,9 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   const drained = deferred();
   let consuming = false;
   async function* observed(): AsyncIterable<string> {
+    // Set in the generator BODY, which does not run until the first `next()` — a generator function
+    // returns without executing a line of it. So `consuming` cannot be trusted until the caller has
+    // actually begun iterating; the race below buys a macrotask of grace for exactly that reason.
     consuming = true;
     try {
       yield* marked;
@@ -427,7 +440,21 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     // exists to prevent. A consumer that never began reports null timings, which is honest — no token
     // was ever delivered to anyone. Callers should therefore start draining promptly; both planned
     // callers do, and `collect()` is the answer for one that only wants the final text.
-    await Promise.race([drained.promise, settled]);
+    //
+    // The `setImmediate` hop is what makes "promptly" mean something a caller can actually satisfy.
+    // `consuming` is only set once the generator body runs, i.e. at the caller's first `next()`, while
+    // this `.then` is registered before `runTurn` even returns. Without the hop the guarantee rests on
+    // the caller's `for await` landing in the SAME continuation as `await runTurn(...)` resolving — and
+    // the margin is ONE MICROTASK, measured: a bare `await Promise.resolve()` before the loop still
+    // wins, two lose, and so does one `await session.ready()` that awaits anything internally, which is
+    // what T13's voice handler will look like. Losing is silent: `done` settles early, `stepSpan.end()`
+    // fires before the stream drains, and the timings report `null` while the caller goes on to hear the
+    // whole answer — the same `totalMs: null` class `observed` exists to prevent, through another door.
+    //
+    // A macrotask covers any caller whose pre-drain work is microtask-only, which is the constraint
+    // `TurnOutput.tokens` now states literally. It costs one tick on the path where nobody is listening
+    // at all, and leaves the two existing drain tests exactly as they were.
+    await Promise.race([drained.promise, settled.then(() => new Promise<void>((r) => void setImmediate(r)))]);
     if (consuming) await drained.promise;
     const outcome = await settled;
 
@@ -460,9 +487,11 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
 
     const aborted = input.abortSignal.aborted;
     const called = [...new Set(result.toolCalls.map((c) => c.name))];
-    // Turn-relative, and it is the one an operator compares between prompt versions — the whole
-    // reason the `prompt` link above exists. `turn.ttft_model_ms` is the model-relative twin.
+    // Both turn-relative, and they are the two an operator compares between prompt versions — the
+    // whole reason the `prompt` link above exists. The `*_model_*` twins are the stream-relative pair;
+    // see the comment on `sinceTurnStart` for why the two origins must not share one prefix.
     const ttftMs = sinceTurnStart(marks.ttftMs);
+    const totalMs = sinceTurnStart(marks.totalMs);
 
     span.update({
       output: { text: result.text, toolCalls: called },
@@ -470,7 +499,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         'tools.called': called,
         'turn.ttft_ms': ttftMs,
         'turn.ttft_model_ms': marks.ttftMs,
-        'turn.total_ms': marks.totalMs,
+        'turn.total_ms': totalMs,
+        'turn.total_model_ms': marks.totalMs,
         'turn.aborted': aborted,
       },
     });
@@ -486,7 +516,10 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       channel,
       conversationId,
       correlationId,
-      ...(marks.totalMs !== null && { durationMs: marks.totalMs }),
+      // Turn-relative, like the `durationMs` on `llm.first_token` above it. The console renders these
+      // as one timeline, so a stream-relative number here read as "first token at 500 ms, response
+      // complete at 360 ms" — the model duration is still reported, under `modelTotalMs`.
+      ...(totalMs !== null && { durationMs: totalMs }),
       payload: {
         text: result.text,
         toolCalls: result.toolCalls.map((c) => c.name),
@@ -494,6 +527,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         steps: result.steps,
         ttftMs,
         modelTtftMs: marks.ttftMs,
+        totalMs,
+        modelTotalMs: marks.totalMs,
         aborted,
       },
     });
@@ -506,7 +541,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       payload: {
         ttftMs,
         modelTtftMs: marks.ttftMs,
-        totalMs: marks.totalMs,
+        totalMs,
+        modelTotalMs: marks.totalMs,
         aborted,
         steps: result.steps,
       },
@@ -519,7 +555,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       steps: result.steps,
       ttftMs,
       modelTtftMs: marks.ttftMs,
-      totalMs: marks.totalMs,
+      totalMs,
+      modelTotalMs: marks.totalMs,
       aborted,
       prompt: { name: prompt.name, version: prompt.version, label: prompt.label },
       model: prompt.config.model,

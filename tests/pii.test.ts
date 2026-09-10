@@ -87,6 +87,41 @@ test('still detects a cycle that closes deeper than one level', () => {
   expect(scrubObject(arr)).toEqual(['first', '[Circular]']);
 });
 
+test('a deep shared DAG is BOUNDED rather than walked exponentially', () => {
+  // The cost of ancestor-path tracking, and the reason `MAX_DEPTH` exists. Because a node leaves the
+  // set on the way out, a shared subtree is re-walked once per reference: `{a: n, b: n}` nested d deep
+  // is 2^d walks. Measured on the unbounded version: 333 ms at depth 20, 1326 ms at 22, minutes by 30
+  // — a hang in the function every log line, obs event and span payload passes through.
+  //
+  // Asserted structurally rather than on a stopwatch, so it fails for the right reason: without the
+  // cap this test does not report a slow number, it never returns at all (vitest's timeout catches it).
+  let node: Record<string, unknown> = { leaf: 'call +15551234567' };
+  for (let i = 0; i < 40; i++) node = { a: node, b: node };
+
+  const out = scrubObject(node);
+
+  // Walk the 'a' spine: 12 levels of real objects, then the marker. The leaf 40 levels down is never
+  // reached, which is the point — truncating one absurd payload beats wedging the process.
+  let cursor: unknown = out;
+  for (let i = 0; i < 12; i++) {
+    expect(typeof cursor, `level ${i} should still be an object`).toBe('object');
+    cursor = (cursor as Record<string, unknown>).a;
+  }
+  expect(cursor).toBe('[MaxDepth]');
+});
+
+test('nesting well within the cap is untouched by it', () => {
+  // The other half: the bound must not be visible to anything we actually log. A turn span's `output`
+  // and a `tool.execution` payload sit at 3 or 4 levels, so 8 is already double the real depth.
+  let node: Record<string, unknown> = { phone: '+15551234567', note: 'write to dan@example.com' };
+  for (let i = 0; i < 7; i++) node = { nested: node };
+
+  let cursor: unknown = scrubObject(node);
+  for (let i = 0; i < 7; i++) cursor = (cursor as Record<string, unknown>).nested;
+
+  expect(cursor).toEqual({ phone: '+1***4567', note: 'write to d***@example.com' });
+});
+
 test('scrubs an Error while preserving its prototype and stack', () => {
   const err = new TypeError('failed calling +15551234567');
   const out = scrubObject(err) as Error;

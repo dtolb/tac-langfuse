@@ -64,6 +64,25 @@ test('every compiled default carries a config that parses clean', () => {
   }
 });
 
+test('NO compiled default ships a temperature, because the default model discards it', () => {
+  // `gpt-5.4-mini` is a reasoning model and ignores `temperature` — the provider says so out loud
+  // ("The feature \"temperature\" is not supported"). The schema still ACCEPTS one, deliberately, so a
+  // Langfuse version that sets it is an operator-visible mistake fixable in the web form; but the
+  // compiled default is the one config nobody can fix without a deploy, so it must not ship a
+  // parameter the model throws away.
+  //
+  // Pinned because nothing else can be: the schema makes `temperature` optional with no default, so
+  // re-adding one to `defaults.ts` changes no other assertion in this file and no test would notice.
+  for (const name of PROMPT_NAMES) {
+    const { config } = DEFAULT_PROMPTS[name];
+    expect('temperature' in config, `${name} ships a temperature`).toBe(false);
+    // ...and after the schema has had its say, since that is the object `runTurn` forwards.
+    expect(PromptConfigSchema.parse(config).temperature, `${name} compiles to a temperature`).toBeUndefined();
+  }
+  // The same for the fallback path, which is what a Langfuse outage actually serves.
+  expect(fallbackPrompt('demo-agent-voice').config.temperature).toBeUndefined();
+});
+
 test('every compiled default enables at least one tool and has a system message', () => {
   for (const name of PROMPT_NAMES) {
     const { messages, config } = DEFAULT_PROMPTS[name];
