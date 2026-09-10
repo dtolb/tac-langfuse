@@ -9,7 +9,7 @@
  *
  * Then the run that matters, and the one a `stop` does NOT exercise — Langfuse HUNG:
  *
- *   docker pause scaffold-langfuse-web-1     # then this script; then ALWAYS unpause
+ *   docker compose -f docker-compose.langfuse.yml pause langfuse-web   # then ALWAYS unpause
  *
  * A paused container accepts the connection and never answers, which is the only way to reach the
  * `fetchTimeoutMs` budget in langfuse.ts — and the more realistic live-demo failure than a refused
