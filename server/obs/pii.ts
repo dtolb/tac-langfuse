@@ -58,10 +58,26 @@ export const scrubObject = (value: unknown, seen?: WeakSet<object>): unknown => 
   if (typeof value === 'string') return scrubPii(value);
   if (value === null || typeof value !== 'object') return value;
 
+  // The set tracks the CURRENT ANCESTOR PATH, not every node ever seen — note the `delete` in the
+  // `finally` below. Tracking all visited nodes instead looks equivalent and is not: it reports the
+  // second reference to a shared object as a cycle, so any payload that is a DAG rather than a tree
+  // silently loses data. Measured before the fix: `{toolCalls: names, 'tools.called': names}` with
+  // one array bound twice scrubbed to `{"toolCalls":[...],"tools.called":"[Circular]"}`, which is how
+  // `tools.called` was reaching Langfuse. Repeated references are ordinary here — the same array or
+  // record routinely appears as both a span `output` field and a metadata attribute.
   const visited = seen ?? new WeakSet<object>();
   if (visited.has(value)) return '[Circular]';
   visited.add(value);
 
+  try {
+    return scrubBody(value, visited);
+  } finally {
+    visited.delete(value);
+  }
+};
+
+/** The per-shape scrubbing, split out only so `scrubObject` can own the ancestor-path bookkeeping. */
+const scrubBody = (value: object, visited: WeakSet<object>): unknown => {
   if (value instanceof Error) {
     const source = value as unknown as Record<string, unknown>;
     const rebuilt = Object.create(Object.getPrototypeOf(value)) as Record<string, unknown>;

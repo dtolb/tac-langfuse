@@ -56,6 +56,37 @@ test('survives a cycle instead of throwing', () => {
   expect(out.self).toBe('[Circular]');
 });
 
+test('a repeated reference is NOT a cycle', () => {
+  // A DAG, not a tree: one array bound to two keys. Cycle detection that tracks every visited node
+  // rather than the current ancestor path calls the second binding `[Circular]` and silently drops
+  // real data. This is exactly how `tools.called` was reaching Langfuse as the string `[Circular]`
+  // — the turn span passes the same array as both an `output` field and a metadata attribute.
+  const names = ['lookup_order', 'get_store_hours'];
+  const out = scrubObject({ toolCalls: names, 'tools.called': names }) as Record<string, unknown>;
+  expect(out.toolCalls).toEqual(names);
+  expect(out['tools.called']).toEqual(names);
+});
+
+test('a repeated reference is scrubbed at every occurrence, not just the first', () => {
+  const caller = { phone: '+15551234567' };
+  const out = scrubObject({ from: caller, to: caller }) as Record<string, Record<string, unknown>>;
+  expect(out.from?.phone).toBe('+1***4567');
+  expect(out.to?.phone).toBe('+1***4567');
+});
+
+test('still detects a cycle that closes deeper than one level', () => {
+  // The ancestor-path fix must not weaken real cycle detection, which is what stops a stack
+  // overflow on the product path.
+  const root: Record<string, unknown> = {};
+  root.a = { b: { c: root } };
+  const out = scrubObject(root) as { a: { b: { c: unknown } } };
+  expect(out.a.b.c).toBe('[Circular]');
+
+  const arr: unknown[] = ['first'];
+  arr.push(arr);
+  expect(scrubObject(arr)).toEqual(['first', '[Circular]']);
+});
+
 test('scrubs an Error while preserving its prototype and stack', () => {
   const err = new TypeError('failed calling +15551234567');
   const out = scrubObject(err) as Error;
