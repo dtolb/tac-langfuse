@@ -125,7 +125,9 @@ test('one resolve call partitions into resolved, unknown and unavailable', () =>
   const { bus, events } = capture();
 
   const r = resolve(
-    ['lookup_order', 'search_knowledge', 'send_message', 'get_store_hours'],
+    // The repeated first name is deliberate: it is what pins `payload.considered` as the deduped
+    // set rather than the raw list the prompt named.
+    ['lookup_order', 'search_knowledge', 'send_message', 'get_store_hours', 'lookup_order'],
     deps({ catalog, capabilities: caps({ knowledge: false }), logger, bus }),
   );
 
@@ -144,7 +146,9 @@ test('one resolve call partitions into resolved, unknown and unavailable', () =>
     '2 of 4 tools resolved — unknown: send_message — unavailable: search_knowledge',
   );
   expect(events[0]?.payload).toEqual({
-    requested: ['lookup_order', 'search_knowledge', 'send_message', 'get_store_hours'],
+    // Five names in, four out, in the prompt's order — the field says `considered`, not
+    // `requested`, because that collapse is exactly what it holds.
+    considered: ['lookup_order', 'search_knowledge', 'send_message', 'get_store_hours'],
     resolved: ['lookup_order', 'get_store_hours'],
     unknown: ['send_message'],
     unavailable: ['search_knowledge'],
@@ -355,4 +359,29 @@ test('toJsonSchema exposes the properties the Zod input declares', () => {
   // has to survive the conversion.
   expect(schema.properties?.orderId?.description).toContain('order number');
   expect(schema.required).toEqual(['orderId']);
+});
+
+test('toJsonSchema emits the input projection, so a defaulted argument is not required', () => {
+  // The distinction the two demo tools cannot show: their arguments are plain `z.string().min(1)`,
+  // where the input and output projections are identical. A `.default()` is where they diverge —
+  // optional on the way in, present on the way out — and it is the input position that describes
+  // what the model must SEND. Under Zod's default `io: 'output'` this schema would tell OpenAI and
+  // TAC that `limit` is mandatory, and the default would never fire.
+  const withDefault: ToolDef = {
+    name: 'paged_fixture',
+    description: 'fixture whose input carries a default',
+    input: z.object({ query: z.string(), limit: z.number().default(10) }),
+    execute: async () => ({ ok: true }),
+  };
+
+  const schema = toJsonSchema(withDefault) as {
+    properties?: Record<string, { default?: unknown }>;
+    required?: readonly string[];
+  };
+
+  expect(Object.keys(schema.properties ?? {})).toEqual(['query', 'limit']);
+  expect(schema.required).toEqual(['query']);
+  expect(schema.required).not.toContain('limit');
+  // The default itself still reaches the model as documentation of what happens if it says nothing.
+  expect(schema.properties?.limit?.default).toBe(10);
 });

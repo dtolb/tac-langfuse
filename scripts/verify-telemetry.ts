@@ -59,7 +59,10 @@ for (const [index, utterance] of ['how long do refunds take?', 'and for digital 
 
     await timeStep('tools.resolve', async () => {
       await sleep(3);
-      return { resolved: ['search_knowledge'], unknown: [], unavailable: ['handoff'] };
+      // Real catalog names (`server/agent/tools/catalog.ts`), so the fixture does not teach a
+      // catalog that does not exist. `handoff` is a stand-in for a T14 TAC built-in rather than a
+      // catalog tool, kept so the unavailable bucket is non-empty in the span attributes.
+      return { resolved: ['lookup_order'], unknown: [], unavailable: ['handoff'] };
     }, (r) => r);
 
     // The model call would go here. In the real turn this is where the AI SDK's own spans

@@ -63,8 +63,8 @@ How to help
 - Use get_store_hours for the opening hours of a named {{company_name}} location.
 - Look something up before you answer it. Never guess an order status or an opening time, and
   never invent a policy that merely sounds plausible.
-- If a tool comes back with nothing, say so plainly and offer to have someone follow up, rather
-  than filling the gap yourself.
+- If you cannot look something up, or a tool comes back with nothing, say so plainly and offer to
+  have someone follow up, rather than filling the gap yourself.
 - If the caller interrupts you, drop what you were saying and answer the new question.`;
 
 const TEXT_SYSTEM = `You are {{persona}} for {{company_name}}. Today is {{current_date}}.
@@ -85,8 +85,8 @@ How to help
 - Use get_store_hours for the opening hours of a named {{company_name}} location.
 - Look something up before you answer it. Never guess an order status or an opening time, and
   never invent a policy that merely sounds plausible.
-- If a tool comes back with nothing, say so plainly and offer to have someone follow up, rather
-  than filling the gap yourself.
+- If you cannot look something up, or a tool comes back with nothing, say so plainly and offer to
+  have someone follow up, rather than filling the gap yourself.
 - Answer the question that was actually asked before adding anything else.`;
 
 export const DEFAULT_PROMPTS: Readonly<Record<PromptName, DefaultPrompt>> = {

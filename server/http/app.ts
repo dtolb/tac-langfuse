@@ -77,15 +77,21 @@ export function buildApp(deps: AppDeps): { app: App; obs: ObsRoutes } {
         ...extra,
       });
 
-    emit('turn.start', 'caller: how long do refunds take?');
+    emit('turn.start', 'caller: where is my order A4721?');
     emit('prompt.fetch', 'agent.system v1 (production, cached)', { durationMs: 2 });
     emit('tool.selection', '2 of 3 tools resolved', {
-      payload: { resolved: ['search_knowledge', 'send_message'], unavailable: ['handoff'] },
+      payload: {
+        // The real catalog (`server/agent/tools/catalog.ts`), so this fixture teaches the tools a
+        // reader will actually find. `handoff` is a stand-in for one of T14's TAC built-ins, NOT a
+        // catalog tool: it is here so the console's `unavailable` rendering has something to render.
+        resolved: ['lookup_order', 'get_store_hours'],
+        unavailable: ['handoff'],
+      },
     });
     emit('llm.request', 'gpt-5.4-mini, 2 tools offered');
     emit('llm.first_token', 'time to first token', { durationMs: 412 });
-    emit('tool.execution', 'search_knowledge', { durationMs: 88 });
-    emit('llm.response', 'Refunds take two business days.', { durationMs: 1840 });
+    emit('tool.execution', 'lookup_order', { durationMs: 88 });
+    emit('llm.response', 'Order A4721 has shipped — it should arrive Friday.', { durationMs: 1840 });
     emit('turn.end', 'turn complete', { durationMs: 1932 });
     return { emitted: 8, correlationId };
   });

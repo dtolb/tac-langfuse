@@ -113,7 +113,10 @@ export function resolve(names: readonly string[], deps: ResolveDeps): ToolResolu
     ...(deps.channel !== undefined && { channel: deps.channel }),
     ...(deps.conversationId !== undefined && { conversationId: deps.conversationId }),
     payload: {
-      requested: [...seen],
+      // `considered`, not `requested`: this is the DEDUPED set, so a prompt naming a tool twice
+      // appears here once — the same collapse the "n of m" count above reports. A field called
+      // `requested` would quietly under-report what the prompt version actually asked for.
+      considered: [...seen],
       resolved: resolved.map((t) => t.name),
       unknown,
       unavailable,

@@ -86,7 +86,19 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
  * TAC direction at T14, which has to describe tools to Twilio in JSON Schema, and the operator
  * console's tool inspector at T19, which shows what a tool takes without the reader opening the
  * source. Deriving both from the same Zod object is the reason `input` is the single source.
+ *
+ * `io: 'input'`, not Zod's default of `'output'`, and that argument is load-bearing: both consumers
+ * describe what the model must SEND, which is the input position. The two projections diverge the
+ * moment a tool's schema does anything on the way through. `z.number().default(10)` is optional
+ * inbound and present outbound, so the output projection lists it as `required` — OpenAI and TAC
+ * are then told a defaulted field is mandatory and the default never fires. `z.coerce.*`
+ * misdescribes the accepted type the same way, and a `.transform()` can make the output side
+ * unrepresentable rather than merely wrong.
+ *
+ * Identical either way for both demo tools, whose arguments are plain `z.string().min(1)`. It is
+ * spelled out here because this is the seam T14 and T19 copy, and the symptom of getting it wrong
+ * is opaque model behaviour rather than a failure.
  */
 export function toJsonSchema(d: ToolDef): unknown {
-  return z.toJSONSchema(d.input);
+  return z.toJSONSchema(d.input, { io: 'input' });
 }
