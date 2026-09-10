@@ -39,8 +39,19 @@ export function toAiSdkTool(def: ToolDef, ctx: ToolCtx): Tool {
 /**
  * What the tracing integration needs in order to link this call to a Langfuse prompt VERSION,
  * which is what lights up that version's Metrics tab.
+ *
+ * `isFallback` is optional but PRESERVED when present, and that is the direction that matters:
+ * the integration's `normalizePrompt` DEFAULTS it to `false`, so dropping a `true` here would
+ * attribute a self-declared fallback to a real prompt version — the one error mode that silently
+ * corrupts the numbers rather than losing them. Nothing can hit it today (T7 nulls `telemetryLink`
+ * on the fallback, so a fallback link never reaches this function), which is exactly why it is worth
+ * pinning now: the next carrier of this value has no reason to know.
  */
-const PromptLinkSchema = z.object({ name: z.string().min(1), version: z.number() });
+const PromptLinkSchema = z.object({
+  name: z.string().min(1),
+  version: z.number(),
+  isFallback: z.boolean().optional(),
+});
 
 /**
  * Normalise `ResolvedPrompt.telemetryLink` into the shape `@langfuse/vercel-ai-sdk` recognises.
@@ -68,7 +79,9 @@ const PromptLinkSchema = z.object({ name: z.string().min(1), version: z.number()
  * Returns `undefined` for anything unparseable rather than throwing: a broken link must not be
  * able to end a phone call, and a turn with an unlinked trace is still a working turn.
  */
-export function langfusePromptLink(link: unknown): { name: string; version: number } | undefined {
+export function langfusePromptLink(
+  link: unknown,
+): { name: string; version: number; isFallback?: boolean } | undefined {
   let candidate: unknown = link;
   if (typeof link === 'string') {
     try {
@@ -78,7 +91,30 @@ export function langfusePromptLink(link: unknown): { name: string; version: numb
     }
   }
   const parsed = PromptLinkSchema.safeParse(candidate);
-  return parsed.success ? { name: parsed.data.name, version: parsed.data.version } : undefined;
+  if (!parsed.success) return undefined;
+  const { name, version, isFallback } = parsed.data;
+  // Omitted rather than defaulted when absent: `normalizePrompt` supplies `false` itself, and
+  // inventing one here would make an unstated fallback indistinguishable from a declared one.
+  return { name, version, ...(isFallback !== undefined && { isFallback }) };
+}
+
+/**
+ * `toolChoice`, but only when there is something to choose from.
+ *
+ * A prompt version can name nothing but dead tools (T8's `unknown` bucket) while still asking for
+ * `toolChoice: 'required'`, and `tool_choice: required` with an empty tool set is an opaque 400 from
+ * OpenAI in the MIDDLE of a call — the caller hears the turn die. Returning `{}` omits the key
+ * entirely rather than sending `undefined`, which the SDK would forward.
+ *
+ * Extracted rather than inlined so the guard itself is unit-testable: exercising it through
+ * `stream()` would mean a real network call, and asserting the port's INPUTS (what `run-turn.ts`
+ * hands over) cannot see what this decides.
+ */
+export function toolChoiceOption(
+  toolCount: number,
+  toolChoice: ModelRequest['toolChoice'],
+): { toolChoice?: ModelRequest['toolChoice'] } {
+  return toolCount > 0 ? { toolChoice } : {};
 }
 
 const toModelMessage = (m: TurnMessage): ModelMessage => ({ role: m.role, content: m.content });
@@ -116,10 +152,8 @@ export function createOpenAiModelPort(deps: OpenAiModelDeps): ModelPort {
         // several. Without this the SDK rejects one with InvalidMessageRoleError mid-turn.
         allowSystemInMessages: true,
         tools,
-        // Only when there is something to choose from. A prompt version can name nothing but dead
-        // tools (T8's `unknown` bucket), and `tool_choice: required` with an empty tool set is an
-        // opaque 400 from OpenAI in the middle of a call.
-        ...(request.tools.length > 0 && { toolChoice: request.toolChoice }),
+        // Only when there is something to choose from — see `toolChoiceOption`.
+        ...toolChoiceOption(request.tools.length, request.toolChoice),
         stopWhen: stepCountIs(request.maxSteps),
         abortSignal: request.abortSignal,
         ...(request.temperature !== undefined && { temperature: request.temperature }),

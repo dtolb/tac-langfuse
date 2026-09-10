@@ -1,7 +1,7 @@
 import { test, expect } from 'vitest';
 import { z } from 'zod';
 import { runTurn } from '../server/agent/run-turn.ts';
-import { langfusePromptLink } from '../server/agent/model/openai.ts';
+import { langfusePromptLink, toAiSdkTool, toolChoiceOption } from '../server/agent/model/openai.ts';
 import { passthroughMemory } from '../server/agent/memory.ts';
 import type {
   MemoryComposePort,
@@ -14,7 +14,7 @@ import type { ModelPort, ModelRequest, ModelStreamResult } from '../server/agent
 import type { PromptPort, ResolvedPrompt } from '../server/agent/prompt/port.ts';
 import { createToolCatalog } from '../server/agent/tools/catalog.ts';
 import { resolve } from '../server/agent/tools/resolve.ts';
-import type { ToolDef, ToolLogger } from '../server/agent/tools/registry.ts';
+import type { ToolCtx, ToolDef, ToolLogger } from '../server/agent/tools/registry.ts';
 import { createObsBus } from '../server/obs/bus.ts';
 import type { SpanLike } from '../server/obs/spans.ts';
 import type { ObsEvent } from '../shared/events.ts';
@@ -368,6 +368,54 @@ test('ttft is measured at the first NON-EMPTY delta, not at chunk one', async ()
   expect(h.kinds().indexOf('llm.first_token')).toBeLessThan(h.kinds().indexOf('llm.response'));
 });
 
+test('BOTH ttfts are reported, and the turn-relative one includes the work in front of the model', async () => {
+  // The number this whole telemetry design exists to produce is the gap between the caller finishing
+  // their sentence and the agent starting to speak — so a TTFT that starts at the model call quietly
+  // omits the prompt fetch, the recall, the compose and the resolve that all sit inside that gap.
+  // Here the prompt port burns 200ms of the injected clock, which a model-relative measurement cannot
+  // see at all.
+  let clock = 0;
+  const slowPrompts: PromptPort = {
+    async get() {
+      clock = 200;
+      return promptFixture();
+    },
+  };
+  const h = harness({
+    now: () => clock,
+    prompts: slowPrompts,
+    model: fakeModel({
+      deltas: async function* () {
+        clock = 500;
+        yield 'Hi';
+        clock = 560;
+      },
+      result: { ...EMPTY_RESULT, text: 'Hi' },
+    }).port,
+  });
+
+  const { result } = await drive(h);
+
+  // What the caller waited through: 500ms from turn start, of which 300ms was the model.
+  expect(result.ttftMs).toBe(500);
+  expect(result.modelTtftMs).toBe(300);
+  // `totalMs` keeps the model-relative origin — it is the duration of the STREAM, not of the turn.
+  expect(result.totalMs).toBe(360);
+
+  expect(h.turnSpan.metadata()['turn.ttft_ms']).toBe(500);
+  expect(h.turnSpan.metadata()['turn.ttft_model_ms']).toBe(300);
+
+  // The live console strip reads the caller-experienced number, and both are in the payload so
+  // neither has to be recomputed by a reader.
+  const firstToken = h.events.find((e) => e.kind === 'llm.first_token');
+  expect(firstToken?.durationMs).toBe(500);
+  expect(firstToken?.payload).toMatchObject({ ttftMs: 500, modelTtftMs: 300, preambleMs: 200 });
+  expect(h.events.find((e) => e.kind === 'turn.end')?.payload).toMatchObject({
+    ttftMs: 500,
+    modelTtftMs: 300,
+  });
+});
+
 test('a turn with no text at all reports a null ttft rather than zero', async () => {
   const h = harness({ model: fakeModel({ deltas: () => streamOf('', '') }).port });
   const { result } = await drive(h);
@@ -432,9 +480,38 @@ test('every documented attribute is set on the turn span, under the exact names'
     'tools.unknown': [],
     'tools.called': ['lookup_widget'],
     'turn.ttft_ms': 40,
+    'turn.ttft_model_ms': 40,
     'turn.total_ms': 90,
     'turn.aborted': false,
   });
+});
+
+test('the turn span carries the prompt-version link, as a first-class key rather than metadata', async () => {
+  // `prompt` is a key `createObservationAttributes` recognises, so it becomes
+  // `langfuse.observation.prompt.{name,version}` rather than a metadata entry.
+  //
+  // This asserts OUR half only, and that distinction is real: Langfuse v4's OTel ingestion currently
+  // discards prompt name/version for any observation whose type is not GENERATION, so the link does
+  // not yet show up on the turn span in the UI. Verified against the live stack — see the comment at
+  // the call site in `run-turn.ts`. Do not read a green test here as "the link works end to end".
+  const h = harness({ model: fakeModel({ deltas: () => streamOf('ok') }).port });
+  await drive(h);
+
+  const linked = h.turnSpan.updates.filter((u) => 'prompt' in u);
+  expect(linked).toHaveLength(1);
+  expect(linked[0]?.prompt).toEqual({ name: 'demo-agent-text', version: 2, isFallback: false });
+});
+
+test('a fallback prompt links to NOTHING: there is no Langfuse version to attribute to', async () => {
+  const h = harness({
+    prompts: promptPort(promptFixture({ version: 'fallback', label: null, telemetryLink: null })),
+    model: fakeModel({ deltas: () => streamOf('ok') }).port,
+  });
+  await drive(h);
+
+  expect(h.turnSpan.updates.filter((u) => 'prompt' in u)).toEqual([]);
+  // Still says WHICH prompt answered, so a degraded turn is visible rather than absent.
+  expect(h.turnSpan.metadata()['prompt.version']).toBe('fallback');
 });
 
 test('the slot values reach the composed system prompt', async () => {
@@ -554,14 +631,120 @@ test('a model failure rejects `done`, publishes an error, and never throws synch
   expect(h.events.find((e) => e.kind === 'turn.end')?.payload).toMatchObject({ failed: true });
 });
 
-test('a failure while preparing the turn rejects the returned promise and reports the stage', async () => {
+test('a failure while preparing the turn rejects, reports the stage, and still ENDS the turn', async () => {
+  // `PromptPort` never rejects, but `composeMemory` can, and T13's TAC memory port is the realistic
+  // case. The console tracks turns by the `turn.start`/`turn.end` pair, so a path that publishes only
+  // `error` leaves a turn open in the UI for the rest of the demo.
   const h = harness({
     composeMemory: {
       compose: () => Promise.reject(new Error('memory service down')),
     },
   });
   await expect(runTurn(h.input, h.deps)).rejects.toThrow('memory service down');
+
+  expect(h.kinds()).toEqual(['turn.start', 'error', 'turn.end']);
   expect(h.events.find((e) => e.kind === 'error')?.payload).toMatchObject({ stage: 'prepare' });
+  expect(h.events.find((e) => e.kind === 'turn.end')?.payload).toMatchObject({
+    failed: true,
+    error: 'memory service down',
+  });
+
+  // And the span is attributable. The identity known before the parallel fetch is written before it,
+  // so a prepare failure is not a bare `turn.bench` span with no channel, model or prompt on it.
+  expect(h.turnSpan.metadata()).toEqual({ channel: 'bench' });
+  expect(h.turnSpan.ends()).toBe(0);
+});
+
+test('a vendor failure racing a barge-in is DISCARDED — the documented tradeoff, pinned', async () => {
+  // Deliberate, and it cuts both ways: the abort branch keys on `abortSignal.aborted`, not on what the
+  // rejection says, so a genuine upstream failure that coincides with an interruption is reported as a
+  // clean barge-in. On a voice call that is the right trade — the caller is already talking over us, so
+  // a spoken error is worse than silence — and the alternative is sniffing vendor abort messages, which
+  // breaks on a minor upgrade with nothing to notice. This test exists so changing it is a decision.
+  const model: ModelPort = {
+    stream: () => ({
+      tokens: (async function* () {
+        yield 'I can see ';
+      })(),
+      done: Promise.reject<ModelStreamResult>(new Error('upstream 503')),
+    }),
+  };
+  const h = harness({ model });
+
+  const { tokens, done } = await runTurn(h.input, h.deps);
+  for await (const _delta of tokens) {
+    void _delta;
+    h.abort.abort();
+    break;
+  }
+  // Resolves rather than rejecting: the real 503 is gone.
+  const result = await done;
+
+  expect(result.aborted).toBe(true);
+  expect(result.text).toBe('');
+  expect(result.steps).toBe(0);
+  expect(result.usage).toEqual({ inputTokens: null, outputTokens: null, totalTokens: null });
+  expect(h.kinds()).not.toContain('error');
+  expect(h.events.find((e) => e.kind === 'turn.end')?.payload).toMatchObject({ aborted: true });
+});
+
+test('a SLOW consumer still gets final timings: the vendor settling first must not cut the drain short', async () => {
+  // The other half of the floor above, and the reason it is a floor rather than a deadline. The AI
+  // SDK's result promises settle from a TEE'd copy on the MODEL's schedule — here, immediately — while
+  // voice drains one chunk at a time behind a TTS handoff. A `done` that gave up waiting as soon as the
+  // vendor was finished would report `totalMs: null` on exactly the turns that matter most.
+  let clock = 0;
+  const h = harness({
+    now: () => clock,
+    model: fakeModel({
+      deltas: async function* () {
+        clock = 100;
+        yield 'one ';
+        clock = 300;
+        yield 'two';
+        clock = 400;
+      },
+      result: { ...EMPTY_RESULT, text: 'one two' },
+    }).port,
+  });
+
+  const { tokens, done } = await runTurn(h.input, h.deps);
+  let heard = '';
+  for await (const delta of tokens) {
+    await tick(); // the handoff a real consumer does between chunks
+    heard += delta;
+  }
+  const result = await done;
+
+  expect(heard).toBe('one two');
+  expect(result.ttftMs).toBe(100);
+  expect(result.totalMs).toBe(400);
+});
+
+test('a caller that never touches `tokens` still ends the llm.stream span', async () => {
+  // The sharp edge of `done` waiting on the drain. A caller that decides not to speak at all — a
+  // session closed before we got here, a guard that rejects before the loop — used to leave `done`
+  // pending forever and `llm.stream` UNENDED, and an unended span never reaches Langfuse AT ALL: a
+  // missing observation with no error anywhere to explain it.
+  const h = harness({
+    model: fakeModel({
+      deltas: () => streamOf('never heard'),
+      result: { ...EMPTY_RESULT, text: 'never heard' },
+    }).port,
+  });
+
+  const { done } = await runTurn(h.input, h.deps);
+  const result = await done;
+
+  expect(h.spans.step('llm.stream').endSeq).not.toBeNull();
+  expect(h.spans.steps.filter((s) => s.endSeq === null)).toEqual([]);
+  // The vendor's own result still arrives; the timings are null, which is honest — no token was ever
+  // delivered to anyone.
+  expect(result.text).toBe('never heard');
+  expect(result.ttftMs).toBeNull();
+  expect(result.modelTtftMs).toBeNull();
+  expect(result.totalMs).toBeNull();
+  expect(h.kinds()).toContain('turn.end');
 });
 
 // ------------------------------------------------------------------ 8. the prompt telemetry link
@@ -605,11 +788,27 @@ test('langfusePromptLink normalises what Langfuse actually serves', () => {
   expect(langfusePromptLink(JSON.stringify({ name: 'demo-agent-text', version: 2, isFallback: false }))).toEqual({
     name: 'demo-agent-text',
     version: 2,
+    isFallback: false,
   });
   expect(langfusePromptLink({ name: 'demo-agent-voice', version: 5 })).toEqual({
     name: 'demo-agent-voice',
     version: 5,
   });
+});
+
+test('langfusePromptLink preserves isFallback, because dropping it MISATTRIBUTES', () => {
+  // The integration's `normalizePrompt` defaults `isFallback` to `false`, so a link that declared
+  // itself a fallback and lost the flag here would be attributed to a real prompt version — the one
+  // error mode that corrupts the numbers rather than losing them. Nothing can reach it today (T7 nulls
+  // `telemetryLink` on the fallback), which is exactly why it is worth pinning.
+  expect(langfusePromptLink(JSON.stringify({ name: 'demo-agent-text', version: 2, isFallback: true }))).toEqual({
+    name: 'demo-agent-text',
+    version: 2,
+    isFallback: true,
+  });
+  // Absent stays absent rather than becoming an invented `false`: the integration supplies its own
+  // default, and an unstated fallback must stay distinguishable from a declared one.
+  expect('isFallback' in (langfusePromptLink({ name: 'x', version: 1 }) ?? {})).toBe(false);
 });
 
 test('langfusePromptLink returns undefined rather than throwing on anything unusable', () => {
@@ -620,6 +819,55 @@ test('langfusePromptLink returns undefined rather than throwing on anything unus
   expect(langfusePromptLink(JSON.stringify({ name: 'x' }))).toBeUndefined();
   expect(langfusePromptLink(JSON.stringify({ version: 3 }))).toBeUndefined();
   expect(langfusePromptLink(JSON.stringify({ name: 'x', version: 'two' }))).toBeUndefined();
+});
+
+// ------------------------------------------------------------------ the model port's own guards
+
+/**
+ * These two cover `model/openai.ts` directly rather than through the port boundary. The turn tests
+ * above can only assert what `runTurn` HANDS OVER; what the port then decides — whether to send a
+ * `toolChoice` at all, how a `ToolDef` becomes an AI SDK tool — is invisible from there and was
+ * otherwise exercised only by the live script.
+ */
+test('toolChoiceOption omits the key entirely when no tool survived resolution', () => {
+  // `tool_choice: required` with an empty tool set is an opaque 400 from OpenAI in the MIDDLE of a
+  // call, and a prompt version naming nothing but dead tools is how you get there. Omitted, not
+  // `undefined`: the SDK forwards an explicit undefined.
+  expect(toolChoiceOption(0, 'required')).toEqual({});
+  expect('toolChoice' in toolChoiceOption(0, 'required')).toBe(false);
+  expect('toolChoice' in toolChoiceOption(0, 'auto')).toBe(false);
+  // With something to choose from, the prompt version's choice is passed through untouched.
+  expect(toolChoiceOption(2, 'required')).toEqual({ toolChoice: 'required' });
+  expect(toolChoiceOption(1, 'none')).toEqual({ toolChoice: 'none' });
+  expect(toolChoiceOption(1, 'auto')).toEqual({ toolChoice: 'auto' });
+});
+
+test('toAiSdkTool converts a ToolDef and keeps its execute reachable, with our ctx bound', async () => {
+  const seen: ToolCtx[] = [];
+  const def: ToolDef<z.ZodObject<{ id: z.ZodString }>> = {
+    name: 'lookup_widget',
+    description: 'Look up a widget by id.',
+    input: z.object({ id: z.string() }),
+    execute: async ({ id }, ctx) => {
+      seen.push(ctx);
+      return { found: true, id };
+    },
+  };
+  const ctx: ToolCtx = { conversationId: 'conv-1', logger: silentLogger };
+
+  const sdkTool = toAiSdkTool(def as ToolDef, ctx);
+
+  expect(sdkTool.description).toBe('Look up a widget by id.');
+  // The Zod schema is passed straight through. NOT via `toJsonSchema()`: that projection exists for
+  // TAC and the console and drops `additionalProperties: false`, which OpenAI's strict function
+  // calling rejects as a mid-turn 400.
+  expect(sdkTool.inputSchema).toBe(def.input);
+
+  const output = await sdkTool.execute?.({ id: 'A1' }, { toolCallId: 't1', messages: [], context: undefined });
+  expect(output).toEqual({ found: true, id: 'A1' });
+  // The ctx is closed over rather than taken from the SDK's options, which is what lets a tool log
+  // against the conversation it is running in.
+  expect(seen[0]?.conversationId).toBe('conv-1');
 });
 
 // ------------------------------------------------------------------ tool execution reporting

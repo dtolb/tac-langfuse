@@ -49,7 +49,21 @@ export interface ResolvedPrompt {
   readonly label: string | null;
   readonly messages: readonly PromptMessage[]; // still contains raw {{var}} placeholders
   readonly config: PromptConfig;
-  /** p.toJSON() — pass as experimental_telemetry.metadata.langfusePrompt to link trace -> version. null on fallback. */
+  /**
+   * `p.toJSON()` — the carrier for the trace -> prompt-version link. `null` on fallback, because a
+   * fallback has no version to attribute to.
+   *
+   * DO NOT pass this to the AI SDK verbatim, and do not reach for the `≤v6` recipe
+   * (`experimental_telemetry.metadata.langfusePrompt`): on `ai@7` `TelemetryOptions` has no
+   * `metadata` field at all, and the value that DOES work must arrive as
+   * `runtimeContext.langfusePrompt` — a PLAIN OBJECT `{name, version}`, opted in through
+   * `telemetry.includeRuntimeContext` — never as the JSON string `toJSON()` returns. A string is
+   * dropped SILENTLY by the integration's own `normalizePrompt`, and the only symptom is a prompt
+   * version whose Metrics tab stays empty.
+   *
+   * `langfusePromptLink()` in `../model/openai.ts` is the one place that conversion happens, and its
+   * docblock has the full account.
+   */
   readonly telemetryLink: unknown | null;
 }
 

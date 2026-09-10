@@ -74,8 +74,29 @@ export interface TurnResult {
   readonly usage: TurnUsage;
   /** Steps the tool loop took. 1 means a plain answer; >1 means at least one tool round-trip. */
   readonly steps: number;
-  /** Both derived from `FirstTokenMarks`, never recomputed — that module owns the definition. */
+  /**
+   * Time to first token AS THE CALLER EXPERIENCES IT: measured from the start of the turn, so it
+   * includes the prompt fetch, the memory recall, the compose and the tool resolve that all sit in
+   * front of the first spoken word. This is the number to compare between prompt versions, and it is
+   * what lands on the turn span as `turn.ttft_ms`.
+   *
+   * A FLOOR on the caller's true wait, not the whole of it: STT arrival, the WebSocket frame parse
+   * and TAC's `promptQueues` serialisation all happen before `runTurn` is called, so nothing measured
+   * inside it can include them.
+   */
   readonly ttftMs: number | null;
+  /**
+   * The same event measured from the model call instead — `ttftMs` minus everything before it.
+   *
+   * Kept as a separate number because it is the one that is comparable with the AI SDK's own
+   * generation timings and with spike S1's 1112 ms; `ttftMs` is not, and reporting only one of them
+   * under one name is how a measurement quietly starts overstating its own precision.
+   */
+  readonly modelTtftMs: number | null;
+  /**
+   * How long the token STREAM took, on the same origin as `modelTtftMs`. The turn's wall-clock
+   * duration is the `durationMs` on the `turn.end` event, which is a different question.
+   */
   readonly totalMs: number | null;
   /** Barge-in on voice. Normal operation, not an error. */
   readonly aborted: boolean;
@@ -90,11 +111,21 @@ export interface TurnResult {
 
 export interface TurnOutput {
   /**
-   * Consume exactly once.
+   * Consume exactly once, and START consuming promptly.
    *
    * `done` does not settle until this has been drained (or abandoned mid-flight). That is forced:
    * the timings live in a `FirstTokenMarks` object that is mutated AS the stream drains, so a
-   * `done` that settled earlier would report `null`.
+   * `done` that settled earlier would report `null`. Breaking out of the loop counts as abandoning
+   * it — that is what a voice barge-in looks like — so both normal exits are covered.
+   *
+   * A caller that never touches this at all is the sharp edge, and it costs more than a pending
+   * promise: the `llm.stream` span is ended by `done`, and an OpenTelemetry span that is never ended
+   * does not reach Langfuse AT ALL (see `../obs/spans.ts`). So a turn whose tokens were dropped on
+   * the floor would leave a missing observation with no error anywhere to explain it. `runTurn`
+   * therefore treats the model's own settlement as a floor on the wait: `done` still settles, the
+   * span still ends, and the timings are reported as `null`, which is honest — no token was ever
+   * delivered. A caller that only wants the final text should use `collect()` from
+   * `../obs/first-token.ts` rather than skipping the stream.
    */
   readonly tokens: AsyncIterable<string>;
   readonly done: Promise<TurnResult>;

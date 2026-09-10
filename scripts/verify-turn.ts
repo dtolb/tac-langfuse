@@ -135,8 +135,16 @@ try {
   console.log(`  model          ${result.model}`);
   console.log(`  steps          ${result.steps}`);
   console.log(`  tools called   ${result.toolCalls.length === 0 ? '(none)' : result.toolCalls.map((c) => `${c.name}(${JSON.stringify(c.input)})`).join(', ')}`);
-  console.log(`  ttftMs         ${result.ttftMs ?? 'null'}`);
-  console.log(`  totalMs        ${result.totalMs ?? 'null'}`);
+  // BOTH TTFTs, because the gap between them is the point: `ttftMs` is measured from the start of the
+  // turn (so it includes the prompt fetch, recall, compose and resolve that sit in front of the first
+  // spoken word) and `modelTtftMs` from the model call alone. Only the second is comparable with the
+  // AI SDK's own numbers; only the first is close to what the caller waited through.
+  console.log(`  ttftMs         ${result.ttftMs ?? 'null'}  (from turn start — what the caller waits)`);
+  console.log(`  modelTtftMs    ${result.modelTtftMs ?? 'null'}  (from the model call alone)`);
+  console.log(
+    `  preambleMs     ${result.ttftMs === null || result.modelTtftMs === null ? 'n/a' : result.ttftMs - result.modelTtftMs}  (prompt fetch + recall + compose + resolve)`,
+  );
+  console.log(`  totalMs        ${result.totalMs ?? 'null'}  (stream duration)`);
   console.log(`  aborted        ${result.aborted}`);
   console.log(`  usage          in ${result.usage.inputTokens ?? '?'} / out ${result.usage.outputTokens ?? '?'} / total ${result.usage.totalTokens ?? '?'}`);
   console.log(`  text           ${result.text.length} chars`);

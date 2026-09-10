@@ -89,14 +89,29 @@ How to help
   have someone follow up, rather than filling the gap yourself.
 - Answer the question that was actually asked before adding anything else.`;
 
+/**
+ * NO `temperature` in either default, deliberately — see `PromptConfigSchema`, which still accepts
+ * one from Langfuse.
+ *
+ * `gpt-5.4-mini` is a reasoning model and IGNORES `temperature`. The OpenAI provider says so out
+ * loud ("The feature \"temperature\" is not supported"), so a Langfuse prompt version that sets one
+ * is a self-reporting mistake an operator can fix in the web form with no redeploy — which is the
+ * design working, and why there is deliberately no model-name guard in code.
+ *
+ * The compiled default is the one config an operator CANNOT fix that way: it is what a bare-laptop
+ * run and a Langfuse outage both fall back to, and changing it needs a deploy. So it must not ship a
+ * parameter the default model discards.
+ *
+ * If you point `model` at a non-reasoning model (`gpt-4.1`, `gpt-4o`), `temperature: 0.4` is the
+ * value to put back and the reasoning is this: low but not zero, because a support agent that
+ * phrases the same refusal identically every time sounds like an IVR, which is the impression this
+ * whole demo exists to dispel.
+ */
 export const DEFAULT_PROMPTS: Readonly<Record<PromptName, DefaultPrompt>> = {
   'demo-agent-voice': {
     messages: [{ role: 'system', content: VOICE_SYSTEM }],
     config: {
       model: 'gpt-5.4-mini',
-      // Low but not zero: a support agent that phrases the same refusal identically every time
-      // sounds like an IVR, which is the impression this whole demo exists to dispel.
-      temperature: 0.4,
       tools: ['lookup_order', 'get_store_hours'],
       toolChoice: 'auto',
       // 3 rather than the schema's 4: every extra step is silence on a live call, and two tool
@@ -108,7 +123,6 @@ export const DEFAULT_PROMPTS: Readonly<Record<PromptName, DefaultPrompt>> = {
     messages: [{ role: 'system', content: TEXT_SYSTEM }],
     config: {
       model: 'gpt-5.4-mini',
-      temperature: 0.4,
       tools: ['lookup_order', 'get_store_hours'],
       toolChoice: 'auto',
       maxSteps: 4,

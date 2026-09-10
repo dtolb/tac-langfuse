@@ -147,6 +147,23 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     logger.error({ err, stage, conversationId, channel }, `turn: failed at ${stage}`);
   };
 
+  /**
+   * A turn that failed still ENDED, and saying so is not a nicety: the operator console tracks
+   * turns by the `turn.start`/`turn.end` pair, so a path that publishes only `error` leaves a turn
+   * open in the UI for the rest of the demo. Every failure exit from here goes through this.
+   */
+  const endFailed = (err: unknown): void => {
+    const durationMs = now() - startedAt;
+    deps.obs.publish({
+      kind: 'turn.end',
+      summary: `${channel} turn failed after ${durationMs}ms`,
+      channel,
+      conversationId,
+      durationMs,
+      payload: { failed: true, error: errorMessage(err) },
+    });
+  };
+
   deps.obs.publish({
     kind: 'turn.start',
     summary: `${channel}: ${preview(input.userText)}`,
@@ -158,6 +175,13 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       hasMemory: input.memory !== null,
     },
   });
+
+  // Whatever identity is already known goes on the span NOW, before the parallel fetch — not with
+  // the rest of the attributes after `tools.resolve`. `composeMemory` can reject (T13's TAC memory
+  // port is the realistic case), and a prepare failure was otherwise leaving a bare `turn.<channel>`
+  // span carrying no channel, no model and no prompt: present in Langfuse and impossible to
+  // attribute, which is the worst of both. The rest follows below, once it exists.
+  span.update({ input: { userText: input.userText }, metadata: { channel } });
 
   // Only what `done` still needs once this function has returned is hoisted out of the try.
   let prompt: ResolvedPrompt;
@@ -213,17 +237,44 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     //
     // `tools.unknown` is the one that matters beyond debugging: it is how a prompt version naming a
     // dead tool shows up in that version's Metrics tab rather than only in a log line.
+    //
+    // `prompt` is NOT metadata and must not be moved under it: it is one of the keys
+    // `createObservationAttributes` recognises, and it sets `langfuse.observation.prompt.name` and
+    // `.version` on the span. The intent is to put this span's timings — `turn.ttft_ms` and
+    // `turn.total_ms` below — inside the prompt version's own attribution, which is what the model
+    // call already gets from the AI SDK integration.
+    //
+    // MEASURED CAVEAT, do not delete: THIS DOES NOT REACH LANGFUSE TODAY, and the failure is in the
+    // server, not here. The attributes are set correctly (verified against an in-memory OTel
+    // exporter) and the span arrives with every one of its metadata keys intact — but Langfuse v4's
+    // OTel ingestion computes `promptName`/`promptVersion` as
+    // `type === GENERATION ? attributes[...] : null`, and this observation's type is `span`. Checked
+    // against the live stack: `events_core` has `prompt_name = ''` / `prompt_version = NULL` for
+    // `turn.bench` while the `chat <model>` GENERATION in the same trace carries the resolved link.
+    // (Langfuse infers GENERATION from these very attributes only when no explicit observation type
+    // is set, and `@langfuse/tracing` always sets one.)
+    //
+    // Kept anyway, and deliberately: it is the documented client API for this, it costs one
+    // attribute, and it starts working the day that mapper stops gating on GENERATION. Anyone who
+    // needs per-version turn timings BEFORE then has to solve it a different way — the honest
+    // options are a Langfuse-side change, or carrying the timings on an observation Langfuse already
+    // treats as a generation. Do not describe the link as working until `prompt_name` is populated.
+    //
+    // Only for a real version. `version` is `number | 'fallback'`, and a fallback has no Langfuse
+    // version to attribute to — the integration's own `isFallback` flag exists for exactly this
+    // distinction, so claiming one here would misattribute a degraded turn to a live version.
     span.update({
-      input: { userText: input.userText },
       metadata: {
         'prompt.name': prompt.name,
         'prompt.version': prompt.version,
         'prompt.label': prompt.label,
-        channel,
         model: prompt.config.model,
         'tools.offered': offered.map((t) => t.name),
         'tools.unknown': resolution.unknown,
       },
+      ...(typeof prompt.version === 'number' && {
+        prompt: { name: prompt.name, version: prompt.version, isFallback: false },
+      }),
     });
 
     // ---- 4. the model call ----
@@ -278,6 +329,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     fail(err, 'prepare');
     llmSpan?.update({ level: 'ERROR', statusMessage: errorMessage(err) });
     llmSpan?.end();
+    endFailed(err);
     throw err;
   }
   const stepSpan = llmSpan;
@@ -295,20 +347,47 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     (error: unknown) => ({ ok: false as const, error }),
   );
 
+  /**
+   * TWO time origins, reported under two names, and the gap between them is the point.
+   *
+   * `withFirstTokenMark` measures from ITS OWN construction, which is here — after the prompt fetch,
+   * the memory recall, the compose and the tool resolve have all finished. That model-relative number
+   * is worth keeping: it is the one comparable with the AI SDK's own generation timings and with
+   * spike S1's 1112 ms. It is reported as `turn.ttft_model_ms` / `TurnResult.modelTtftMs`.
+   *
+   * It is NOT the number this telemetry design exists to produce. The plan defines TTFT as the gap
+   * between the caller finishing their sentence and the agent starting to speak, and everything above
+   * this line sits inside that gap — 30-42 ms on live runs, and larger on a prompt-cache miss.
+   * A number that silently excludes work in front of the first spoken word overstates its own
+   * precision, which the plan calls worse than not measuring. So `turn.ttft_ms` — the name an
+   * operator reads as "the wait" — is measured from turn start, by adding the preamble back.
+   *
+   * HONEST LIMIT: turn-relative is a FLOOR on the caller's wait, not the whole of it. Neither number
+   * can see STT arrival, the WebSocket frame parse, or TAC's `promptQueues` serialisation; all three
+   * happen before `runTurn` is called at all, so no measurement taken in here can include them.
+   *
+   * `turn.total_ms` keeps the model-relative origin throughout — it is the duration of the STREAM.
+   * The turn's own wall-clock duration is the `durationMs` on `turn.end`.
+   */
+  const preambleMs = now() - startedAt;
+  const sinceTurnStart = (ms: number | null): number | null => (ms === null ? null : ms + preambleMs);
+
   const { stream: marked, marks } = withFirstTokenMark(
     streamed.tokens,
     (elapsedMs) => {
       // Published the MOMENT it happens rather than at the end: the live console strip exists to
       // show this number while the call is still in progress.
+      const ttftMs = elapsedMs + preambleMs;
       deps.obs.publish({
         kind: 'llm.first_token',
-        summary: `first token in ${elapsedMs}ms`,
+        summary: `first token in ${ttftMs}ms (${elapsedMs}ms of it inside the model call)`,
         channel,
         conversationId,
         correlationId,
-        durationMs: elapsedMs,
+        durationMs: ttftMs,
+        payload: { ttftMs, modelTtftMs: elapsedMs, preambleMs },
       });
-      span.update({ metadata: { 'turn.ttft_ms': elapsedMs } });
+      span.update({ metadata: { 'turn.ttft_ms': ttftMs, 'turn.ttft_model_ms': elapsedMs } });
     },
     now,
   );
@@ -321,7 +400,9 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   // after the inner one, so by the time `done` reads `marks` they are final. It also fires when the
   // consumer breaks out mid-stream, which is what a voice barge-in looks like from in here.
   const drained = deferred();
+  let consuming = false;
   async function* observed(): AsyncIterable<string> {
+    consuming = true;
     try {
       yield* marked;
     } finally {
@@ -332,7 +413,22 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   const done: Promise<TurnResult> = (async (): Promise<TurnResult> => {
     // The drain first, then the model's own outcome — see the comment on `observed` for why the
     // order matters to the timings.
-    await drained.promise;
+    //
+    // The vendor's settlement is the FLOOR on that wait, and the floor is load-bearing. A caller
+    // that never touches `tokens` AT ALL — a session that closed before we spoke, a guard that
+    // rejected before the loop — would otherwise leave `drained.promise` pending forever, and with it
+    // `stepSpan` UNENDED. An unended span does not reach Langfuse at all (see `../obs/spans.ts`), so
+    // the symptom is a missing `llm.stream` observation with no error anywhere: the same silent-drop
+    // failure class that module exists to warn about, arriving through a different door. Draining to
+    // the end and breaking out mid-stream BOTH resolve `drained`, so barge-in is unaffected.
+    //
+    // A consumer that has begun draining still owns the timings, hence the re-await: `marks` is
+    // mutated as the stream drains, and giving up on it early is the `totalMs: null` bug `observed`
+    // exists to prevent. A consumer that never began reports null timings, which is honest — no token
+    // was ever delivered to anyone. Callers should therefore start draining promptly; both planned
+    // callers do, and `collect()` is the answer for one that only wants the final text.
+    await Promise.race([drained.promise, settled]);
+    if (consuming) await drained.promise;
     const outcome = await settled;
 
     let result: ModelStreamResult;
@@ -342,31 +438,38 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       // ai@7 rejects its result promises with the abort reason when no step completed. A barge-in is
       // normal operation on a phone call, so it must NOT surface as an error event — and
       // `withFirstTokenMark` already kept the partial timings in its `finally` for exactly this.
+      //
+      // DELIBERATE TRADEOFF, and it cuts both ways: this branch keys on `aborted`, not on what the
+      // rejection actually SAYS, so ANY vendor failure that happens to coincide with a barge-in is
+      // discarded here — no `error` event, and zeroed `text`/`steps`/`usage`. The reasoning is that on
+      // a live call the caller has already started talking over us, so a spoken error is worse than
+      // silence about an error nobody was waiting to hear; and matching on abort MESSAGES is exactly
+      // the kind of vendor-string sniffing that breaks on a minor upgrade without a test noticing.
+      // The cost is that a genuine 503 racing an interruption looks like a clean barge-in in both the
+      // console and Langfuse. `tests/run-turn.test.ts` pins this, so changing it is a decision rather
+      // than a regression.
       logger.debug({ conversationId, channel }, 'turn: aborted mid-stream');
       result = { text: '', toolCalls: [], usage: EMPTY_USAGE, steps: 0 };
     } else {
       fail(outcome.error, 'model');
       stepSpan.update({ level: 'ERROR', statusMessage: errorMessage(outcome.error) });
       stepSpan.end();
-      deps.obs.publish({
-        kind: 'turn.end',
-        summary: `${channel} turn failed after ${now() - startedAt}ms`,
-        channel,
-        conversationId,
-        durationMs: now() - startedAt,
-        payload: { failed: true, error: errorMessage(outcome.error) },
-      });
+      endFailed(outcome.error);
       throw outcome.error;
     }
 
     const aborted = input.abortSignal.aborted;
     const called = [...new Set(result.toolCalls.map((c) => c.name))];
+    // Turn-relative, and it is the one an operator compares between prompt versions — the whole
+    // reason the `prompt` link above exists. `turn.ttft_model_ms` is the model-relative twin.
+    const ttftMs = sinceTurnStart(marks.ttftMs);
 
     span.update({
       output: { text: result.text, toolCalls: called },
       metadata: {
         'tools.called': called,
-        'turn.ttft_ms': marks.ttftMs,
+        'turn.ttft_ms': ttftMs,
+        'turn.ttft_model_ms': marks.ttftMs,
         'turn.total_ms': marks.totalMs,
         'turn.aborted': aborted,
       },
@@ -389,17 +492,24 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         toolCalls: result.toolCalls.map((c) => c.name),
         usage: result.usage,
         steps: result.steps,
-        ttftMs: marks.ttftMs,
+        ttftMs,
+        modelTtftMs: marks.ttftMs,
         aborted,
       },
     });
     deps.obs.publish({
       kind: 'turn.end',
-      summary: `${channel} turn in ${now() - startedAt}ms (ttft ${marks.ttftMs ?? '-'}ms)${aborted ? ', aborted' : ''}`,
+      summary: `${channel} turn in ${now() - startedAt}ms (ttft ${ttftMs ?? '-'}ms)${aborted ? ', aborted' : ''}`,
       channel,
       conversationId,
       durationMs: now() - startedAt,
-      payload: { ttftMs: marks.ttftMs, totalMs: marks.totalMs, aborted, steps: result.steps },
+      payload: {
+        ttftMs,
+        modelTtftMs: marks.ttftMs,
+        totalMs: marks.totalMs,
+        aborted,
+        steps: result.steps,
+      },
     });
 
     return {
@@ -407,7 +517,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       toolCalls: result.toolCalls,
       usage: result.usage,
       steps: result.steps,
-      ttftMs: marks.ttftMs,
+      ttftMs,
+      modelTtftMs: marks.ttftMs,
       totalMs: marks.totalMs,
       aborted,
       prompt: { name: prompt.name, version: prompt.version, label: prompt.label },
