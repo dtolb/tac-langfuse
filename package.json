@@ -12,7 +12,8 @@
     "dev:all": "node scripts/dev.mjs",
     "status": "node scripts/status.mjs",
     "langfuse": "docker compose -f docker-compose.langfuse.yml up -d",
-    "langfuse:down": "docker compose -f docker-compose.langfuse.yml down"
+    "langfuse:down": "docker compose -f docker-compose.langfuse.yml down",
+    "seed:prompts": "node --env-file-if-exists=.env scripts/seed-prompts.ts"
   },
   "license": "UNLICENSED",
   "type": "module",
