@@ -1,5 +1,10 @@
 /**
- * Diagnostic: drive ONE real turn end to end and exit non-zero if anything about it is wrong.
+ * Diagnostic: drive THREE real turns of one conversation and exit non-zero if anything is wrong.
+ *
+ * Turn 1 exercises the multi-step tool loop. Turn 2 asks something answerable ONLY from turn 1, which
+ * is the single check in this repo that an amnesiac agent cannot pass — every other assertion here is
+ * satisfied just as well with no history at all. Turn 3 repeats turn 2 after `clear()` and requires
+ * the answer to have gone away.
  *
  *   node --import ./server/obs/instrumentation.ts --env-file-if-exists=.env scripts/verify-turn.ts
  *
@@ -25,6 +30,7 @@
  * Reading the output: pino batches its writes while `console.log` is synchronous, so a WARN or DEBUG
  * line can land after the block it belongs to. Same caveat as `verify-tools.ts`.
  */
+import { createHistory } from '../server/agent/history.ts';
 import { CHANNEL_PROMPT } from '../server/agent/prompt/defaults.ts';
 import { createLangfusePromptPort } from '../server/agent/prompt/langfuse.ts';
 import { promptCacheTtlMs } from '../server/agent/prompt/port.ts';
@@ -33,7 +39,7 @@ import { passthroughMemory } from '../server/agent/memory.ts';
 import { runTurn } from '../server/agent/run-turn.ts';
 import { turnSpans } from '../server/agent/spans.ts';
 import { resolve } from '../server/agent/tools/resolve.ts';
-import type { TurnChannel, TurnDeps } from '../server/agent/types.ts';
+import type { TurnChannel, TurnDeps, TurnResult } from '../server/agent/types.ts';
 import { capabilities, loadConfig } from '../server/config.ts';
 import { createObsBus } from '../server/obs/bus.ts';
 import {
@@ -46,6 +52,15 @@ import {
 const CHANNEL: TurnChannel = 'bench';
 const QUESTION =
   'Where is my order A4721, and what are the opening hours of your Downtown store? Please check both.';
+/**
+ * Turn 2 is answerable ONLY from history — the order number appears nowhere in this sentence, in the
+ * system prompt or in any tool output, so a correct answer is proof the store worked. An amnesiac
+ * agent answers this fluently and wrongly ("could you tell me the order number?"), which is exactly
+ * why a single-turn check cannot see the defect.
+ */
+const FOLLOW_UP = 'What was the order number I just asked about? Reply with only the number.';
+/** The string turn 2 must contain and post-clear turn 3 must not. Specific enough that a guess is not a plausible explanation. */
+const ORDER_NUMBER = 'A4721';
 
 let failures = 0;
 const fail = (msg: string): void => {
@@ -71,6 +86,9 @@ bus.subscribe((e) =>
 );
 
 const caps = capabilities(app);
+// The real store with its shipped caps. Held here rather than inside `deps` so this script can also
+// assert the thing no single turn can show: that `clear` actually detaches the transcript.
+const history = createHistory();
 const deps: TurnDeps = {
   prompts: createLangfusePromptPort({
     langfuse: app.langfuse,
@@ -93,6 +111,7 @@ const deps: TurnDeps = {
   obs: bus,
   spans: turnSpans,
   branding: { persona: 'Ada, a customer support agent', companyName: 'Northwind Traders' },
+  history,
 };
 
 const conversationId = `verify-turn-${Date.now()}`;
@@ -106,13 +125,24 @@ console.log(`traceparent:     ${conversation.traceparent ?? 'NONE (no provider r
 console.log(`prompt for ${CHANNEL}: ${CHANNEL_PROMPT[CHANNEL]}`);
 console.log(`question:        ${QUESTION}\n`);
 
-try {
-  const result = await withTurnSpan(`turn.${CHANNEL}`, conversation.traceparent, async (span) => {
+/**
+ * One turn, driven the way a real caller does.
+ *
+ * Every turn of the run goes through here and through the SAME `conversation.traceparent`, so turns
+ * 1-3 land in one Langfuse trace — which is also the shape T13 needs on a live call.
+ *
+ * The `withTurnSpan` callback wraps the drain AND the `await done`, which is the contract from
+ * `run-turn.ts`'s header. Note there is no `await` between receiving `tokens` and the first
+ * iteration: that is the other half of the contract, and getting it wrong reports null timings while
+ * still printing the whole answer correctly.
+ */
+const driveTurn = async (question: string): Promise<TurnResult> =>
+  withTurnSpan(`turn.${CHANNEL}`, conversation.traceparent, async (span) => {
     const { tokens, done } = await runTurn(
       {
         conversationId,
         channel: CHANNEL,
-        userText: QUESTION,
+        userText: question,
         memory: null,
         sessionMetadata,
         profileId: null,
@@ -130,6 +160,9 @@ try {
 
     return await done;
   });
+
+try {
+  const result = await driveTurn(QUESTION);
 
   console.log(`  prompt         ${result.prompt.name} ${result.prompt.version === 'fallback' ? 'fallback' : `v${result.prompt.version}`} (label ${result.prompt.label ?? 'none'})`);
   console.log(`  model          ${result.model}`);
@@ -177,6 +210,48 @@ try {
   }
   if (result.steps < 2) {
     fail(`the tool loop took ${result.steps} step(s); a turn that called a tool and then answered takes at least 2`);
+  }
+
+  // ---- turn 2: does the agent actually remember? ----
+  // The check T10 exists for, and the only one in this repo that a real model has to pass. Everything
+  // above this line is satisfied just as well by an agent with no memory at all.
+  const stored = history.read(conversationId);
+  console.log(`\n  history        ${stored.length} message(s) after turn 1: ${stored.map((m) => m.role).join(', ')}`);
+  if (stored.length !== 2) {
+    fail(`expected the user+assistant pair in history after one turn, found ${stored.length} message(s)`);
+  }
+
+  console.log(`\nturn 2 — answerable ONLY from history\nquestion:        ${FOLLOW_UP}`);
+  const second = await driveTurn(FOLLOW_UP);
+  console.log(`  ttftMs         ${second.ttftMs ?? 'null'}`);
+  console.log(`  historyIn      ${stored.length} message(s) were sent as prior context`);
+  console.log(`  text           ${second.text.trim()}`);
+
+  if (second.text.includes(ORDER_NUMBER)) {
+    console.log(`  ok: the model repeated ${ORDER_NUMBER}, which appears nowhere in turn 2's question`);
+  } else {
+    fail(
+      `turn 2 did not repeat ${ORDER_NUMBER} — the agent did not see turn 1. This is the amnesiac failure T10 exists to prevent, and it passes every single-turn check above.`,
+    );
+  }
+  if (history.read(conversationId).length !== 4) {
+    fail(`expected 4 messages after two turns, found ${history.read(conversationId).length}`);
+  }
+
+  // ---- turn 3: and does `clear` really detach it? ----
+  // T13 calls `clear` from `conversationEnded` and `webSocketDisconnected`. A `clear` that forgot the
+  // id but left the transcript reachable would leak one caller's conversation into the next call on a
+  // reused id, which is a privacy failure rather than a bug.
+  history.clear(conversationId);
+  console.log(`\nturn 3 — the same question after clear()\n  history        ${history.read(conversationId).length} message(s)`);
+  if (history.read(conversationId).length !== 0) fail('clear() did not empty the conversation');
+
+  const third = await driveTurn(FOLLOW_UP);
+  console.log(`  text           ${third.text.trim()}`);
+  if (third.text.includes(ORDER_NUMBER)) {
+    fail(`turn 3 repeated ${ORDER_NUMBER} after clear() — the transcript is still reachable`);
+  } else {
+    console.log(`  ok: no ${ORDER_NUMBER} — a cleared conversation genuinely starts over`);
   }
 } catch (err) {
   fail(`the turn threw: ${err instanceof Error ? err.message : String(err)}`);

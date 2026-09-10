@@ -91,11 +91,17 @@ interface ComposedTurn {
  * user/assistant pairs; those keep their order and lead the conversation. Folded memory is appended
  * to the system text rather than injected as a message, so it cannot be mistaken for something the
  * caller said.
+ *
+ * ORDER OF THE MESSAGE LIST: few-shot examples, then this conversation's history, then the current
+ * utterance last. The examples are part of the prompt VERSION and must not drift into the middle of
+ * a real transcript, and `history` deliberately does NOT contain the current utterance — it is
+ * appended once the turn has an answer, so composing it here is the only place the two meet.
  */
 function composeTurn(
   prompt: ResolvedPrompt,
   slots: Slots,
   memoryContext: string | null,
+  history: readonly TurnMessage[],
   userText: string,
 ): ComposedTurn {
   const composed = compose(prompt.messages, slots);
@@ -109,7 +115,7 @@ function composeTurn(
 
   return {
     system: systemParts.join('\n\n'),
-    messages: [...examples, { role: 'user', content: userText }],
+    messages: [...examples, ...history, { role: 'user', content: userText }],
   };
 }
 
@@ -209,11 +215,30 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     ]);
     prompt = fetched;
 
-    // ---- 2. compose the system prompt ----
+    // ---- 2. compose the system prompt, over this conversation's history ----
+    // The history read sits INSIDE this step rather than getting a span of its own, deliberately: it
+    // is a `Map` lookup, and a `history.read` step reporting 0.00 ms on every turn would add a row to
+    // the waterfall that suggests a cost it does not have. (`prompt.fetch`'s ~0 ms cache hit is
+    // different — there the zero is the news.) If this ever becomes a network call, it needs both its
+    // own span and a place in the `Promise.all` above, not this line.
+    const priorMessages = deps.history.read(conversationId);
     const composed = await deps.spans.timeStep(
       'prompt.compose',
-      async () => composeTurn(prompt, slotsFor(deps.branding, input, startedAt), memoryContext, input.userText),
-      (c) => ({ systemChars: c.system.length, messages: c.messages.length }),
+      async () =>
+        composeTurn(
+          prompt,
+          slotsFor(deps.branding, input, startedAt),
+          memoryContext,
+          priorMessages,
+          input.userText,
+        ),
+      (c) => ({
+        systemChars: c.system.length,
+        messages: c.messages.length,
+        // Named separately from `messages` because it is the number that answers "did the agent
+        // remember?" — and the number that explains a turn-20 prompt costing more than turn 2.
+        historyMessages: priorMessages.length,
+      }),
     );
 
     // ---- 3. resolve the tool names this prompt version asked for ----
@@ -411,13 +436,31 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   // consumer breaks out mid-stream, which is what a voice barge-in looks like from in here.
   const drained = deferred();
   let consuming = false;
+  /**
+   * What was ACTUALLY delivered to the caller, accumulated as it goes.
+   *
+   * Needed because of the abort path below: `ai@7` rejects its result promises when a barge-in lands
+   * before any step completed, so `result.text` is `''` there by design — yet the caller heard those
+   * words, and history has to record what was said rather than what the vendor could confirm.
+   *
+   * Accumulated HERE and not in `withFirstTokenMark`, whose docblock promises it measures the stream
+   * "without buffering the stream to measure it". Keeping the transcript in a timings object would
+   * quietly make that false for every caller of a shared, separately-tested module.
+   */
+  let streamedText = '';
   async function* observed(): AsyncIterable<string> {
     // Set in the generator BODY, which does not run until the first `next()` — a generator function
     // returns without executing a line of it. So `consuming` cannot be trusted until the caller has
     // actually begun iterating; the race below buys a macrotask of grace for exactly that reason.
     consuming = true;
     try {
-      yield* marked;
+      // A `for await` rather than `yield* marked`, only so each delta can be accumulated on its way
+      // past. Breaking out of the consumer's loop still propagates `return()` through to `marked`, so
+      // the barge-in path is unchanged — the abort tests are what hold that.
+      for await (const delta of marked) {
+        streamedText += delta;
+        yield delta;
+      }
     } finally {
       drained.resolve();
     }
@@ -547,6 +590,38 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         steps: result.steps,
       },
     });
+
+    /**
+     * Persist the exchange — LAST, and only on a path that produced a result.
+     *
+     * WHY IT IS DOWN HERE rather than at the top of the turn: appending the user message on the way
+     * in would make the store disagree with reality for the whole duration of the model call, which
+     * on voice is seconds during which a barge-in can trigger the next turn and read it. And placing
+     * it after the two `publish` calls means a throw from the store cannot cost the turn its
+     * telemetry — the human already heard the answer, so the report of it must land regardless.
+     *
+     * WHAT GOES IN, and both halves are deliberate:
+     *
+     *  - `result.text` when the model completed, `streamedText` when it did not. They agree on a
+     *    normal turn; they differ only on a barge-in, where the vendor reports no text and the caller
+     *    nonetheless heard a partial sentence.
+     *  - THE PARTIAL IS KEPT. Ratified decision: on voice the caller heard those words, so dropping
+     *    them lets turn 2 contradict what the room remembers ("as I said" about something history
+     *    lost). The cost is that history can hold a sentence that stops mid-word, which reads oddly
+     *    in a transcript but is what actually happened.
+     *  - An EMPTY answer is not recorded as an assistant message. A blank turn would tell the model
+     *    it once replied with nothing, which is worse than a gap; the question is still recorded,
+     *    because the caller did ask it and may refer back to it.
+     *
+     * The hard-failure paths above `throw` before reaching this line, so a turn that could not answer
+     * at all leaves history untouched — the caller speaks a fallback and the human nearly always
+     * repeats themselves, which would otherwise store the same utterance twice.
+     */
+    const spoken = result.text !== '' ? result.text : streamedText;
+    deps.history.append(conversationId, [
+      { role: 'user', content: input.userText },
+      ...(spoken === '' ? [] : [{ role: 'assistant' as const, content: spoken }]),
+    ]);
 
     return {
       text: result.text,

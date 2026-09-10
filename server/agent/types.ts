@@ -169,6 +169,24 @@ export interface MemoryComposePort {
 }
 
 /**
+ * Prior turns of this conversation.
+ *
+ * A port on this seam for the same reason `MemoryComposePort` is one: TAC keeps its own history
+ * in-process and never exposes it, so the store has to be ours, and `run-turn.ts` must not care
+ * whether it is a `Map` or something networked. `createHistory` in `./history.ts` is the one
+ * implementation and its header carries the eviction policy.
+ *
+ * SYNCHRONOUS, deliberately — see that header. If a networked store ever replaces it, this becomes
+ * async and the read folds into the `Promise.all` beside the prompt fetch rather than sitting in
+ * front of it.
+ */
+export interface HistoryPort {
+  read(conversationId: string): readonly TurnMessage[];
+  append(conversationId: string, messages: readonly TurnMessage[]): void;
+  clear(conversationId: string): void;
+}
+
+/**
  * T8's `resolve()` with its process-wide arguments (capabilities, catalog, bus) already applied.
  *
  * Partially applied rather than passed whole, because `capabilities` comes from `server/config.ts`
@@ -227,6 +245,13 @@ export interface TurnDeps {
   readonly obs: Pick<ObsBus, 'publish'>;
   readonly spans: TurnSpans;
   readonly branding: TurnBranding;
+  /**
+   * REQUIRED, not optional, and that is the point. An optional history port would default to an
+   * amnesiac agent that passes every single-turn test in the suite — the exact failure this store
+   * exists to prevent, reintroduced as a thing a caller can forget silently. `createHistory()` is a
+   * one-line default for a caller that genuinely wants a fresh store.
+   */
+  readonly history: HistoryPort;
   /** `ToolLogger`'s three levels are exactly the three this function uses. */
   readonly logger?: ToolLogger;
   /** Injected so timings are exact in tests rather than tolerant of a wall clock. */

@@ -22,11 +22,11 @@ POCs don't:
 All three land in **self-hosted Langfuse**. Its prompt `config` JSON is versioned with the prompt and
 is Langfuse's own documented home for `tools`/`tool_choice`/model params.
 
-## Status: T1–T9 done, all four spikes closed
+## Status: T1–T10 done, all four spikes closed
 
 ```
 pnpm typecheck   → 0          (TS 7.0.2, node project + web project)
-pnpm test        → 184 passed, 10 files
+pnpm test        → 210 passed, 11 files
 ```
 
 | | State |
@@ -41,12 +41,13 @@ pnpm test        → 184 passed, 10 files
 | **T7 prompts** | done — Langfuse by label, compiled-in fallback, `docker pause` proves the 2 s timeout |
 | **T8 tools** | done — registry, catalog, three-way resolver, two credential-free demo tools |
 | **T9 `runTurn`** | done — the channel-agnostic core, verified against the real model AND in the Langfuse UI |
+| **T10 history** | done — bounded two ways, LRU on *use*; a real model repeated an order number from turn 1 and forgot it after `clear()` |
 
-**Not started:** T10 history, T11 bench, T12–T14 TAC, T15–T17 Docker/Traefik, T18–T20 UI + docs.
+**Not started:** T11 bench, T12–T14 TAC, T15–T17 Docker/Traefik, T18–T20 UI + docs.
 
-There is a **working agent core** but **no way for a human to talk to it yet** — `POST /api/turn`
-still returns 501 and there is no bench page. That is T11, two tasks away. There is no TAC, no
-Twilio, no Docker for the app, and the web UI is a placeholder.
+There is a **working agent core that remembers**, but **no way for a human to talk to it yet** —
+`POST /api/turn` still returns 501 and there is no bench page. That is T11, the next task. There is
+no TAC, no Twilio, no Docker for the app, and the web UI is a placeholder.
 
 ## Running it
 
@@ -65,9 +66,25 @@ node --import ./server/obs/instrumentation.ts --env-file-if-exists=.env scripts/
 node --import ./server/obs/instrumentation.ts --env-file-if-exists=.env scripts/verify-telemetry.ts
 ```
 
-`verify-turn.ts` is the one that matters most now: it drives a **real** turn — live Langfuse prompt,
-real catalog, real model — and prints the version, tools called, TTFT and totals. It exits non-zero
-on a surprise, so it doubles as a smoke check.
+`verify-turn.ts` is the one that matters most now: it drives **three real turns of one conversation**
+— live Langfuse prompt, real catalog, real model — and prints the version, tools called, TTFT and
+totals. It exits non-zero on a surprise, so it doubles as a smoke check.
+
+Turn 2 is the assertion no other check in this repo can make. It asks *"what was the order number I
+just asked about?"* — a question whose answer appears nowhere in the question, the system prompt or
+any tool output — so a correct answer is proof the history store works. **An amnesiac agent passes
+every other check in the suite**, because every one of them drives a single turn. Turn 3 repeats it
+after `clear()` and requires the answer to be gone. Measured, both directions:
+
+```
+turn 1  2 tools, 2 steps, ttft 2278ms   history → 2 messages
+turn 2  "A4721"                          historyMessages 2, 634 input tokens
+        clear()
+turn 3  "I don't have an order number from this chat."   historyMessages 0, 560 input tokens
+```
+
+The 74-token input gap between turns 2 and 3 is the retained exchange, which is also why the message
+cap is a latency decision and not only a memory one.
 
 Langfuse UI: <http://localhost:3100> — `demo@example.com` / `changeme-at-least-8-chars`.
 
@@ -165,6 +182,7 @@ server/
     run-turn.ts     THE core. Channel-agnostic. Read its header before editing.
     spans.ts        the production TurnSpans adapter over obs/spans.ts
     memory.ts       passthrough MemoryComposePort (TAC's real one lands at T13)
+    history.ts      bounded per-conversation transcript. Caps + eviction policy in its header.
     prompt/         port.ts · langfuse.ts · defaults.ts · slots.ts
     tools/          registry.ts · catalog.ts · resolve.ts
     model/          port.ts · openai.ts  (the ONLY file importing `ai`)
@@ -199,31 +217,60 @@ gets one macrotask of grace, and a caller that awaits something slower between r
 its first `next()` gets `ttftMs`/`totalMs` as `null` while the caller still hears the whole answer.
 T13's voice handler is exactly the code that tends to acquire an `await` there.
 
-## Next task: T10, conversation history
+### How history is shaped, and the two decisions inside it
 
-Small, well-bounded, and the last thing between here and a human talking to the agent.
+`server/agent/history.ts`. Bounded on **both** dimensions, because a demo box runs for a week:
+`HISTORY_MAX_MESSAGES = 20` (ten exchanges, even on purpose — turns are appended as a pair) and
+`HISTORY_MAX_CONVERSATIONS = 200`.
 
-**Why it exists:** TAC hands you only the current message. History is in-process and never exposed
-(plan footgun #6). Without our own store we ship an amnesiac agent that passes every test.
+- **Messages evict oldest-first. Conversations evict least-recently-USED** — used, not written, so
+  `read` refreshes recency. Recency-on-write-only would evict the conversation whose next turn is
+  already in flight, i.e. the live call, and the symptom is an agent forgetting mid-call only under
+  load only on a long-lived box. A test asserts the read path specifically; it was proven to bite.
+- **A dropped conversation warns; a trimmed message does not.** Deliberate asymmetry — trimming is
+  steady state and a line per turn would bury the one that matters.
+- **`TurnDeps.history` is REQUIRED, not optional.** An optional port defaults to an amnesiac that
+  passes every single-turn test. Making it required turned the omission into a compile error, which
+  is exactly what happened to `scripts/verify-turn.ts` when the field landed.
+- **RATIFIED PRODUCT DECISION — an aborted turn keeps its partial answer.** On voice the caller heard
+  those words, so dropping them lets turn 2 contradict what the room remembers. Note this text cannot
+  come from `TurnResult.text`: `ai@7` rejects its result promises on a barge-in with no completed
+  step, so `runTurn` reports `text: ''` there **by design and still does**. The partial is therefore
+  accumulated in `runTurn`'s own `observed()` generator — deliberately not in `withFirstTokenMark`,
+  whose docblock promises it measures "without buffering the stream to measure it". An *empty* answer
+  is still not stored: the question is recorded, an assistant message is not.
+- A turn that fails outright leaves history untouched — the caller speaks a fallback and the human
+  nearly always repeats themselves, which would otherwise store the utterance twice.
 
-1. `server/agent/history.ts` — a bounded `Map<conversationId, TurnMessage[]>`. Use
-   **`TurnMessage`** from `server/agent/types.ts`, **not** the AI SDK's `ModelMessage`: the plan
-   sketches `ModelMessage[]`, but that type comes from `ai`, which
-   `tests/architecture.test.ts` confines to `server/agent/model/`. Same deviation, same reason, as
-   T9 already documents.
-2. Cap it two ways — messages per conversation, and conversations in the map. A demo box that runs
-   for a week must not grow without bound. Decide and document the eviction policy.
-3. Clear explicitly on `conversationEnded` / `webSocketDisconnected` (T13 calls it; just export it).
-4. Add a `history` port to `TurnDeps` and wire it into `run-turn.ts`: read before the model call,
-   append the user message and the final assistant text after. Appending the assistant turn belongs
-   inside `done`, since that is where the final text exists.
-5. Decide what happens on an aborted turn — a barge-in leaves partial text. Whether that partial
-   answer belongs in history is a real product decision; make it deliberately and write down why.
+The read costs nothing measurable, so it deliberately has **no span of its own** — a `history.read`
+row reporting 0.00 ms every turn implies a cost it does not have. It reports `historyMessages` on
+`prompt.compose` instead, which is the number that answers "did it remember?" and explains why a
+turn-20 prompt costs more than a turn-2 one. Make it a span if it ever becomes I/O.
 
-**Done when:** turn 2 sees turn 1, a cleared conversation does not, the caps evict as documented, and
-`scripts/verify-turn.ts` (extended to a second turn) shows the model actually referring back.
+## Next task: T11, the bench harness
 
-Verify by running two turns, not by reading the code.
+**First point where a human can actually talk to the agent**, and it must work with zero Twilio
+credentials. `server/http/routes-bench.ts` plus a `/bench` page using Strix `ChatLog`/`ChatInput`,
+with token deltas over the existing SSE hub.
+
+`tests/architecture.test.ts:143` already holds the guard that `routes-bench.ts` never imports TAC —
+written inert (`if (!existsSync(bench)) return`) until the file exists, so **it currently passes
+vacuously**. Creating the file arms it; prove it bites before trusting it.
+
+Four things that will cost time if skipped:
+
+1. **Call `withTurnSpan` around the ENTIRE handler including the token drain.** `runTurn` does not
+   create the turn span — see the section above. A span that closes before the drain puts every AI
+   SDK span in a different trace.
+2. **Consume `tokens` before your next `await`**, literally — the drain race gets one macrotask of
+   grace. A caller that awaits something slower in between silently reports `null` timings while
+   still streaming the whole answer correctly.
+3. **Never create a span with a raw OpenTelemetry tracer** — `LangfuseSpanProcessor` drops them with
+   no error. Always go through `server/obs/spans.ts`.
+4. **Read `web/README.md` before writing the page.** Strix has no `Table`, `Chart`, `Drawer`,
+   `Accordion`, `Popover` or `EmptyState`, and `Toast`/`Alert` have no queue or provider. The
+   authoritative component list is the `exports` map in the package's `package.json` — `llms.txt` is
+   stale. Token names that look obvious may not exist (`border-default` does not).
 
 ## Gaps and honest limits
 
@@ -246,6 +293,12 @@ Verify by running two turns, not by reading the code.
   `/observations`, `/metrics/daily` all 404; `/events` and `/spans` are POST-only. Prompts read fine
   via `/api/public/v2/prompts`. Trace verification is a **UI check via Playwright MCP**, never an API
   assertion. (Reading ClickHouse directly works for debugging ingestion, as at correction #3.)
+- **History is process-local and dies with the container.** By decision, not oversight — the plan
+  rules out a second durable store and Langfuse owns durable history. Consequences to state out loud:
+  a `node --watch` restart drops every conversation mid-call, and a two-instance deploy would not
+  share them. The escape hatch is documented in `history.ts`'s header, and it is not free: a networked
+  store makes `read` async, which then belongs in the `Promise.all` beside the prompt fetch rather
+  than in front of it.
 - **No live-call verification.** S4 proved the TAC wiring structurally with dummy credentials;
   nothing has placed a real call. Don't run a demo end-to-end without asking — real billed calls/SMS.
 - `docker-compose.yml` for the app does not exist yet (T15). The Langfuse compose does.

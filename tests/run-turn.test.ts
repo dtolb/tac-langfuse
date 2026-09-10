@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { runTurn } from '../server/agent/run-turn.ts';
 import { langfusePromptLink, toAiSdkTool, toolChoiceOption } from '../server/agent/model/openai.ts';
 import { passthroughMemory } from '../server/agent/memory.ts';
+import { createHistory, type HistoryStore } from '../server/agent/history.ts';
 import type {
   MemoryComposePort,
   TurnDeps,
@@ -258,6 +259,10 @@ const harness = (over: {
   readonly model?: ModelPort;
   readonly now?: () => number;
   readonly catalog?: ReturnType<typeof createToolCatalog>;
+  /** Shared between harnesses to drive a SECOND turn of the same conversation. */
+  readonly history?: HistoryStore;
+  readonly userText?: string;
+  readonly conversationId?: string;
 } = {}): Harness => {
   const bus = createObsBus();
   const events: ObsEvent[] = [];
@@ -281,13 +286,14 @@ const harness = (over: {
       obs: bus,
       spans: spans.spans,
       branding: { persona: 'Ada', companyName: 'Northwind Traders' },
+      history: over.history ?? createHistory(),
       logger: silentLogger,
       ...(over.now !== undefined && { now: over.now }),
     },
     input: {
-      conversationId: 'conv-1',
+      conversationId: over.conversationId ?? 'conv-1',
       channel: 'bench',
-      userText: 'where is order A4721?',
+      userText: over.userText ?? 'where is order A4721?',
       memory: null,
       sessionMetadata: {},
       profileId: null,
@@ -1092,4 +1098,189 @@ test('maxOutputTokens is omitted rather than passed as undefined when the versio
   const h = harness({ model: model.port });
   await drive(h);
   expect('maxOutputTokens' in (model.requests[0] ?? {})).toBe(false);
+});
+
+// ------------------------------------------------------------------ 12. conversation history
+
+/**
+ * The amnesia tests. Every other test in this file drives ONE turn, which is precisely why an
+ * amnesiac agent passed all of them: the defect is only observable across two.
+ */
+
+test('turn 2 sees turn 1 — and the pair arrives in order, after the few-shot examples', async () => {
+  const history = createHistory();
+
+  const first = fakeModel({
+    deltas: () => streamOf('Order A4721 ships Tuesday.'),
+    result: { ...EMPTY_RESULT, text: 'Order A4721 ships Tuesday.' },
+  });
+  await drive(harness({ history, model: first.port, userText: 'where is order A4721?' }));
+
+  const second = fakeModel({ deltas: () => streamOf('Tuesday.') });
+  await drive(harness({ history, model: second.port, userText: 'when did you say?' }));
+
+  expect(second.requests[0]?.messages).toEqual([
+    { role: 'user', content: 'where is order A4721?' },
+    { role: 'assistant', content: 'Order A4721 ships Tuesday.' },
+    { role: 'user', content: 'when did you say?' },
+  ]);
+});
+
+test("a turn's own user message is not in its own request twice", async () => {
+  // The obvious wrong wiring: append the user message BEFORE reading history, so `composeTurn`
+  // appends it a second time. The model then sees the question duplicated, which reads as a
+  // stuttering caller and is invisible in any single-turn test.
+  const history = createHistory();
+  const model = fakeModel({ deltas: () => streamOf('hi') });
+  await drive(harness({ history, model: model.port, userText: 'only once please' }));
+
+  const asked = (model.requests[0]?.messages ?? []).filter((m) => m.content === 'only once please');
+  expect(asked).toHaveLength(1);
+});
+
+test('history is stored per conversation, so a second caller does not inherit the first', async () => {
+  const history = createHistory();
+  await drive(
+    harness({
+      history,
+      conversationId: 'conv-A',
+      userText: 'I am caller A',
+      model: fakeModel({ deltas: () => streamOf('hello A'), result: { ...EMPTY_RESULT, text: 'hello A' } }).port,
+    }),
+  );
+
+  const model = fakeModel({ deltas: () => streamOf('hello B') });
+  await drive(harness({ history, conversationId: 'conv-B', userText: 'I am caller B', model: model.port }));
+
+  expect(model.requests[0]?.messages).toEqual([{ role: 'user', content: 'I am caller B' }]);
+});
+
+test('a cleared conversation starts over', async () => {
+  // T13 calls `clear` from `conversationEnded` and `webSocketDisconnected`. This is the assertion
+  // that it actually detaches the transcript rather than only forgetting the id.
+  const history = createHistory();
+  await drive(
+    harness({
+      history,
+      model: fakeModel({ deltas: () => streamOf('first'), result: { ...EMPTY_RESULT, text: 'first' } }).port,
+      userText: 'turn one',
+    }),
+  );
+
+  history.clear('conv-1');
+
+  const model = fakeModel({ deltas: () => streamOf('fresh') });
+  await drive(harness({ history, model: model.port, userText: 'turn two' }));
+  expect(model.requests[0]?.messages).toEqual([{ role: 'user', content: 'turn two' }]);
+});
+
+test('an aborted turn keeps the words that were actually streamed', async () => {
+  // DELIBERATE PRODUCT DECISION, ratified: a barge-in on voice means the caller HEARD the partial
+  // sentence, so dropping it would let turn 2 contradict what the room remembers. Note this text
+  // cannot come from `TurnResult.text` — ai@7 rejects its result promises on an abort with no
+  // completed step, so `runTurn` reports `text: ''` there by design.
+  const history = createHistory();
+  const abortingHarness = harness({
+    history,
+    model: fakeModel({
+      deltas: async function* () {
+        yield 'Your order ships ';
+        yield 'on Tues';
+      },
+      failWith: new Error('aborted'),
+    }).port,
+    userText: 'when does it ship?',
+  });
+  abortingHarness.abort.abort();
+
+  const { tokens, done } = await runTurn(abortingHarness.input, abortingHarness.deps);
+  for await (const _delta of tokens) void _delta;
+  const result = await done;
+
+  expect(result.aborted).toBe(true);
+  expect(result.text).toBe(''); // unchanged, pinned behaviour
+  expect(history.read('conv-1')).toEqual([
+    { role: 'user', content: 'when does it ship?' },
+    { role: 'assistant', content: 'Your order ships on Tues' },
+  ]);
+});
+
+test('an abort before any token records the question but invents no answer', async () => {
+  const history = createHistory();
+  const h = harness({
+    history,
+    model: fakeModel({ deltas: () => emptyStream(), failWith: new Error('aborted') }).port,
+    userText: 'never answered',
+  });
+  h.abort.abort();
+
+  const { tokens, done } = await runTurn(h.input, h.deps);
+  for await (const _delta of tokens) void _delta;
+  await done;
+
+  // An empty assistant message is worse than none: it is a turn the model would be told it took.
+  expect(history.read('conv-1')).toEqual([{ role: 'user', content: 'never answered' }]);
+});
+
+test('a turn that fails outright leaves history untouched', async () => {
+  const history = createHistory();
+  const h = harness({
+    history,
+    model: fakeModel({ failWith: new Error('502 from the provider') }).port,
+    userText: 'this will fail',
+  });
+
+  const { tokens, done } = await runTurn(h.input, h.deps);
+  for await (const _delta of tokens) void _delta;
+  await expect(done).rejects.toThrow('502');
+
+  // The caller speaks a fallback line and the human almost always repeats themselves, so recording
+  // a question that got no answer would put the same utterance in history twice.
+  expect(history.read('conv-1')).toEqual([]);
+});
+
+test('history is appended only after the stream has drained', async () => {
+  // Appending at the top of the turn would make the store lie for the whole duration of the model
+  // call — and on voice that is seconds during which a barge-in could read it.
+  const history = createHistory();
+  const h = harness({
+    history,
+    model: fakeModel({ deltas: () => streamOf('an', 'swer'), result: { ...EMPTY_RESULT, text: 'answer' } }).port,
+    userText: 'mid-flight check',
+  });
+
+  const { tokens, done } = await runTurn(h.input, h.deps);
+  const seen: number[] = [];
+  for await (const _delta of tokens) seen.push(history.read('conv-1').length);
+  await done;
+
+  expect(seen).toEqual([0, 0]); // nothing stored while streaming
+  expect(history.read('conv-1')).toHaveLength(2); // both stored once it finished
+});
+
+test('the per-conversation cap keeps a long conversation from growing the prompt without bound', async () => {
+  const history = createHistory({ maxMessages: 4, maxConversations: 10 });
+
+  for (const q of ['q1', 'q2', 'q3']) {
+    await drive(
+      harness({
+        history,
+        userText: q,
+        model: fakeModel({ deltas: () => streamOf(`a-${q}`), result: { ...EMPTY_RESULT, text: `a-${q}` } }).port,
+      }),
+    );
+  }
+
+  const model = fakeModel({ deltas: () => streamOf('hi') });
+  await drive(harness({ history, model: model.port, userText: 'q4' }));
+
+  // Four remembered messages plus the current question — the oldest exchange has aged out, so the
+  // input token count for turn 20 is the same as for turn 4.
+  expect(model.requests[0]?.messages).toEqual([
+    { role: 'user', content: 'q2' },
+    { role: 'assistant', content: 'a-q2' },
+    { role: 'user', content: 'q3' },
+    { role: 'assistant', content: 'a-q3' },
+    { role: 'user', content: 'q4' },
+  ]);
 });
