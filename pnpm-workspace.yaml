@@ -1,0 +1,13 @@
+# Not a workspace declaration — there is no `packages:` key, and web/ is deliberately its own
+# install root (own lockfile, own node_modules, own Dockerfile, independent layer caching).
+# This file exists only to record a build-script decision, which pnpm 11 reads from here.
+#
+# protobufjs arrives transitively via @opentelemetry/exporter-trace-otlp-proto, a dependency
+# of @opentelemetry/sdk-node. We export spans through LangfuseSpanProcessor over HTTP and
+# never touch the protobuf/gRPC exporter, so its postinstall codegen is dead weight.
+#
+# Leaving it undecided is not neutral: pnpm writes a `set this to true or false` placeholder
+# here and then fails the implicit install before EVERY `pnpm test` / `pnpm dev` with
+# ERR_PNPM_IGNORED_BUILDS.
+allowBuilds:
+  protobufjs: false

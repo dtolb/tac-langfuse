@@ -1,0 +1,59 @@
+{
+  "//": [
+    "The BROWSER project. The node side lives at ../tsconfig.json.",
+    "",
+    "Next generated most of this; three deliberate changes on top:",
+    "",
+    "1. ADDED noUncheckedIndexedAccess + verbatimModuleSyntax — two of the three house",
+    "   strict flags. Both are fine under Next 16 and React 19.",
+    "2. NOT exactOptionalPropertyTypes, unlike the node project. It fights React prop",
+    "   spreading and Next's own generated route types. The asymmetry is intentional, and it",
+    "   is why shared/ must satisfy the STRICTER of the two: shared/ is compiled here AND",
+    "   there, so it may contain no Node global and no DOM global.",
+    "3. `../shared` added to include, so the browser typechecks the same contract the server",
+    "   does rather than a copy of it.",
+    "",
+    "NEVER add a `paths` entry for `@gtmi/strix-react/*`. Next applies `paths` to RUNTIME",
+    "resolution, so mapping the package to its .d.ts files makes every import `undefined` at",
+    "runtime — `Element type is invalid ... but got: undefined`, and for `cn` a",
+    "`TypeError: (void 0) is not a function`. That was misdiagnosed as a Turbopack bug for a",
+    "long time. `moduleResolution: bundler` already picks up the package's `types` condition.",
+    "",
+    "`target: ES2017` is Next's default and is left alone — Next's toolchain owns the browser",
+    "output target, and raising it here buys nothing."
+  ],
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+
+    "noUncheckedIndexedAccess": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+
+    "plugins": [{ "name": "next" }],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.mts",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "../shared/**/*.ts"
+  ],
+  "exclude": ["node_modules"]
+}

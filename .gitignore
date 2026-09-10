@@ -1,0 +1,24 @@
+# Secrets. `.env` holds real Twilio + OpenAI + Langfuse credentials; `.env.example` is the
+# documented artifact that IS committed.
+.env
+.env.*
+!.env.example
+
+node_modules/
+.next/
+dist/
+coverage/
+
+# Playwright MCP artifacts from interactive browser verification during development.
+# Browser checks happen via MCP, not as committed E2E tests — these are the leftovers.
+.playwright-mcp/
+
+# Superpowers / SDD working state. The durable record is git history + docs/.
+.superpowers/
+
+# Langfuse's self-hosted stack writes here if bind-mounted rather than using named volumes.
+langfuse-data/
+
+.DS_Store
+*.log
+logs/

@@ -1,0 +1,25 @@
+/* Strix consumer stylesheet — three concerns, and the order is load-bearing.
+ *
+ * 1. `tailwindcss` MUST come first. tokens.css does not import it, and its @theme block
+ *    EXTENDS Tailwind's rather than replacing it. Reversed, nothing errors — you silently
+ *    get no Strix utilities.
+ * 2. Do NOT add an `@source` line. tokens.css ships its own pointing at the package dist,
+ *    because Tailwind v4 skips node_modules during content detection.
+ * 3. `color-scheme: dark` is ours to set — Strix cannot do it for us, and without it the
+ *    native UI (scrollbars, form controls, caret, autofill) stays light on a dark page.
+ *
+ * This is deliberately NOT what strix/apps/demo/globals.css does. That file uses
+ * `@import "tailwindcss" source(none)` as a test-harness trick to prove the shipped
+ * @source works; copying it would disable detection of our own src/**.
+ *
+ * Everything Next generated here originally (--background/--foreground, the @theme inline
+ * block, the body rule) is removed on purpose: --font-sans/--font-mono there would clobber
+ * Strix's own font tokens, and Strix is dark-only so the prefers-color-scheme block is moot.
+ */
+@import 'tailwindcss';
+@import '@gtmi/strix-react/tokens.css';
+
+:root,
+[data-theme='dark'] {
+  color-scheme: dark;
+}

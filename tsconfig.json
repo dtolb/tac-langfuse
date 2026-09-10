@@ -1,0 +1,46 @@
+{
+  "//": [
+    "The NODE side: server/, shared/, tests/, scripts/. The browser side has its own",
+    "project at web/tsconfig.json (Next owns that one, and it must NOT carry",
+    "exactOptionalPropertyTypes — it fights React prop spreading and Next's generated types).",
+    "",
+    "The split is forced, not stylistic: shared/ is compiled by BOTH projects, so it can",
+    "contain no Node global and no DOM global. That is a structural guarantee that shared/",
+    "is data rather than behaviour.",
+    "",
+    "`erasableSyntaxOnly` is load-bearing. The server has NO build step — `node server/index.ts`",
+    "runs TypeScript via Node 24's native type stripping, which cannot execute enums,",
+    "namespaces, decorators, or constructor parameter properties. This flag turns each of",
+    "those into a compile error instead of a runtime crash at boot.",
+    "",
+    "`allowImportingTsExtensions` follows from the same fact: every server-side relative",
+    "import ends in `.ts` because Node resolves the real file, not a compiled one."
+  ],
+  "compilerOptions": {
+    "target": "esnext",
+    "lib": ["esnext"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "noEmit": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["shared", "server", "tests", "scripts", "vitest.config.ts"],
+  "exclude": ["node_modules", "web", "dist"]
+}

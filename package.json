@@ -1,0 +1,47 @@
+{
+  "name": "demo-scaffold",
+  "version": "0.0.0",
+  "description": "Twilio demo scaffold: TAC voice+SMS, AI SDK agent, Langfuse prompts/tools/telemetry, Strix UI",
+  "scripts": {
+    "start": "node --import ./server/obs/instrumentation.ts --env-file-if-exists=.env server/index.ts",
+    "dev": "node --import ./server/obs/instrumentation.ts --env-file-if-exists=.env --watch server/index.ts",
+    "typecheck": "tsc --noEmit && pnpm --dir web exec tsc --noEmit",
+    "test": "vitest run",
+    "dev:web": "pnpm --dir web dev",
+    "build:web": "pnpm --dir web build",
+    "dev:all": "node scripts/dev.mjs",
+    "status": "node scripts/status.mjs",
+    "langfuse": "docker compose -f docker-compose.langfuse.yml up -d",
+    "langfuse:down": "docker compose -f docker-compose.langfuse.yml down"
+  },
+  "license": "UNLICENSED",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.8.0",
+  "dependencies": {
+    "@ai-sdk/openai": "^4.0.60",
+    "@langfuse/client": "^5.11.0",
+    "@langfuse/otel": "^5.11.0",
+    "@langfuse/tracing": "^5.11.0",
+    "@langfuse/vercel-ai-sdk": "^5.11.0",
+    "@loglayer/transport-pino": "^3.3.0",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/sdk-node": "^0.222.0",
+    "@opentelemetry/sdk-trace-base": "^2.11.0",
+    "ai": "^7.0.93",
+    "fastify": "^5.12.3",
+    "loglayer": "^9.4.0",
+    "pino": "^10.3.1",
+    "twilio-agent-connect": "^2.2.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "playwright": "^1.63.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  }
+}
