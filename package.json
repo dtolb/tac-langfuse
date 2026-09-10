@@ -13,7 +13,8 @@
     "status": "node scripts/status.mjs",
     "langfuse": "docker compose -f docker-compose.langfuse.yml up -d",
     "langfuse:down": "docker compose -f docker-compose.langfuse.yml down",
-    "seed:prompts": "node --env-file-if-exists=.env scripts/seed-prompts.ts"
+    "seed:prompts": "node --env-file-if-exists=.env scripts/seed-prompts.ts",
+    "verify:turn": "node --import ./server/obs/instrumentation.ts --env-file-if-exists=.env scripts/verify-turn.ts"
   },
   "license": "UNLICENSED",
   "type": "module",
