@@ -23,6 +23,7 @@ import { loadConfig, capabilities } from './config.ts';
 import { childLogger } from './logging.ts';
 import { buildApp } from './http/app.ts';
 import { flushTelemetry } from './obs/spans.ts';
+import { preflightDefaultPromptTools } from './agent/tools/resolve.ts';
 
 const config = loadConfig(process.env);
 const caps = capabilities(config);
@@ -40,6 +41,12 @@ if (config.appName === 'scaffold') {
     'APP_NAME is still the default — Traefik router names are global on the dev box, so two clones using it will fight over webhooks. Set APP_NAME before deploying.',
   );
 }
+
+// The loud half of "fail loud at boot, degrade quiet at runtime": ERROR per tool name in a
+// compiled-in default that the catalog does not have. Importing it is also what builds the catalog,
+// so a duplicate or ill-formed tool name from a clone's own edit throws HERE rather than arriving
+// as an opaque 400 from OpenAI in the middle of a call.
+preflightDefaultPromptTools();
 
 const { app, obs } = buildApp({ config, caps });
 

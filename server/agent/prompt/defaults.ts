@@ -13,6 +13,12 @@
  * The two therefore repeat some prose deliberately rather than sharing a fragment. A shared
  * fragment invites an edit that fixes voice and silently changes text, which is the same failure
  * mode as having one prompt in the first place.
+ *
+ * `config.tools` is names only, and every name here must exist in the tool catalog
+ * (`../tools/catalog.ts`). Nothing in the type system links the two, so it is checked twice:
+ * `preflightDefaultPromptTools()` logs an ERROR per unknown name at boot, and `tests/tools.test.ts`
+ * fails the build. Both defaults therefore name the two credential-free demo tools — a default that
+ * asks for a tool the catalog does not have is a default that quietly does less on every turn.
  */
 import type { ObsChannel } from '../../../shared/events.ts';
 import type { PromptConfig, PromptMessage, ResolvedPrompt } from './port.ts';
@@ -48,16 +54,17 @@ How to speak
 - Spell out anything that has to be heard correctly. Read order numbers and confirmation codes
   one character at a time ("A, four, seven, two"). Say "dollars" rather than "$", "percent"
   rather than "%", and dates as words ("March third").
-- Do not read out a web address. Offer to send it in a text message instead.
+- Do not read out a web address. Offer to have someone send it instead.
 - Ask for one piece of information at a time.
 
 How to help
-- Look up anything specific to {{company_name}} with search_knowledge before you answer:
-  policies, hours, pricing, products, order status. Never guess, and never invent a policy that
-  merely sounds plausible.
-- If what you find does not answer the question, say so plainly and offer to have someone follow
-  up, rather than filling the gap yourself.
-- Use send_message when the caller needs something in writing, and tell them you are sending it.
+- Use lookup_order for anything about an order: its status, what is on it, when it arrives. Ask
+  for the order number if you do not have it, and confirm it back before you look it up.
+- Use get_store_hours for the opening hours of a named {{company_name}} location.
+- Look something up before you answer it. Never guess an order status or an opening time, and
+  never invent a policy that merely sounds plausible.
+- If a tool comes back with nothing, say so plainly and offer to have someone follow up, rather
+  than filling the gap yourself.
 - If the caller interrupts you, drop what you were saying and answer the new question.`;
 
 const TEXT_SYSTEM = `You are {{persona}} for {{company_name}}. Today is {{current_date}}.
@@ -73,13 +80,13 @@ How to write
   are not — send a bare URL if you need to send one at all.
 
 How to help
-- Look up anything specific to {{company_name}} with search_knowledge before you answer:
-  policies, hours, pricing, products, order status. Never guess, and never invent a policy that
-  merely sounds plausible.
-- If what you find does not answer the question, say so plainly and offer to have someone follow
-  up, rather than filling the gap yourself.
-- Use send_message when the customer needs a separate confirmation rather than a reply in this
-  thread.
+- Use lookup_order for anything about an order: its status, what is on it, when it arrives. Ask
+  for the order number if you do not have it.
+- Use get_store_hours for the opening hours of a named {{company_name}} location.
+- Look something up before you answer it. Never guess an order status or an opening time, and
+  never invent a policy that merely sounds plausible.
+- If a tool comes back with nothing, say so plainly and offer to have someone follow up, rather
+  than filling the gap yourself.
 - Answer the question that was actually asked before adding anything else.`;
 
 export const DEFAULT_PROMPTS: Readonly<Record<PromptName, DefaultPrompt>> = {
@@ -90,7 +97,7 @@ export const DEFAULT_PROMPTS: Readonly<Record<PromptName, DefaultPrompt>> = {
       // Low but not zero: a support agent that phrases the same refusal identically every time
       // sounds like an IVR, which is the impression this whole demo exists to dispel.
       temperature: 0.4,
-      tools: ['search_knowledge', 'send_message'],
+      tools: ['lookup_order', 'get_store_hours'],
       toolChoice: 'auto',
       // 3 rather than the schema's 4: every extra step is silence on a live call, and two tool
       // round-trips is already the edge of what a caller will wait through without speaking.
@@ -102,7 +109,7 @@ export const DEFAULT_PROMPTS: Readonly<Record<PromptName, DefaultPrompt>> = {
     config: {
       model: 'gpt-5.4-mini',
       temperature: 0.4,
-      tools: ['search_knowledge', 'send_message'],
+      tools: ['lookup_order', 'get_store_hours'],
       toolChoice: 'auto',
       maxSteps: 4,
     },
