@@ -22,11 +22,11 @@ POCs don't:
 All three land in **self-hosted Langfuse**. Its prompt `config` JSON is versioned with the prompt and
 is Langfuse's own documented home for `tools`/`tool_choice`/model params.
 
-## Status: T1–T10 done, all four spikes closed
+## Status: T1–T11 done, all four spikes closed
 
 ```
 pnpm typecheck   → 0          (TS 7.0.2, node project + web project)
-pnpm test        → 210 passed, 11 files
+pnpm test        → 227 passed, 13 files
 ```
 
 | | State |
@@ -42,12 +42,12 @@ pnpm test        → 210 passed, 11 files
 | **T8 tools** | done — registry, catalog, three-way resolver, two credential-free demo tools |
 | **T9 `runTurn`** | done — the channel-agnostic core, verified against the real model AND in the Langfuse UI |
 | **T10 history** | done — bounded two ways, LRU on *use*; a real model repeated an order number from turn 1 and forgot it after `clear()` |
+| **T11 bench** | done — `/bench` streams a real turn in a browser with zero Twilio credentials, and the whole thing was re-run with TAC made *unresolvable* |
 
-**Not started:** T11 bench, T12–T14 TAC, T15–T17 Docker/Traefik, T18–T20 UI + docs.
+**Not started:** T12–T14 TAC, T15–T17 Docker/Traefik, T18–T20 UI + docs.
 
-There is a **working agent core that remembers**, but **no way for a human to talk to it yet** —
-`POST /api/turn` still returns 501 and there is no bench page. That is T11, the next task. There is
-no TAC, no Twilio, no Docker for the app, and the web UI is a placeholder.
+**A human can now talk to the agent.** `pnpm dev:all`, open <http://localhost:3000/bench>, type. There
+is still no TAC, no Twilio, no Docker for the app, and the home page is a placeholder.
 
 ## Running it
 
@@ -85,6 +85,14 @@ turn 3  "I don't have an order number from this chat."   historyMessages 0, 560 
 
 The 74-token input gap between turns 2 and 3 is the retained exchange, which is also why the message
 cap is a latency decision and not only a memory one.
+
+The bench, now that it exists, is the fastest way to exercise a real turn:
+
+```bash
+pnpm dev:all     # then http://localhost:3000/bench — type and watch it stream
+curl -sN -X POST http://localhost:8910/api/bench/turn \
+  -H 'content-type: application/json' -d '{"text":"where is order A4721?"}'
+```
 
 Langfuse UI: <http://localhost:3100> — `demo@example.com` / `changeme-at-least-8-chars`.
 
@@ -170,6 +178,20 @@ conversation.bench                     SPAN
 Span names are OTel GenAI-convention, **not** `ai.*`. Anything keying on `ai.streamText` (v6 naming)
 finds nothing.
 
+The same shape, driven from the `/bench` page in a browser — two turns, one trace, screenshot-confirmed:
+
+```
+conversation.bench                     1m 19s   open until swept or shutdown
+├─ turn.bench                          2.10s
+│  └─ llm.stream → invoke_agent → chat gpt-5.4-mini ×2   464→53, 626→77   tool loop, 2 steps
+└─ turn.bench                          0.59s
+   └─ llm.stream → invoke_agent → chat gpt-5.4-mini ×1   563→7            answered from history
+```
+
+The model calls sitting **inside** their own `turn.bench` is the property the `withTurnSpan`-wraps-the-
+drain rule buys; `tests/bench-route.test.ts` asserts it on a sequence counter, and that assertion was
+confirmed to bite by moving the drain out.
+
 ## Layout
 
 ```
@@ -190,6 +212,7 @@ server/
     app.ts          buildApp(deps). Testable without a socket. /api/dev/emit-turn lives here.
     sse.ts          SseHub: heartbeat, drop-on-throw, transport-agnostic
     routes-obs.ts   GET /events/stream (SSE) + /events/recent
+    routes-bench.ts POST /api/bench/turn. MUST NOT import TAC — that rule is the whole point.
   obs/
     instrumentation.ts  --import preload. NodeSDK + LangfuseSpanProcessor + registerTelemetry.
     spans.ts            THE span API. Read its header before touching telemetry.
@@ -247,30 +270,67 @@ row reporting 0.00 ms every turn implies a cost it does not have. It reports `hi
 `prompt.compose` instead, which is the number that answers "did it remember?" and explains why a
 turn-20 prompt costs more than a turn-2 one. Make it a span if it ever becomes I/O.
 
-## Next task: T11, the bench harness
+### The bench, and the two bugs it produced
 
-**First point where a human can actually talk to the agent**, and it must work with zero Twilio
-credentials. `server/http/routes-bench.ts` plus a `/bench` page using Strix `ChatLog`/`ChatInput`,
-with token deltas over the existing SSE hub.
+`POST /api/bench/turn` (the `BENCH_TURN_PATH` constant) streams SSE frames — `start`, `token` per
+delta, then exactly one of `done` or `error` — and `/bench` renders them with Strix
+`ChatLog`/`ChatInput`. The old `POST /api/turn` 501 placeholder is **gone**.
 
-`tests/architecture.test.ts:143` already holds the guard that `routes-bench.ts` never imports TAC —
-written inert (`if (!existsSync(bench)) return`) until the file exists, so **it currently passes
-vacuously**. Creating the file arms it; prove it bites before trusting it.
+**Tokens ride the request's OWN response, not the obs SSE hub**, which is a deliberate departure from
+the original plan wording. The hub broadcasts to every console and every publish lands in the bus's
+500-entry ring buffer that `/events/stream` replays. A 206-character answer is ~40 deltas, so a dozen
+turns would evict every lifecycle event, each new console would replay hundreds of token fragments,
+and two `/bench` tabs would interleave each other's answers. The SSE primitives (`formatSse`,
+`SSE_HEADERS`) are reused, so there is one wire format. **This stream is the answer; the obs hub is
+the commentary** — `runTurn` still publishes the same events voice will.
 
-Four things that will cost time if skipped:
+**Two bugs worth knowing about, because both were invisible at the layer they were written in:**
 
-1. **Call `withTurnSpan` around the ENTIRE handler including the token drain.** `runTurn` does not
-   create the turn span — see the section above. A span that closes before the drain puts every AI
-   SDK span in a different trace.
-2. **Consume `tokens` before your next `await`**, literally — the drain race gets one macrotask of
-   grace. A caller that awaits something slower in between silently reports `null` timings while
-   still streaming the whole answer correctly.
-3. **Never create a span with a raw OpenTelemetry tracer** — `LangfuseSpanProcessor` drops them with
-   no error. Always go through `server/obs/spans.ts`.
-4. **Read `web/README.md` before writing the page.** Strix has no `Table`, `Chart`, `Drawer`,
-   `Accordion`, `Popover` or `EmptyState`, and `Toast`/`Alert` have no queue or provider. The
-   authoritative component list is the `exports` map in the package's `package.json` — `llms.txt` is
-   stale. Token names that look obvious may not exist (`border-default` does not).
+1. **`request.raw.on('close')` fires on a POST as soon as the request body is consumed** — measured at
+   **+3 ms** against a client that stayed connected 905 ms. Every bench turn aborted before its first
+   token while HTTP looked perfectly healthy: 200, correct SSE headers, a `done` frame with
+   `aborted: true`, no tokens, null timings. On a **GET** it fires at the end of the response
+   (+906 ms), which is why the identical line in `routes-obs.ts:57` is correct and this one was not.
+   Use `reply.raw`. The `SseSink` unit tests could not catch this — they pass an `AbortSignal`
+   straight in and skip the Fastify adapter — which is why `tests/bench-http.test.ts` exists and
+   drives a real socket.
+2. **`ChatLog` has no horizontal padding and takes no `className`.** Its root is
+   `flex flex-col gap-gap-400 min-h-0 w-full overflow-y-auto`, and a `side: 'end'` message is a
+   `flex-row-reverse` row whose author is `shrink-0 min-w-14`. Flush against a bordered container,
+   "You" rendered as "Yo" on every one of the reader's own messages. The padding has to live on the
+   wrapper. **Invisible in a DOM snapshot and in every assertion; obvious in a screenshot** — which is
+   the general lesson, not a Strix quirk.
+
+Also: `Typography` has **no `body-s-regular` or `body-xs-regular`** — the real names are `body-s` and
+`body-xs` (`body-m-regular` does exist, which is what makes the guess plausible). This one is a type
+error, so `tsc` catches it.
+
+**Dev vs prod origin.** `web/next.config.ts` rewrites `/api`, `/events` and `/health` to
+`AGENT_DEV_ORIGIN` in development only. So browser code fetches **relative** paths and is identical in
+both environments — in production Traefik path-splits to the agent container on the same host. The
+alternative needed CORS (a JSON POST is preflighted) plus a second code path. **Verified the rewrite
+does not buffer the stream**: `start` at t+0, first token at t+2.0s, then deltas every ~50 ms. A
+buffering proxy would look exactly like a slow model.
+
+**A bench conversation's root span stays open until swept or shut down.** The bench has no disconnect
+signal — a closed tab tells the process nothing — so `createConversationRegistry` sweeps on a 30-minute
+idle TTL, caps at 50, and `index.ts` calls `bench.shutdown()` **before** `flushTelemetry()`. That order
+matters: an unended span never reaches Langfuse, so flushing first ships every turn while dropping the
+conversation they hang from. The practical consequence during a demo is that turns appear in Langfuse
+promptly while their `conversation.bench` parent arrives when the conversation ends.
+
+## Next task: T12, TAC boot for SMS
+
+The first task that needs Twilio credentials. `registerChannel(smsChannel)`, `memoryMode: 'always'`,
+`onMessageReady` returns a **string** and must never throw (TAC swallows and only logs those —
+footgun #4), and our routes go onto `server.fastify` **before** `start()`.
+
+Read plan footguns #2, #3, #4, #9 and #22 first. In particular `new SMSChannel(tac)` **throws at
+construction** without `conversationConfigurationId`, and `TACConfig.fromEnv()` throws on any of five
+missing variables — so both are reachable only once `config.twilio !== null`.
+
+**Ask before running anything that places a real call or sends a real SMS** — those are billed, and
+the standing convention in this repo is not to do it unprompted.
 
 ## Gaps and honest limits
 
@@ -299,6 +359,18 @@ Four things that will cost time if skipped:
   share them. The escape hatch is documented in `history.ts`'s header, and it is not free: a networked
   store makes `read` async, which then belongs in the `Promise.all` beside the prompt fetch rather
   than in front of it.
+- **What the bench does NOT prove, and T20's README must say so.** It exercises `runTurn` end to end
+  with no Twilio, which is real but bounded. Not covered: webhook signature validation,
+  ConversationRelay STT/TTS latency, barge-in on a live call, TAC memory retrieval, `session.metadata`
+  surviving a real conversation, orchestrated-mode memory writes, and Studio handoff. The bench's
+  abort path is a closed browser tab, which is a plausible stand-in for a barge-in and not the same
+  thing.
+- **The TAC-free claim is stronger than the architecture test.** `tests/architecture.test.ts` checks
+  import strings, which a file can satisfy by not having got round to importing TAC. The real check
+  was run: `node_modules/twilio-agent-connect` moved aside, agent booted, `/health` 200, and a
+  complete 25-token turn with a real tool call and 2 steps — zero module-resolution errors. TAC is a
+  declared dependency and *is* installed, so this is not vacuous. Worth re-running after T12/T13 add
+  the TAC boot, when it stops being trivially true.
 - **No live-call verification.** S4 proved the TAC wiring structurally with dummy credentials;
   nothing has placed a real call. Don't run a demo end-to-end without asking — real billed calls/SMS.
 - `docker-compose.yml` for the app does not exist yet (T15). The Langfuse compose does.

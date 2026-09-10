@@ -48,11 +48,15 @@ if (config.appName === 'scaffold') {
 // as an opaque 400 from OpenAI in the middle of a call.
 preflightDefaultPromptTools();
 
-const { app, obs } = buildApp({ config, caps });
+const { app, obs, bench } = buildApp({ config, caps });
 
 const shutdown = async (signal: string): Promise<void> => {
   log.info({ signal }, 'shutting down');
   obs.shutdown(); // close SSE clients before the server, so they get a clean end
+  // End the bench's open conversation roots BEFORE the flush, and the ordering is the whole point:
+  // an unended span does not reach Langfuse at all, so flushing first would ship every turn while
+  // silently dropping the conversation they hang from — a tree with no root.
+  bench.shutdown();
   // Flush BEFORE closing: the last turn of a demo is usually the one being asked about, and an
   // unflushed span never reaches Langfuse at all.
   await flushTelemetry();

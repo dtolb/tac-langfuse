@@ -12,19 +12,29 @@
  */
 import Fastify from 'fastify';
 import type { AppConfig, Capabilities } from '../config.ts';
-import { unavailable } from '../config.ts';
 import { rootLogger } from '../logging.ts';
 import { obsBus } from '../obs/bus.ts';
 import { registerObsRoutes, type ObsRoutes } from './routes-obs.ts';
-import { APP_API_PATHS, TAC_WEBHOOK_PATHS } from '../../shared/twilio-paths.ts';
+import { registerBenchRoutes, type BenchRoutes } from './routes-bench.ts';
+import { APP_API_PATHS, BENCH_TURN_PATH, TAC_WEBHOOK_PATHS } from '../../shared/twilio-paths.ts';
+import type { TurnDeps } from '../agent/types.ts';
 import type { App } from './types.ts';
 
 export interface AppDeps {
   readonly config: AppConfig;
   readonly caps: Capabilities;
+  /**
+   * The agent's dependencies, injected ONLY by tests.
+   *
+   * Left undefined in production, where `registerBenchRoutes` builds the live ports from config on
+   * first use. The seam exists because the HTTP layer has failure modes that no unit test can see —
+   * `tests/bench-http.test.ts` was written after one of them shipped — and driving it over a real
+   * socket must not require an OpenAI key.
+   */
+  readonly turn?: TurnDeps;
 }
 
-export function buildApp(deps: AppDeps): { app: App; obs: ObsRoutes } {
+export function buildApp(deps: AppDeps): { app: App; obs: ObsRoutes; bench: BenchRoutes } {
   const { config, caps } = deps;
 
   const app = Fastify({
@@ -41,18 +51,9 @@ export function buildApp(deps: AppDeps): { app: App; obs: ObsRoutes } {
     appName: config.appName,
     capabilities: caps,
     missing: config.missing.map((m) => m.name),
-    wired: { tac: 'T12/T13', agent: 'T9', bench: 'T11' },
+    wired: { tac: 'T12/T13', agent: 'done', bench: BENCH_TURN_PATH },
     paths: { app: APP_API_PATHS, tac: TAC_WEBHOOK_PATHS },
   }));
-
-  /**
-   * Stand-in for the real agent route (T9/T11). Demonstrates the degradation contract every
-   * capability-gated route follows: 503 with the offending variables named.
-   */
-  app.post('/api/turn', async (_req, reply) => {
-    if (!caps.llm) return reply.code(503).send(unavailable(config, 'agent'));
-    return reply.code(501).send({ error: 'not_implemented', note: 'the agent core lands at T9' });
-  });
 
   /**
    * Emits a synthetic turn's worth of events.
@@ -104,7 +105,19 @@ export function buildApp(deps: AppDeps): { app: App; obs: ObsRoutes } {
   // precisely when you need to see what is happening.
   const obs = registerObsRoutes(app, obsBus);
 
-  return { app, obs };
+  // The Twilio-free bench. Registered unconditionally so the route can answer 503 with the missing
+  // variable named rather than 404 — `POST /api/turn`'s 501 placeholder is gone, replaced by the real
+  // thing at `BENCH_TURN_PATH`. Note this module must never import TAC; that rule is what makes the
+  // bench a runtime proof that `runTurn` is channel-agnostic, and `tests/architecture.test.ts`
+  // enforces it (verified by deliberately breaking it).
+  const bench = registerBenchRoutes(app, {
+    config,
+    caps,
+    bus: obsBus,
+    ...(deps.turn !== undefined && { turn: deps.turn }),
+  });
+
+  return { app, obs, bench };
 }
 
 export type { App } from './types.ts';
