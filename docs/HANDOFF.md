@@ -7,6 +7,16 @@ for the full plan and the footgun list.
 the plan's own footgun table (#30–#32). All three fail *silently*. Read that section before you touch
 telemetry or prompt linking.
 
+**Account-specific values are deliberately NOT in this file.** SIDs, phone numbers, Conversation
+Orchestrator ids and Studio flow SIDs live in `.env` (gitignored) and in this project's session memory
+at `~/.claude/projects/-Users-dtolbert-code-demo-building-tools-scaffold/memory/`. This repo is
+*cloned* per demo, so a committed doc carrying one account's ids hands every future clone stale values
+that look authoritative. What is here instead is the **method** for discovering them — see
+"Twilio credentials" below.
+
+There is a published walkthrough of everything below, written for a human rather than an agent:
+<https://pages-4296.twil.io/scaffold-next-steps> (public, no auth — no credentials on it).
+
 ## What this is
 
 A clonable starting point for customer-facing Twilio demos. Beyond the baseline (UI, agent, backend,
@@ -319,6 +329,52 @@ matters: an unended span never reaches Langfuse, so flushing first ships every t
 conversation they hang from. The practical consequence during a demo is that turns appear in Langfuse
 promptly while their `conversation.bench` parent arrives when the conversation ends.
 
+## Twilio credentials — the method, and two things that mislead
+
+`.env.example` is the authoritative per-variable reference: Console location, format, and what breaks
+without each one. It is committed and a test fails if the code reads a variable it does not describe.
+What follows is only what that file cannot tell you — how to *check* a value before the app depends
+on it, verified by running each command.
+
+**Verify credentials with the Twilio CLI, not with this app.** When T12/T13 land you want to be
+debugging one new thing, not two. All of these are read-only; none place a call or send a message.
+
+| Question | Command |
+|---|---|
+| Which credentials is the CLI even using? | `twilio profiles:list` |
+| Do the key and secret authenticate? | `twilio phone-numbers:list` |
+| What is my `TWILIO_PHONE_NUMBER`? | same — gives E.164 plus voice/SMS capability per number |
+| Do I have a CO configuration? | `curl -s -u "$TWILIO_API_KEY:$TWILIO_API_SECRET" https://conversations.twilio.com/v2/ControlPlane/Configurations` |
+| Which Studio flow for handoff? | `twilio api:studio:v2:flows:list` — needs one whose status is `published` |
+| Is the auth token good? | `curl -o /dev/null -w '%{http_code}' -u "$TWILIO_ACCOUNT_SID:<token>" "https://api.twilio.com/2010-04-01/Accounts/$TWILIO_ACCOUNT_SID/IncomingPhoneNumbers.json?PageSize=1"` |
+
+### 1. `twilio api:core:accounts:list` 401s on a good key
+
+The obvious "are my credentials working" command returns **HTTP 401, error 70004** — *"the provided
+key does not have the permissions to access this endpoint"* — against a **restricted** API key, while
+the same key lists phone numbers fine. Measured on this account, and it reads as *"my credentials are
+wrong"*, which sends you rotating keys that were never the problem. Use `phone-numbers:list`.
+
+### 2. Three Twilio variables are exported by the shell profile on this machine
+
+`TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY` and `TWILIO_API_SECRET` come from the user profile, so they read
+as **present** in `pnpm status` and `/health` whether or not they are in `.env`. Only the other four
+show as missing. Real, not a bug — but `.env` is not the whole picture here, and a clone on another
+machine will behave differently. Also worth knowing: the auth token is *not* interchangeable with the
+API key, and it is the value that validates inbound webhook signatures, so a stale one produces
+`Invalid Twilio webhook signature` on every request and looks like a Twilio outage.
+
+### The order things actually gate in
+
+`TWILIO_CONVERSATION_CONFIGURATION_ID` is the consequential one: without it TAC runs voice-only and
+Memory, Knowledge **and** handoff are all absent (`getMemoryClient()` returns null). A CO configuration
+with no `memoryStoreId` gives you SMS but no Conversation Memory, so check that field rather than
+assuming. `TWILIO_VOICE_PUBLIC_DOMAIN` is a **bare host, no scheme**, and `TACServer` throws at
+construction without it.
+
+**Setting these today changes nothing** — T12/T13 are unbuilt, so there is no code path that reads them
+into a channel yet. Gathering them is preparation, not wiring.
+
 ## Next task: T12, TAC boot for SMS
 
 The first task that needs Twilio credentials. `registerChannel(smsChannel)`, `memoryMode: 'always'`,
@@ -395,6 +451,12 @@ the standing convention in this repo is not to do it unprompted.
   guard bites before trusting it — every rule was validated by deliberately breaking it.
 - **No `console.*`** anywhere under `server/` or `web/src/` — it bypasses the PII scrubber.
   `scripts/` is exempt.
+- **Verify at the layer where the failure can live.** Both T11 bugs were invisible to the tests written
+  for them and cost nothing to find once the right instrument was used. A framework-lifecycle bug
+  (`request.raw` vs `reply.raw`) needs a real socket — a unit test that injects the signal cannot see it.
+  A layout bug (a clipped author label) needs a **screenshot** — it was absent from the accessibility
+  snapshot, from `innerText`, and from every width/overflow assertion, all of which passed. "Verify by
+  running the thing" is not only about running it; it is about running it where the failure lives.
 - **Zod is the single source of truth for tool schemas**, and `config.tools` in a prompt carries
   **names only** — so a Langfuse edit selects from a code-owned allowlist and structurally cannot add
   a tool or change a schema. `toJsonSchema` uses `io: 'input'`; its docblock explains why, and what

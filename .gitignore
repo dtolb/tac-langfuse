@@ -22,3 +22,7 @@ langfuse-data/
 .DS_Store
 *.log
 logs/
+
+# theme-create-and-host-html writes this cache next to a published page. The live
+# build is the source of truth (`pages.mjs status` reads it), so the cache is noise.
+docs/.twilio-pages.json

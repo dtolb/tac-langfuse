@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+    <link rel="icon" href="data:image/x-icon;base64,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d//ja3fh42t3p+NrdzvjbHcQAAAAAAAAAADja3cs42t3ceNrd9bja3f342t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Rxff/ohpD/7aCo//K9wv/20dX/+eDj//vo6v/77O7//O7w//zu8P/76+3/+ufp//ne4f/2zdH/8ri+/+ybo//ngoz/5G97/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f342t31uNrd3HjbHgrAAAAAORyfQrja3dQ42t3puNrd+zja3f+42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//kc37/54KM/+2fpv/yusD/99TX//rl5//88fL//vn5//78/P///v7///7+///+/v///v7//vz8//74+P/87/D/+uLl//bQ1P/xtrz/7Jmh/+d+iP/kcXz/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f+42t36+Nrd6bjbHhP5HJ9CuRueh7ja3d142t31ONrd/bja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42x4/+RxfP/oh5H/7qev//fT1v/87e////39///+/v/+/Pz//vj5//319v/98/T//PLz//zy8//98/T//fb2//75+v/+/Pz///7+//78/P/76ev/9cvQ/+2gqP/ngoz/5G97/+NseP/ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t39uNrd9Tja3d15G56HuNrd0Tja3eY42t37uNrd/zja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/5HF8/+mKk//xtrz/+eHj//309f/++/z///7+//77+//87vD/+d7h//bO0v/0w8f/8rzB//K9wv/0xMn/9tHU//ni5P/88fL//vz8///+/v/++/v//PHy//jb3v/wr7X/54ON/+Rve//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/ONrd+7ja3eY42t3RONseG/ja3e042t3+uNrd/7ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ldH//6YiS//G3vf/43N///vf4///9/f/99vb/++fp//bP0//yuL7/7qSs/+uXoP/qkJn/6YyV/+mMlf/qkZr/7Jqi/++or//yvMH/99PW//vr7f/++Pn///39//319f/31tn/8K61/+eCjP/kcXz/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/uNrd/rja3e042x4b+NseJjjbHjM42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+NseP/og43/76qx//ri5f/++Pj///7+//73+P/54OP/88HG/+yaov/ngYv/5HB8/+Nrd//ja3f/42t3/+Nrd//ja3f/42x4/+Ryfv/ohY//7aCo//XIzf/65ef//vn6///+/v/99PX/+Nve/+2fp//nfoj/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//jbHjM42t3meNseLrja3fc42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42x4/+Vzf//toan/99bZ//309f///f3//vf4//jb3v/wr7X/6IWP/+V0gP/kbnr/42x4/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+NseP/kb3v/5XaB/+mLlP/xtrz/+uLl//75+v///f3//PHy//XLz//smaH/5G97/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3fd42x4uuNrd9Lja3fo42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/5HF8/+mKlP/zvsT//O/x//78/P/99fb/+d/h//CutP/pjJb/5nyG/+mLlP/rlp7/7Jih/+mKlP/meYT/4215/+Nuef/mfIf/6Y2W/+yaov/rlJ3/6IiS/+Z8hv/qkpv/8ba8//rl5//++Pn//vv7//vo6v/xtbv/54KM/+Ruev/ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3fp42x40uNrd+Xja3fy42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/5XeC/+6nrv/42Nz///7+///+/v/65ef/873D/+iDjf/mfIb/6o2X//G3vf/1zND/9tDT//G3vf/rk5z/5XaB/+Z5hP/smqL/877D//bR1f/1yc7/8LG3/+iGkP/mfIb/6YuU//XIzf/76+3///7+//77/P/20NT/7Juj/+V0f//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3fy42t35eNrd/Dja3f442t3/+Nrd//ja3f/42t3/+Nrd//kbnr/54KM//TDyP/76ev///7+//75+f/1ys//65We/+V0f//qj5j/873C//vo6v/99fX//fX1//vs7v/zvcP/65Ob/+ybo//0xsr//PDx//319v/99PT/+uTm//Cxt//oiJL/5XaB/+2gqP/31Nf//vz8///+/v/64uT/8be9/+Z8h//jbHj/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f442t38ONrd/fja3f742t3/+Nrd//ja3f/42t3/+Nrd//ldYD/6pGa//fX2//99PX//vv7//vp6//xs7n/5n2I/+RwfP/snaX/99XY//329/////////7+//78/P/20dX/76mw//CyuP/42dz///7+/////////v7//fP0//XIzf/rk5z/5G97/+iFj//yvML//PHy//78/P/87/D/9s3R/+mIkv/kcXz/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f742t39+Nrd/zja3f+42t3/+Nrd//ja3f/42t3/+Nrd//mfIf/7aCo//rl5//++/v//ff3//fW2v/tnqb/5G56/+Rve//toqr/+Nzf//74+f/////////////+/v/319r/8LK4//K8wf/53uH///7+/////////////fX2//bQ1P/smaH/42x4/+Ryfv/vqK//+eLk//75+v/+9/j/+d7h/+uVnv/ldoH/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f+42t3/ONrd/7ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//og43/8K61//zt7v///v7//fP0//TDyP/qkJn/42t3/+NseP/rlp7/9crO//309f////////7+//75+f/1yM3/7Jyk/+6mrf/20dX//vz8///+/v///v7//PDx//O9w//pjZb/42t3/+NseP/smqL/9tHU//329v/+/Pz/+ufp/+2iqf/mfIf/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/uNrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//piZL/8be9//zw8f///v7//PDx//G3vf/piZL/42t3/+Nrd//ngYv/7aKp//XLz//4297/+d3g//XN0f/upaz/54KM/+iIkf/vrLL/9tHV//nf4f/42dz/9MbK/+yaov/mfIf/42t3/+Nrd//qkZr/9MTJ//3z9P///v7/++vt/++qsf/ngYv/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//pjJb/8r3C//zy8////v7//O7v//Cvtv/ohI7/42t3/+Nrd//kb3v/5n2I/+2iqf/xtrz/8rrA/+2gp//ng43/42x4/+Rvev/oiJH/7qat//K8wv/xs7n/7Juj/+Z5hP/jbnn/42t3/+Nrd//pjJX/8r3C//zy8////v7//O7w//Cwtv/ohI7/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//pjJb/873D//zy8////v7//O7v//Cvtf/ohI7/42t3/+Nrd//kbnr/5nmE/+yZof/vrLP/8LG3/+uXn//nfoj/42x4/+NseP/ngoz/7J2l//Gzuf/vqbD/65Ob/+V2gf/jbXn/42t3/+Nrd//pjJX/8rzB//zy8////v7//O7w//Cwtv/ohI7/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//piZP/8rm+//zx8v///v7//O/x//G2vP/oiJH/42t3/+Nrd//nfoj/7Juj//TDyP/31Nf/99XZ//TEyf/tnqb/536I/+eDjf/upaz/9cnO//fX2v/20dX/873D/+uTnP/meYT/42t3/+Nrd//qkJn/9MPH//3z9P///v7/++zu/++rsv/ngoz/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd/7ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ohY//8LC3//zu7////v7//fLz//PBxv/qj5j/42t3/+Nrd//qkpr/9MPI//zx8v///v7///39//319v/0xMn/65eg/+2fp//1zdH//vn5///+/v/+/Pz/++zu//G3vf/pipT/42t3/+Nrd//rl6D/9s7S//319v/+/Pz/++jq/+6kq//nfoj/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/uNrd/zja3f+42t3/+Nrd//ja3f/42t3/+Nrd//nfoj/7qOr//vn6f/+/Pz//fb3//fS1v/sm6P/4215/+Rve//toan/+Nrd//73+P////////7+///9/f/31dj/8LC2//K6v//53eD///7+/////////v7//fT1//bP0//rmKD/42x4/+RwfP/upKv/+d7h//74+f/++fn/+eDi/+uYoP/leIP/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f+42t3/ONrd/fja3f742t3/+Nrd//ja3f/42t3/+Nrd//ldoH/65Sd//jb3v/99fb//vr7//rm6P/wr7X/5nmE/+Rwe//tn6b/+Njb//73+P/////////////9/f/309b/76yy//G1u//4297//////////////////fX1//XLz//rlZ7/5G56/+eBi//yuL7//O7v//78/P/88fL/9tHU/+mLlP/kcn3/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f742t39+Nrd/Dja3f442t3/+Nrd//ja3f/42t3/+Nrd//kb3v/6IWP//XIzP/77O7///7+//339//0xsv/6pCZ/+Rzfv/rk5v/9MTI//vr7f/+9/j//vf4//zw8f/0w8j/7Jmh/+2hqf/1y8///fT1//74+f/99vf/++jq//G3vf/pi5T/5XSA/+yaov/2z9P//vv7///+/v/65ef/8rzC/+d+if/jbXn/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f442t38ONrd+Xja3fy42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/5nmE/++ss//43N/////////+/v/54OP/8ba8/+d/if/mfYj/65We//TEyP/42Nz/+Nve//TDyP/smqP/5nmE/+Z9iP/toqn/9crO//nd4P/31dn/873C/+qNl//mfIb/6IWP//PBxv/75+n///7+///9/f/31Nf/7aCo/+V1gP/ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3fy42t35eNseNLja3fp42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/5HF9/+qPmP/0w8j//fP0///9/f/98vP/+Nnc/+6mrf/piJL/5n2I/+uTm//tn6f/7aKp/+qSmv/nfoj/5G56/+Rve//ngYv/65ae/+6jqv/snaX/6o+Y/+Z8hv/pjJb/8K+1//ng4//99vf//vv8//zt7v/yusD/6IaQ/+Rve//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3fo42t30uNseLrja3fd42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/4215/+V2gf/up67/+Nzf//329////f3//fX1//fS1v/upq3/53+J/+Rzfv/kcHv/5G97/+Nrd//ja3f/42t3/+Nrd//ja3f/42x4/+Rve//kcHz/5XSA/+iEjv/wrrT/+Nve//74+P///f3//fT0//fS1v/tnqb/5HF9/+NseP/ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3fc42x4uuNrd5njbHjM42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+NseP/piJL/8LG4//vn6f/++vr///z9//309f/42dz/8ba8/+qQmf/meYT/4215/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Ruev/mfYj/65ae//O+w//53+H//vf4///+/v/+9/j/+eHj/+6nrv/ngoz/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//jbHjM42x4mONseG/ja3e042t3+uNrd/7ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ldoH/6o6X//O/xP/64uT//vr6///9/f/98vP/+eDj//TGy//wr7X/7Juj/+qPmP/oiJH/6ISO/+iEjv/piZL/6pCZ/+2epv/xs7n/9cvP//rl5//99fb///39//74+P/43N//8ba8/+iHkf/kc37/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/uNrd/rja3e042x4b+Nrd0Tja3eY42t37uNrd/zja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/5HN+/+qSm//zv8T/++jq//329////f3///39//339//65uj/99PW//PBxv/xtrz/8K+1//Cvtv/xt73/9MPI//fW2v/76ev//vn5///+/v/+/Pz//fX1//ri5f/xt73/6YqT/+RxfP/ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/ONrd+7ja3eY42t3RORueh7ja3d142t31ONrd/bja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42x4/+Rzfv/qjpf/8LK4//jd3//98/T///7+///9/f/++vv//fb3//3y8//87/H//O7v//zu7//88PH//fP0//339//++/v///7+///+/v/87/H/99bZ/++qsf/piJL/5HF8/+NseP/ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t39uNrd9Tja3d15G56HuRyfQrjbHhP42t3puNrd+vja3f+42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ldoH/6YiS/+6nr//0w8j/+Nzf//vs7v/99vb//vz8///+/v///v7///7+///+/v///v7///7+//77+//99PX/++nr//jY2//zvsT/7aKp/+iDjf/ldH//42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f+42t37ONrd6bja3dQ5HJ9CgAAAADjbHgr42t3ceNrd9bja3f342t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42x4/+V2gf/qj5j/76yz//XIzf/4297/++jq//zu7//88PH//PLz//zy8//88PH//O3u//rm6P/42Nv/9MTI/+6nrv/pipT/5XN//+NseP/ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f342t31uNrd3Hja3csAAAAAAAAAADjbHcQ42t3O+Nrd6fja3fh42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Ntef/kcX3/5nmE/+iFj//rlJ3/7qOr//Cwt//yuL7/873D//K9wv/xt73/8K+1/+2hqP/qkZr/54KM/+V3gv/kcXz/42x4/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3fh42t3p+NrdzvjbHcQAAAAAAAAAADkcn4E42x4G+NseGPja3ex42t38ONrd/zja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Rve//ldoH/536I/+iFj//piZP/6YyW/+mMlv/piZP/6ION/+Z8h//ldYD/5G56/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/ONrd+/ja3ex42x4Y+NseBvkcn4EAAAAAAAAAAAAAAAA42t3B+NseCTja3d242t3yuNrd+/ja3f842t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nr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d//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t39ONrd8Xja3dl5G56EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAONrdzPja3e442t3++Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd/vja3e442t3MwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADjbXlE42t32uNrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3fa4215RAAAAAAAAAAAAAAAAAAAAAAAAAAA42x4NONrd9nja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3fa42x4NAAAAAAAAAAAAAAAAORuehHja3e342t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/5HB7/+eCjP/rlp7/7aCo/+2gp//rk5z/54CK/+Rvev/ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3e35G56EQAAAAAAAAAA42t3ZuNrd/vja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/5XSA/+6jqv/31Nj//PHy//77+////v7///7+//76+//87vD/9tDT/+ycpP/kcX3/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd/vja3dlAAAAAONteRTja3fE42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+mMlf/319r//vz8/////////////////////////////////////////////vr7//bO0v/ohI7/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd8TjbXkU42t3TuNrd/Pja3f/42t3/+Nrd//ja3f/42t3/+Nrd//smKH//O3u/////////////vn5//nd4P/zvsT/8K+1//Cvtv/zwsf/+eHj//76+/////////////rm6P/qjpf/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t38+Nrd07jbHiQ42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/6o+Y//zu7/////////7+//jc3//smKH/5HN+/+Nrd//ja3f/42t3/+Nrd//ldoH/7aCn//rj5f////////////rl5//ohI7/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42x4kONrd8Lja3f/42t3/+Nrd//ja3f/42t3/+V3gv/4297////////+/v/1y8//5nmE/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/54CK//fW2f////////////bO0v/kcX3/42t3/+Nrd//ja3f/42t3/+Nrd//ja3fD42t34uNrd//ja3f/42t3/+Nrd//ja3f/76qx///+/v//////+Njb/+V3gv/ld4L/8ba8//bN0f/uo6v/5G56/+Rxff/vq7L/9s7S//Cvtf/kcX3/54CK//rj5f///////vr6/+ycpP/ja3f/42t3/+Nrd//ja3f/42t3/+Nrd+Lja3fz42t3/+Nrd//ja3f/42t3/+V0f//43N////////329v/qkpv/42t3//O+w/////////////74+f/rmKD/7qat//78/P////////7+//Cvtf/ja3f/7aCn//77+///////9s/T/+Rvev/ja3f/42t3/+Nrd//ja3f/42t38+Nrd/zja3f/42t3/+Nrd//ja3f/6YuV//319v//////99TX/+Rve//kcXz/+Nve//////////////////G1u//0xMj/////////////////9c3R/+Nrd//ldoH/+eHj///////87u//54CK/+Nrd//ja3f/42t3/+Nrd//ja3f842t3/+Nrd//ja3f/42t3/+Nrd//toqr///7+///////wsbj/42t3/+Nrd//yusD///7+///////99vb/65Wd/+2iqv/++vv///////78/P/vq7L/42t3/+Nrd//zwsf///////76+//rk5z/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3//Cvtv////////7+/+2gp//ja3f/42t3/+V1gP/vrbP/9MTJ/+ybo//jbHj/5HB7/+2iqv/0xcr/7qat/+Rxff/ja3f/42t3//Cvtv////////7+/+2gp//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/8LC2/////////v7/7Z+n/+Nrd//ja3f/5HF8/+2fpv/xtbv/6o6X/+Nrd//jbHj/65Wd//G2vP/rmKD/5G56/+Nrd//ja3f/8K+1/////////v7/7aCo/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//upaz////////////wr7X/42t3/+Nrd//wsbf//vz8///////88fL/6o+Y/+ybo//99vf///////74+f/uo6v/42t3/+Nrd//zvsT///////77+//rlp7/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f842t3/+Nrd//ja3f/42t3/+qPmP/+9/j///////bP0//jbXn/5HF8//ja3f/////////////////xtLr/9MPI//////////////////XM0P/ja3f/5HN+//jd3////////PHy/+eCjP/ja3f/42t3/+Nrd//ja3f/42t3/ONrd/Pja3f/42t3/+Nrd//ja3f/5XaB//nh4////////fP0/+mLlf/ja3f/9MbK/////////////vv7/+2fpv/vrLP///7+////////////8ba8/+Nrd//smKH//vn5///////31Nf/5HB7/+Nrd//ja3f/42t3/+Nrd//ja3fz42t34uNrd//ja3f/42t3/+Nrd//ja3f/8LG3////////////9tDT/+Ryff/nfoj/9MbK//jb3v/wsbf/5HF8/+V1gP/yusD/+Nzf//O+w//ld4L/5nmE//jb3v///////vz8/+6jqv/ja3f/42t3/+Nrd//ja3f/42t3/+Nrd+Lja3fD42t3/+Nrd//ja3f/42t3/+Nrd//mfIb/+uLk/////////f3/87/E/+Ryff/ja3f/5HF8/+Nrd//ja3f/42t3/+Nrd//kcXz/42t3/+V3gv/1y8/////////////31tr/5XSA/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3wuNseJDja3f/42t3/+Nrd//ja3f/42t3/+Nrd//rmKD//fP0/////////P3/9tDT/+mLlf/jbXn/42t3/+Nrd//ja3f/42t3/+Rve//qkpv/+Njc///+/v///////O3u/+mMlf/ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//jbHiQ42t3TuNrd/Pja3f/42t3/+Nrd//ja3f/42t3/+Nrd//upKv//fT0/////////////fP0//bP0//wr7X/7Z+n/+2gp//wsbj/99TX//329v////////////zu7//smKH/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t38+Nrd07jbXkU42t3xONrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//rmKD/+uPl///+/v///////////////////v7///7+///////////////////9/f/4297/6o+Y/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3fE4215FAAAAADja3dl42t3++Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//mfIb/8LG3//ni5P/++Pj///7+//////////////7+//329v/53eD/76qx/+V3gv/ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3++Nrd2YAAAAAAAAAAORuehHja3e342t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/5XaB/+qPmP/upaz/8LC2//Cvtv/uo6r/6YuV/+V0f//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3e35G56EQAAAAAAAAAAAAAAAONseDTja3fa42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t32eNseDQAAAAAAAAAAAAAAAAAAAAAAAAAAONteUTja3fa42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd9rjbXlEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAONrdzPja3e442t3++Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd/vja3e442t3MwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAORuehHja3dl42t3xeNrd/Tja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd/Tja3fE42t3ZeRuehEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADkb3sT42t3TuNseJHja3fD42t34uNrd/Pja3f842t3/+Nrd//ja3f/42t3/+Nrd/zja3fz42t34uNrd8PjbHiR42t3TuRvexMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/gAAf/gAAB/wAAAP4AAAB8AAAAOAAAABgAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAGAAAABwAAAA+AAAAfwAAAP+AAAH/4AAH8oAAAAEAAAACAAAAABACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADkcn4E42x4T+Nrd7Tja3fp42t3++Nrd//ja3f/42t3++Nrd+nja3e042x4T+RyfgQAAAAAAAAAAAAAAADkbnoR42t3seNrd/7ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd/7ja3ex5G56EQAAAADkcn4E42t3seNrd//ja3f/42t3/+Nrd//kcn3/54KM/+eBi//kcXz/42t3/+Nrd//ja3f/42t3/+Nrd7Hkcn4E42t3UONrd/7ja3f/42t3/+Rzfv/yusD//PHy///+/v///v7//O/w//G2vP/kcXz/42t3/+Nrd//ja3f+42x4T+Nrd7Tja3f/42t3/+V0f//43N///fb2//K4vv/qkJn/6pGa//K8wf/++Pn/99bZ/+RxfP/ja3f/42t3/+Nrd7Tja3fo42t3/+Nrd//zvsT//fX2/+mMlv/rlp7/5nmE/+Z8h//rlJ3/6pKb//74+f/xtbv/42t3/+Nrd//ja3fp42t3++Nrd//ldYD//fT1//Gzuf/snaX///////bR1f/42dz///7+/+uTnP/yvML//O/w/+RxfP/ja3f/42t3++Nrd//ja3f/6YmS///+/v/piZL/54GL//jb3v/upaz/76yy//jZ3P/mfIf/6pGa///+/v/ngYv/42t3/+Nrd//ja3f/42t3/+mJk////v7/6IiR/+d+iP/31Nf/7Z6m/+6lrP/20dX/5nmE/+qQmf///v7/54KM/+Nrd//ja3f/42t3++Nrd//ldoH//fX2//Cvtf/tn6b///////fT1v/4297//////+uVnv/yuL7//PHy/+Ryff/ja3f/42t3++Nrd+nja3f/42t3//TDyP/98vP/6YiS/+2fp//nfoj/54GL/+ydpf/pjJb//fb3//K6wP/ja3f/42t3/+Nrd+jja3e042t3/+Nrd//ldoH/+uLk//3y8//wr7X/6IiR/+mJkv/xs7n//fX2//jc3//kc37/42t3/+Nrd//ja3e042x4T+Nrd/7ja3f/42t3/+V2gf/0w8j//fb2///+/v///v7//fT1//O+xP/ldH//42t3/+Nrd//ja3f+42t3UORyfgTja3ex42t3/+Nrd//ja3f/42t3/+V2gf/piZP/6YmT/+V1gP/ja3f/42t3/+Nrd//ja3f/42t3seRyfgQAAAAA5G56EeNrd7Hja3f+42t3/+Nrd//ja3f/42t3/+Nrd//ja3f/42t3/+Nrd//ja3f+42t3seRuehEAAAAAAAAAAAAAAADkcn4E42x4T+Nrd7Tja3fp42t3++Nrd//ja3f/42t3++Nrd+nja3e042x4T+RyfgQAAAAAAAAAAMADAACAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAEAAMADAAA=">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo scaffold — what to do next</title>
+<style>
+:root {
+  --field: #ECF1F3;
+  --paper: #FFFFFF;
+  --ink: #14283A;
+  --muted: #5A6B7A;
+  --line: #C6D2D9;
+  --accent: #EF223A;
+
+  --display: "Avenir Next", "Futura", "Century Gothic", "Trebuchet MS", sans-serif;
+  --body: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+
+  --measure: 62rem;
+  --wide: 82.5rem;
+  --gutter: clamp(1.125rem, 4vw, 2.5rem);
+}
+
+* { box-sizing: border-box; }
+html { background: var(--field); }
+body {
+  margin: 0;
+  background: var(--field);
+  color: var(--ink);
+  font-family: var(--body);
+  line-height: 1.68;
+  font-size: clamp(1rem, 0.55rem + 0.6vw, 1.125rem);
+  overflow-wrap: break-word;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: var(--wide);
+  margin-inline: auto;
+  padding: clamp(2rem, 5vw, 4rem) var(--gutter) 6rem;
+  display: grid;
+  grid-template-columns:
+    [wide-start] minmax(0, 1fr)
+    [prose-start] minmax(0, var(--measure)) [prose-end]
+    minmax(0, 1fr) [wide-end];
+}
+.wrap > *     { grid-column: prose; min-width: 0; max-width: 100%; }
+.wrap > .wide { grid-column: wide; }
+
+.wide, pre { overflow-x: auto; }
+a { color: var(--ink); text-decoration-color: var(--line); text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.eyebrow {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: .16em;
+  font-size: .72rem;
+  color: var(--muted);
+  margin-block: 0 .75rem;
+}
+h1 {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(1.9rem, 1rem + 2.4vw, 2.9rem);
+  line-height: 1.14;
+  letter-spacing: -.015em;
+  margin-block: 0 .6rem;
+}
+.standfirst { color: var(--muted); margin-block: 0 2.4rem; max-width: 48rem; }
+
+.part {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: .15em;
+  font-size: .7rem;
+  color: var(--accent);
+  margin-block: 3.4rem .35rem;
+  padding-block-end: .5rem;
+  border-block-end: 1px solid var(--line);
+}
+h2 {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(1.15rem, .8rem + .8vw, 1.45rem);
+  letter-spacing: -.01em;
+  margin-block: 2.2rem .5rem;
+  padding-inline-start: .8rem;
+  border-inline-start: 2px solid var(--accent);
+}
+h2.plain { border-inline-start-color: var(--line); }
+h2 .n { font-family: var(--mono); color: var(--muted); font-size: .78em; margin-inline-end: .5rem; }
+h3 {
+  font-family: var(--display); font-weight: 600; font-size: 1.02rem;
+  margin-block: 1.6rem .35rem;
+}
+
+p, ul, ol { margin-block: 0 1rem; }
+ul, ol { padding-inline-start: 1.4rem; }
+li { margin-block: 0 .4rem; }
+
+pre {
+  font-family: var(--mono);
+  font-size: .84rem;
+  line-height: 1.6;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1rem 1.1rem;
+  margin-block: 0 1.1rem;
+}
+code { font-family: var(--mono); font-size: .88em; }
+p code, li code, td code { background: var(--paper); border: 1px solid var(--line); border-radius: 3px; padding: .08em .34em; }
+
+.card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1.1rem 1.25rem;
+  margin-block: 0 1.1rem;
+}
+.card > :last-child { margin-block-end: 0; }
+.card .lbl {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: .13em;
+  font-size: .68rem;
+  color: var(--muted);
+  display: block;
+  margin-block-end: .5rem;
+}
+.card.flag { border-inline-start: 2px solid var(--accent); }
+
+table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+th, td { text-align: left; padding: .55rem .7rem; border-block-end: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--mono); font-size: .68rem; text-transform: uppercase; letter-spacing: .11em; color: var(--muted); font-weight: 400; }
+tbody tr:last-child td { border-block-end: none; }
+table.env { min-width: 52rem; }
+table.env td:first-child { font-family: var(--mono); font-size: .8rem; white-space: nowrap; }
+table.status { min-width: 34rem; }
+table.status td:first-child { white-space: nowrap; }
+
+.say {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-inline-start: 2px solid var(--accent);
+  border-radius: 0 5px 5px 0;
+  padding: .7rem 1rem;
+  margin-block: 0 .7rem;
+  font-family: var(--mono);
+  font-size: .86rem;
+}
+
+.yes { color: #2E7D5B; font-weight: 600; }
+.no  { color: var(--muted); }
+
+/* ─────────── architecture diagram ───────────
+   Boxes and connectors. No SVG, no script. Connectors are pseudo-elements on the
+   boxes themselves, so nothing depends on absolute pixel positioning. */
+/* The figure keeps its shape and the WRAPPER scrolls — the theme's rule for wide
+   figures. A 4-lane ladder squeezed into 390px is legible to nobody: measured at
+   2-3 words per line and ~2500px tall before this. */
+.figure { padding-block-end: .2rem; }
+.arch { margin-block: 0 1.4rem; min-width: 38rem; }
+.tier { display: grid; gap: .9rem; justify-items: center; }
+.tier.two { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.box {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: .65rem .9rem;
+  width: 100%;
+  max-width: 21rem;
+  text-align: center;
+}
+.box .bt { font-family: var(--display); font-weight: 600; font-size: .95rem; display: block; }
+.box .bs { font-family: var(--mono); font-size: .68rem; color: var(--muted); letter-spacing: .03em; }
+.box.dashed { border-style: dashed; }
+.box.dashed .bt { color: var(--muted); font-weight: 500; }
+.box.wideb { max-width: 44rem; }
+/* Stacked under the agent. margin-inline auto centres them on the agent's rail. */
+.box.sm { max-width: 17rem; margin-inline: auto; margin-block-end: .5rem; padding: .5rem .8rem; }
+.box.sm .bt { font-size: .88rem; }
+.tier.two > div { display: block; width: 100%; }
+.tier.two > div > .box { margin-inline: auto; }
+.linklabel.dev { text-transform: none; letter-spacing: 0; font-size: .66rem; line-height: 1.5; padding-block-start: .9rem; }
+.linklabel.dev code { border: 0; background: none; padding: 0; }
+.link { display: grid; justify-items: center; }
+.link::before { content: ""; width: 1px; height: 1.4rem; background: var(--line); }
+.link.dash::before { background: repeating-linear-gradient(to bottom, var(--line) 0 3px, transparent 3px 7px); }
+.linklabel { font-family: var(--mono); font-size: .64rem; color: var(--muted); letter-spacing: .07em; text-align: center; padding-block: .25rem 0; }
+/* One horizontal bar under Traefik feeding two columns. */
+.split { position: relative; height: 1.5rem; margin-inline: 25%; }
+.split::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: var(--line); }
+.split i { position: absolute; top: 0; width: 1px; height: 1.5rem; background: var(--line); }
+.split i:first-child { left: 0; }
+.split i:last-child  { right: 0; }
+
+/* ─────────── sequence ladder ───────────
+   Four lanes as grid columns; each step spans from its source lane to its target.
+   The rails are grid children too, so they land on column centres with no
+   percentage arithmetic to get wrong. */
+.ladder { --lanes: 4; margin-block: 0 1rem; min-width: 44rem; }
+.lanes {
+  display: grid;
+  grid-template-columns: repeat(var(--lanes), minmax(0, 1fr));
+  padding-block: .5rem .6rem;
+  border-block-end: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 3;
+  background: var(--field);
+}
+.ln { display: flex; flex-direction: column; align-items: center; gap: .3rem; text-align: center; }
+.ln span {
+  font-family: var(--mono); font-size: .62rem; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink); line-height: 1.25;
+}
+/* Ours vs external, encoded in the marker rather than in extra accent colours. */
+.mk { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.mk.ours { background: var(--ink); }
+.mk.ext  { background: transparent; border: 1.5px solid var(--muted); }
+.mk.you  { background: var(--ink); border-radius: 1px; transform: rotate(45deg); }
+
+.rungs { position: relative; padding-block: .3rem; }
+.rails {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  display: grid; grid-template-columns: repeat(var(--lanes), minmax(0, 1fr));
+}
+.rails i { justify-self: center; width: 1px; background: var(--line); }
+
+.step {
+  position: relative; z-index: 1;
+  display: grid; grid-template-columns: repeat(var(--lanes), minmax(0, 1fr));
+  align-items: center;
+  padding-block: .5rem;
+}
+/*
+  A hop spans whole grid columns, but a lane's rail sits at its column CENTRE — so an
+  arrow drawn to the edge of the span overshoots its own rail by half a column. Inset
+  by exactly that: half a column expressed as a fraction of the hop's own width, which
+  is 50% / (number of columns spanned). Measured before and after; without it the head
+  of step 01 landed to the right of the Agent rail it was pointing at.
+*/
+.hop {
+  --span: calc(var(--b) - var(--a) + 1);
+  --half: calc(50% / var(--span));
+  grid-column: var(--a) / calc(var(--b) + 1);
+  position: relative;
+  display: grid; justify-items: center; align-content: center;
+  min-height: 2.5rem;
+  padding-inline: var(--half);   /* keeps the label between the two rails too */
+}
+.hop::before {
+  content: ""; position: absolute; top: 50%; left: var(--half); right: var(--half);
+  height: 1.5px; background: var(--rung, var(--line)); transform: translateY(-50%);
+}
+.hop::after {
+  content: ""; position: absolute; top: 50%; width: 0; height: 0;
+  border-block: 5px solid transparent;
+  border-inline-start: 8px solid var(--rung, var(--line));
+  transform: translateY(-50%);
+  right: calc(var(--half) - 8px);
+}
+.step[data-dir="l"] .hop::after {
+  right: auto; left: calc(var(--half) - 8px);
+  transform: translateY(-50%) rotate(180deg);
+}
+/* A step inside one lane gets a short bracket, not an arrow — span 1 would otherwise
+   collapse the line to zero width. */
+.step[data-dir="self"] .hop { padding-inline: 8%; }
+.step[data-dir="self"] .hop::before { left: 30%; right: 30%; }
+.step[data-dir="self"] .hop::after { display: none; }
+
+.tag {
+  position: relative; z-index: 2;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 4px;
+  padding: .38rem .6rem; max-width: min(100%, 33rem);
+  display: grid; gap: .05rem; justify-items: start; text-align: left;
+}
+.tag .n { font-family: var(--mono); font-size: .58rem; letter-spacing: .1em; color: var(--muted); }
+.tag .t { font-size: .8rem; line-height: 1.3; }
+.tag .t code { font-size: .94em; border: 0; background: none; padding: 0; }
+.tag .ms { font-family: var(--mono); font-size: .64rem; color: var(--muted); }
+/* The one step the whole telemetry design exists to measure. */
+.step.mark { --rung: var(--accent); }
+.step.mark .tag { border-color: var(--accent); }
+.step.mark .tag .ms { color: var(--accent); font-weight: 600; }
+
+.legend { font-family: var(--mono); font-size: .64rem; color: var(--muted); letter-spacing: .03em; margin-block: .4rem 1.4rem; }
+.legend b { color: var(--ink); font-weight: 600; }
+
+footer { color: var(--muted); font-size: .88rem; margin-block-start: 3rem; padding-block-start: 1.2rem; border-block-start: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">Demo scaffold · after T11</p>
+  <h1>What to do next</h1>
+  <p class="standfirst">
+    The agent core works and you can talk to it in a browser with no Twilio credentials at all. This
+    covers testing that, then gathering and independently verifying the Twilio credentials the voice
+    and SMS channels will need — and it is honest about which of those channels exist yet.
+  </p>
+
+  <h2 class="plain">Where things stand</h2>
+  <div class="wide">
+  <table class="status">
+    <thead><tr><th>Piece</th><th>State</th></tr></thead>
+    <tbody>
+      <tr><td>Agent core (<code>runTurn</code>)</td><td><span class="yes">Works</span> — streams, calls tools, remembers across turns</td></tr>
+      <tr><td>Bench UI at <code>/bench</code></td><td><span class="yes">Works</span> — zero Twilio credentials needed</td></tr>
+      <tr><td>Prompt + tool management</td><td><span class="yes">Works</span> — versioned in Langfuse, editable without a redeploy</td></tr>
+      <tr><td>Telemetry / traces</td><td><span class="yes">Works</span> — per-turn waterfall with time-to-first-token</td></tr>
+      <tr><td>Conversation history</td><td><span class="yes">Works</span> — in-process, bounded, dies with the container</td></tr>
+      <tr><td>SMS channel</td><td><span class="no">Not built yet (T12)</span></td></tr>
+      <tr><td>Voice / ConversationRelay</td><td><span class="no">Not built yet (T13)</span></td></tr>
+      <tr><td>Twilio built-in tools (handoff, knowledge)</td><td><span class="no">Not built yet (T14)</span></td></tr>
+      <tr><td>Docker / Traefik deploy</td><td><span class="no">Not built yet (T15–T17)</span></td></tr>
+      <tr><td>Customer-facing page + operator console</td><td><span class="no">Not built yet (T18–T19)</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="card flag">
+    <span class="lbl">Read this before filling in credentials</span>
+    <p>
+      Setting the Twilio variables today will <strong>not</strong> make voice or SMS work — the code
+      that boots those channels does not exist yet. What credentials buy you right now is being
+      <em>ready</em>: Part C verifies each one independently of the app, so when T12 and T13 land you
+      are debugging one new thing instead of two.
+    </p>
+  </div>
+
+  <p class="part">How it fits together</p>
+
+  <h2 class="plain">Two containers, one public host, split by path</h2>
+  <p>
+    Next needs its own server and TAC owns a Fastify one, so they stay separate containers and Traefik
+    routes between them by URL prefix. Dashed boxes are not built yet.
+  </p>
+
+  <div class="wide figure">
+  <div class="arch">
+    <div class="tier">
+      <div class="box dashed">
+        <span class="bt">Twilio</span>
+        <span class="bs">voice (ConversationRelay) + SMS · T12–T14</span>
+      </div>
+    </div>
+    <div class="link dash"></div>
+    <div class="tier">
+      <div class="box wideb">
+        <span class="bt">Traefik</span>
+        <span class="bs">one public host · terminates TLS · X-Forwarded-Proto forced to https</span>
+      </div>
+    </div>
+    <div class="split"><i></i><i></i></div>
+    <div class="tier two">
+      <div>
+        <p class="linklabel">/api · /events · /health</p>
+        <div class="box">
+          <span class="bt">agent</span>
+          <span class="bs">:8910 · Fastify + TAC + runTurn</span>
+        </div>
+        <!-- Nested under the agent column on purpose: only the agent talks to these two. -->
+        <div class="link"></div>
+        <p class="linklabel">the agent calls out to</p>
+        <div class="box sm">
+          <span class="bt">Langfuse</span>
+          <span class="bs">:3100 · prompts, tools, traces</span>
+        </div>
+        <div class="box sm">
+          <span class="bt">OpenAI</span>
+          <span class="bs">model calls via the AI SDK</span>
+        </div>
+      </div>
+      <div>
+        <p class="linklabel">everything else</p>
+        <div class="box">
+          <span class="bt">web</span>
+          <span class="bs">:3000 · Next 16 + Strix</span>
+        </div>
+        <p class="linklabel dev">in development only, Next proxies<br><code>/api</code> and <code>/events</code> to the agent, so browser<br>code fetches relative paths in both environments</p>
+      </div>
+    </div>
+  </div>
+  </div>
+  <p class="legend">
+    <b>Note</b> the agent port is a compile-time constant, not an env var — the browser, the server and
+    Traefik's load-balancer label must all agree, and a variable only some of them read is a silent 502.
+  </p>
+
+  <h2 class="plain">One bench turn, hop by hop</h2>
+  <p>
+    This is the flow you exercise in Part A, and it is the same <code>runTurn</code> voice and SMS will
+    call — only the first and last hops differ. Timings are from a real measured turn, not estimates.
+  </p>
+
+  <div class="wide figure">
+  <div class="ladder">
+    <div class="lanes">
+      <div class="ln"><span class="mk you"></span><span>Browser</span></div>
+      <div class="ln"><span class="mk ours"></span><span>Agent<br>:8910</span></div>
+      <div class="ln"><span class="mk ext"></span><span>OpenAI</span></div>
+      <div class="ln"><span class="mk ext"></span><span>Langfuse</span></div>
+    </div>
+    <div class="rungs">
+      <div class="rails"><i></i><i></i><i></i><i></i></div>
+
+      <div class="step" data-dir="r" style="--a:1; --b:2">
+        <div class="hop"><div class="tag">
+          <span class="n">01</span>
+          <span class="t"><code>POST /api/bench/turn</code> — the message, plus a conversation id after turn 1</span>
+        </div></div>
+      </div>
+
+      <div class="step" data-dir="self" style="--a:2; --b:2">
+        <div class="hop"><div class="tag">
+          <span class="n">02</span>
+          <span class="t"><code>withTurnSpan</code> opens <code>turn.bench</code>, wrapping the whole handler including the token drain</span>
+          <span class="ms">a start frame goes back immediately</span>
+        </div></div>
+      </div>
+
+      <div class="step" data-dir="r" style="--a:2; --b:4">
+        <div class="hop"><div class="tag">
+          <span class="n">03</span>
+          <span class="t">Fetch the prompt by its <code>production</code> label — text, model, tool list and max steps all versioned together</span>
+          <span class="ms">≈0 ms cached · falls back to the compiled default if unreachable</span>
+        </div></div>
+      </div>
+
+      <div class="step" data-dir="self" style="--a:2; --b:2">
+        <div class="hop"><div class="tag">
+          <span class="n">04</span>
+          <span class="t">Read conversation history, compose the system prompt, resolve the tool names the prompt asked for</span>
+          <span class="ms">~35 ms for all of it</span>
+        </div></div>
+      </div>
+
+      <div class="step" data-dir="r" style="--a:2; --b:3">
+        <div class="hop"><div class="tag">
+          <span class="n">05</span>
+          <span class="t">Stream the model call, with the resolved tools and a link back to the prompt version</span>
+        </div></div>
+      </div>
+
+      <div class="step" data-dir="l" style="--a:2; --b:3">
+        <div class="hop"><div class="tag">
+          <span class="n">06</span>
+          <span class="t">The model asks for a tool — <code>lookup_order</code></span>
+        </div></div>
+      </div>
+
+      <div class="step" data-dir="self" style="--a:2; --b:2">
+        <div class="hop"><div class="tag">
+          <span class="n">07</span>
+          <span class="t">The tool runs locally. Both demo tools are credential-free, which is what lets this work on a bare laptop</span>
+        </div></div>
+      </div>
+
+      <div class="step mark" data-dir="l" style="--a:2; --b:3">
+        <div class="hop"><div class="tag">
+          <span class="n">08</span>
+          <span class="t">First non-empty text delta — the moment an agent starts speaking</span>
+          <span class="ms">first token 1452 ms — measured from turn start, so it includes steps 02–07</span>
+        </div></div>
+      </div>
+
+      <div class="step" data-dir="l" style="--a:1; --b:2">
+        <div class="hop"><div class="tag">
+          <span class="n">09</span>
+          <span class="t">Token frames stream out as they arrive, so the reader watches the answer being written</span>
+        </div></div>
+      </div>
+
+      <div class="step" data-dir="l" style="--a:1; --b:2">
+        <div class="hop"><div class="tag">
+          <span class="n">10</span>
+          <span class="t">A done frame with the timings, prompt version, steps and tools — the footnote you see under each answer</span>
+          <span class="ms">total 2097 ms</span>
+        </div></div>
+      </div>
+
+      <div class="step" data-dir="self" style="--a:2; --b:2">
+        <div class="hop"><div class="tag">
+          <span class="n">11</span>
+          <span class="t">Append the exchange to history, so the next turn can refer back to it</span>
+        </div></div>
+      </div>
+
+      <div class="step" data-dir="r" style="--a:2; --b:4">
+        <div class="hop"><div class="tag">
+          <span class="n">12</span>
+          <span class="t">Spans reach Langfuse in a batch, seconds later — which is exactly why the live view is its own stream and not a Langfuse query</span>
+        </div></div>
+      </div>
+
+    </div>
+  </div>
+  </div>
+  <p class="legend">
+    <b>●</b> our code &nbsp;·&nbsp; <b>○</b> external service &nbsp;·&nbsp; <b>◆</b> the browser
+    &nbsp;·&nbsp; the red rung is the one number the whole telemetry design exists to produce
+  </p>
+
+  <div class="card">
+    <span class="lbl">What changes when voice arrives</span>
+    <p>
+      Only hops 01, 09 and 10. A call replaces the POST with a WebSocket frame from ConversationRelay,
+      and the token stream goes to text-to-speech instead of a browser. Steps 02–08 and 11–12 are
+      identical, because they are the same function — which is the whole reason the bench is worth
+      having: it proves that claim at runtime rather than asserting it in a comment.
+    </p>
+  </div>
+
+  <p class="part">Part A — test what works today</p>
+
+  <h2><span class="n">1</span>Start everything</h2>
+  <p>From <code>~/code/demo-building-tools/scaffold</code>:</p>
+<pre>pnpm langfuse    # only if it is down — 6 containers, ~10s on warm volumes
+pnpm dev:all     # agent :8910 + web :3000, ctrl-c stops both</pre>
+  <p>Give it ~20 seconds, then <code>pnpm status</code>. You want green on <strong>agent</strong>,
+  <strong>web</strong> and <strong>langfuse</strong>. Voice and SMS reading as unavailable is correct.</p>
+
+  <h2><span class="n">2</span>Open the bench and send two messages</h2>
+  <p><a href="http://localhost:3000/bench">http://localhost:3000/bench</a> — the home page at <code>/</code>
+  is still a placeholder. Type the first, wait for the answer, then the second:</p>
+  <div class="say">Where is order A4721, and what are the Downtown store hours?</div>
+  <div class="say">What was the order number I just asked about?</div>
+  <p>
+    Nothing in that second sentence contains the order number, so a reply of <strong>A4721</strong> is
+    history working. If it asks which order you mean, something regressed — worth telling me.
+  </p>
+
+  <h2><span class="n">3</span>Read the footnote under each answer</h2>
+<pre>v2 · gpt-5.4-mini · first token 1452ms · total 2097ms · 2 steps · lookup_order, get_store_hours</pre>
+  <ul>
+    <li><code>v2</code> — which Langfuse prompt version answered. Shows <code>fallback</code> if Langfuse was unreachable and the compiled-in default was used.</li>
+    <li><code>first token</code> — measured from the <em>start of the turn</em>, so it includes prompt fetch and tool resolution, not just the model call.</li>
+    <li><code>steps</code> — <code>1</code> is a plain answer, <code>2</code> means one tool round-trip.</li>
+  </ul>
+  <p>
+    Expect turn 1 around <strong>1.5–2.3s</strong> to first token and turn 2 around <strong>0.5s</strong>
+    with <strong>1 step</strong>. That gap is the tool loop's cost, made visible.
+  </p>
+
+  <h2><span class="n">4</span>Find the trace in Langfuse</h2>
+  <p>
+    <a href="http://localhost:3100">http://localhost:3100</a>, signing in with
+    <code>LANGFUSE_INIT_USER_EMAIL</code> / <code>LANGFUSE_INIT_USER_PASSWORD</code> from your
+    <code>.env</code> — no signup step. Then <strong>Scaffold → Tracing</strong>, newest
+    <code>conversation.bench</code>:
+  </p>
+<pre>conversation.bench
+├─ turn.bench                       2.10s
+│  └─ llm.stream → invoke_agent → chat gpt-5.4-mini ×2    tool loop
+└─ turn.bench                       0.59s
+   └─ llm.stream → invoke_agent → chat gpt-5.4-mini ×1    answered from memory</pre>
+  <div class="card">
+    <span class="lbl">Expect this, it is not a bug</span>
+    <p>
+      A <code>conversation.bench</code> root only appears once the conversation ends — held open for 30
+      minutes of idle, or until the agent shuts down. Individual turns appear promptly. Stopping the
+      agent flushes it.
+    </p>
+  </div>
+
+  <p class="part">Part B — gather the Twilio credentials</p>
+
+  <p>
+    Seven values, in three groups. <code>.env.example</code> in the repo is the authoritative version of
+    this table — it documents each variable's Console location, format, and what breaks without it, and
+    a test fails if the code reads a variable that file does not describe.
+  </p>
+
+  <h3>Group 1 — the core five. All of them, or no channel starts at all.</h3>
+  <div class="wide">
+  <table class="env">
+    <thead><tr><th>Variable</th><th>Where</th><th>Format / gotcha</th></tr></thead>
+    <tbody>
+      <tr><td>TWILIO_ACCOUNT_SID</td><td>Console → Account → API keys &amp; tokens</td><td><code>AC</code> + 32 hex</td></tr>
+      <tr><td>TWILIO_AUTH_TOKEN</td><td>Console → Account → Auth Token (click to reveal)</td><td>Also validates the <code>X-Twilio-Signature</code> on every inbound webhook, so a wrong value looks like <em>“Twilio is 403-ing us”</em> rather than a bad secret</td></tr>
+      <tr><td>TWILIO_API_KEY</td><td>Console → API keys &amp; tokens → Create API key</td><td><code>SK</code> + 32 hex. Standard is enough</td></tr>
+      <tr><td>TWILIO_API_SECRET</td><td>Shown <strong>once</strong> at key creation</td><td>Not retrievable later — lost means make a new key</td></tr>
+      <tr><td>TWILIO_PHONE_NUMBER</td><td>Console → Phone Numbers</td><td>E.164, e.g. <code>+15551234567</code>. A <code>555-1234</code> here is a common and confusing failure</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>
+    <code>TACConfig.fromEnv()</code> <strong>throws</strong> if any one of these five is missing or
+    malformed, which is why <code>server/config.ts</code> validates them itself and only constructs TAC
+    once all five are good.
+  </p>
+
+  <h3>Group 2 — voice</h3>
+  <div class="wide">
+  <table class="env">
+    <thead><tr><th>Variable</th><th>Where</th><th>Format / gotcha</th></tr></thead>
+    <tbody>
+      <tr><td>TWILIO_VOICE_PUBLIC_DOMAIN</td><td>Your public host — on the Traefik dev box, <code>&lt;APP_NAME&gt;.twilio.dtolb.com</code></td><td><strong>Bare host, no scheme.</strong> <code>https://x.com</code> is rejected; <code>x.com</code> and <code>x.ngrok.app:8080</code> are fine. <code>TACServer</code> <strong>throws at construction</strong> without it. The dev box already terminates TLS, so no ngrok needed</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Group 3 — orchestrated mode (required for SMS, memory, handoff, knowledge)</h3>
+  <div class="wide">
+  <table class="env">
+    <thead><tr><th>Variable</th><th>Where</th><th>Format / gotcha</th></tr></thead>
+    <tbody>
+      <tr><td>TWILIO_CONVERSATION_<wbr>CONFIGURATION_ID</td><td>Console → Products &amp; services → Conversation Orchestrator → Conversation configurations</td><td><code>conv_configuration_…</code> — <code>new SMSChannel(tac)</code> <strong>throws</strong> without it and does not degrade to a no-op. Omitting it leaves TAC voice-only, where Memory, Knowledge and handoff are <em>all</em> absent</td></tr>
+      <tr><td>TWILIO_STUDIO_<wbr>HANDOFF_FLOW_SID</td><td>Console → Studio → the flow fronting your human queue</td><td><code>FW</code> + 32 hex. <code>createStudioHandoffTool()</code> <strong>throws at construction</strong> without it, inside a handler whose errors TAC swallows — i.e. dead air on a live call. Leave blank if the demo has no handoff</td></tr>
+      <tr><td>TWILIO_KNOWLEDGE_BASE_ID</td><td>Console → Knowledge</td><td>Genuinely optional — absent just means no <code>search_knowledge</code> tool</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="card flag">
+    <span class="lbl">One thing that will confuse you</span>
+    <p>
+      Your shell profile already exports <code>TWILIO_ACCOUNT_SID</code>, <code>TWILIO_API_KEY</code>
+      and <code>TWILIO_API_SECRET</code>, so those three read as <strong>present</strong> in
+      <code>pnpm status</code> and <code>/health</code> whether or not they are in <code>.env</code>.
+      Only the other four will show as missing. That is real, not a bug — but it means
+      <code>.env</code> is not the whole picture on this machine.
+    </p>
+  </div>
+
+  <p class="part">Part C — verify each credential before the app needs it</p>
+
+  <p>
+    Do this with the Twilio CLI, not with the scaffold. Every check below is read-only and none of them
+    place a call or send a message.
+  </p>
+
+  <h2><span class="n">1</span>Confirm the CLI is using the credentials you think it is</h2>
+<pre>twilio profiles:list</pre>
+  <p>
+    A profile shown as <code>[env]</code> means the CLI is reading your exported environment variables
+    rather than a stored profile — worth knowing, because editing <code>.env</code> will not change what
+    the CLI sees.
+  </p>
+
+  <h2><span class="n">2</span>Prove the key and secret authenticate</h2>
+<pre>twilio phone-numbers:list</pre>
+  <div class="card flag">
+    <span class="lbl">Do not use accounts:list for this</span>
+    <p>
+      The obvious check, <code>twilio api:core:accounts:list</code>, returns
+      <strong>HTTP 401, error 70004</strong> — <em>“the provided key does not have the permissions to
+      access this endpoint”</em> — on a <strong>restricted</strong> API key, even when the key is
+      perfectly good. Confirmed on this account. It reads as “my credentials are wrong” and sends you
+      rotating keys that were fine. <code>phone-numbers:list</code> exercises the same credentials
+      against an endpoint a restricted key can actually reach.
+    </p>
+  </div>
+  <p>The listing also gives you the exact E.164 string for <code>TWILIO_PHONE_NUMBER</code>, and shows
+  whether each number is voice- and SMS-capable.</p>
+
+  <h2><span class="n">3</span>Find or confirm the Conversation Orchestrator configuration</h2>
+  <p>This one has no CLI command, so call the API directly:</p>
+<pre>curl -s -u "$TWILIO_API_KEY:$TWILIO_API_SECRET" \
+  https://conversations.twilio.com/v2/ControlPlane/Configurations \
+  | python3 -m json.tool</pre>
+  <p>
+    Each entry has an <code>id</code> (<code>conv_configuration_…</code>) and a
+    <code>memoryStoreId</code>. A configuration <em>without</em> a memory store gives you SMS but no
+    Conversation Memory, so check that field rather than assuming. If you have none, the Console
+    quickstart creates the configuration and the memory store together —
+    <a href="https://www.twilio.com/docs/conversations/orchestrator/quickstart">Conversation Orchestrator quickstart</a>.
+  </p>
+
+  <h2><span class="n">4</span>Confirm the Studio handoff flow</h2>
+<pre>twilio api:studio:v2:flows:list</pre>
+  <p>You want a flow whose status is <code>published</code>; a draft SID will not behave. Copy its
+  <code>FW…</code> SID.</p>
+
+  <h2><span class="n">5</span>Verify the auth token separately — it is the one that bites</h2>
+  <p>
+    The auth token is not interchangeable with the API key. It is what validates inbound webhook
+    signatures, so a stale one produces <em>“Invalid Twilio webhook signature”</em> on every single
+    inbound request and looks exactly like a Twilio outage. Because it is only readable in the Console,
+    the check is to use it as HTTP Basic auth in place of the key pair:
+  </p>
+<pre>curl -s -o /dev/null -w '%{http_code}\n' \
+  -u "$TWILIO_ACCOUNT_SID:PASTE_AUTH_TOKEN_HERE" \
+  "https://api.twilio.com/2010-04-01/Accounts/$TWILIO_ACCOUNT_SID/IncomingPhoneNumbers.json?PageSize=1"</pre>
+  <p><code>200</code> means the token is good. <code>401</code> means you copied the wrong value or a
+  rotated one. Do not leave the token in your shell history — paste it into <code>.env</code> instead
+  and re-run using <code>$TWILIO_AUTH_TOKEN</code>.</p>
+
+  <h2><span class="n">6</span>Then check the scaffold agrees</h2>
+<pre>pnpm status                          # capability flags
+curl -s http://localhost:8910/health # same flags, plus every missing var by name</pre>
+  <p>
+    <code>/health</code> names the specific variables it is missing, which is the fastest way to catch a
+    typo'd key name. Note that a value in your shell environment satisfies it just as well as
+    <code>.env</code>.
+  </p>
+
+  <p class="part">Part D — what still has to be built</p>
+
+  <p>Credentials alone will not light up a phone. In order:</p>
+  <ul>
+    <li><strong>T12 — SMS.</strong> Register the SMS channel, <code>memoryMode: 'always'</code>, return a string from <code>onMessageReady</code> and never throw from it (TAC swallows those errors and only logs them, which is a silently unanswered customer).</li>
+    <li><strong>T13 — Voice.</strong> The high-risk one. The voice channel is passed to <code>TACServer</code> but deliberately <strong>not registered</strong>, because <code>registerChannel</code> consumes the <code>prompt</code> slot and later taps silently replace TAC's handler. Also: start the conversation span on <code>setup</code> and stash the traceparent on <code>session.metadata</code>, which is the only cross-turn carrier that exists.</li>
+    <li><strong>T14 — the Twilio built-in tools.</strong> Each construction guarded individually, so a missing handoff flow costs you one warning instead of dead air.</li>
+    <li><strong>T15–T17 — Docker, Traefik, dev overlay.</strong></li>
+  </ul>
+
+  <p class="part">Part E — two deploy traps already documented</p>
+
+  <p>Not needed until T15, but they are the ones that waste an afternoon:</p>
+  <div class="card">
+    <span class="lbl">X-Forwarded-Proto will 403 every webhook</span>
+    <p>
+      TAC rebuilds the signed webhook URL from the <code>X-Forwarded-Proto</code> header, defaulting to
+      <code>https</code> only when it is <em>absent</em>. Traefik terminates TLS and forwards
+      <code>http</code>, so TAC validates <code>http://…</code> against a signature Twilio computed over
+      <code>https://…</code>. Every voice and SMS webhook 403s with one warning that reads like a Twilio
+      problem. The fix is a Traefik middleware label forcing the header to <code>https</code> — correct
+      rather than a hack, since the public door is always HTTPS.
+    </p>
+  </div>
+  <div class="card">
+    <span class="lbl">Traefik router names are global on the box</span>
+    <p>
+      Two clones both left at <code>APP_NAME=scaffold</code> define routers with identical names, and one
+      demo silently steals the other's Twilio webhooks. Nothing errors. Set <code>APP_NAME</code> first,
+      before anything else — the preflight script refuses to bring the stack up while it is still the
+      default.
+    </p>
+  </div>
+
+  <p class="part">Reference</p>
+  <div class="wide">
+  <table class="status">
+    <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>pnpm status</code></td><td>What is running, what is configured, what is therefore possible. Read-only</td></tr>
+      <tr><td><code>pnpm dev:all</code></td><td>Agent + web; ctrl-c stops both cleanly and flushes traces</td></tr>
+      <tr><td><code>pnpm typecheck &amp;&amp; pnpm test</code></td><td>Both tsconfig projects, 227 tests</td></tr>
+      <tr><td><code>pnpm verify:turn</code></td><td>Three real turns against the live model; exits non-zero on a surprise</td></tr>
+      <tr><td><code>pnpm seed:prompts</code></td><td>Push the compiled defaults to Langfuse as v1 + <code>production</code></td></tr>
+      <tr><td><code>pnpm langfuse</code> / <code>:down</code></td><td>The 6-container Langfuse stack</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>
+    And the two documents that are the real source of truth: <code>docs/HANDOFF.md</code> for current
+    status and every measured gotcha, and <code>.env.example</code> for the variables.
+  </p>
+
+  <footer>
+    Demo scaffold · notes after T11 (bench harness) · nothing here places a billed call or sends a message
+  </footer>
+
+</div>
+</body>
+</html>
