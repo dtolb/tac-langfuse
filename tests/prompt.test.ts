@@ -78,8 +78,10 @@ test('every placeholder in the compiled defaults is an allowlisted slot', () => 
   // prompt text, which otherwise produces a quietly worse agent that passes everything else.
   for (const name of PROMPT_NAMES) {
     for (const message of DEFAULT_PROMPTS[name].messages) {
-      for (const [, slot] of message.content.matchAll(/\{\{\s*([^{}\s]+)\s*\}\}/g)) {
-        expect(SLOT_NAMES, `${name} references {{${slot}}}`).toContain(slot);
+      // Same pattern slots.ts uses, deliberately: a narrower one here would not see
+      // `{{company name}}` or `{{}}` in a default and would pass while the prompt was broken.
+      for (const [, captured] of message.content.matchAll(/\{\{([^{}]*)\}\}/g)) {
+        expect(SLOT_NAMES, `${name} references {{${captured}}}`).toContain(captured?.trim());
       }
     }
   }
@@ -140,6 +142,44 @@ test('an allowlisted slot the caller forgot renders as a distinguishable marker'
   expect(message?.content).toBe('You are [[MISSING SLOT: persona]].');
 });
 
+test('a slot name with whitespace INSIDE it renders as a marker, not verbatim', () => {
+  // The hole this closes: a capture that excluded whitespace matched `{{company name}}` not at
+  // all, so it passed through into the prompt unchanged and was read aloud by TTS as braces —
+  // with nothing in the Langfuse trace to say so. Never throw, never leave `{{name}}` in place.
+  const [message] = compose([{ role: 'system', content: 'Hello {{company name}}.' }], {
+    company_name: 'Northwind Traders',
+  });
+  expect(message?.content).toBe('Hello [[UNKNOWN SLOT: company name]].');
+});
+
+test('a trailing space inside the braces still substitutes', () => {
+  // `{{company name }}` from the review: the trailing space is trimmed, so what fails the
+  // allowlist is the internal space alone — and a legitimate `{{persona }}` is unaffected.
+  const [message] = compose([{ role: 'system', content: '{{persona }}|{{company name }}' }], {
+    persona: 'a support agent',
+  });
+  expect(message?.content).toBe('a support agent|[[UNKNOWN SLOT: company name]]');
+});
+
+test('an empty or whitespace-only placeholder renders as a named marker', () => {
+  // `{{}}` and `{{ }}` are stray placeholders — the same class of prompt-text bug as a typo, so
+  // they carry the same marker word and one search for UNKNOWN SLOT finds every kind. The name
+  // is spelled `(empty)` on purpose: `[[UNKNOWN SLOT: ]]` reads as a fault in the marker itself.
+  const [message] = compose([{ role: 'system', content: 'a{{}}b{{ }}c' }], {});
+  expect(message?.content).toBe('a[[UNKNOWN SLOT: (empty)]]b[[UNKNOWN SLOT: (empty)]]c');
+});
+
+test('no placeholder survives compose, whatever is between the braces', () => {
+  // The module's unconditional promise, asserted as one property rather than case by case.
+  const content = '{{persona}} {{ company_name }} {{typo}} {{company name}} {{}} {{ }}';
+  const [message] = compose([{ role: 'system', content }], {
+    persona: 'a support agent',
+    company_name: 'Northwind Traders',
+  });
+  expect(message?.content).not.toContain('{{');
+  expect(message?.content).not.toContain('}}');
+});
+
 test('all four slots substitute, and surrounding whitespace is tolerated', () => {
   const [message] = compose(
     [{ role: 'user', content: '{{persona}}|{{ company_name }}|{{channel}}|{{current_date}}' }],
@@ -170,7 +210,6 @@ test('compose returns new messages and leaves the input untouched', () => {
 /** Injected instead of mocked: if it needs vi.mock, the seam is wrong. */
 const fetched = (over: Partial<FetchedPrompt> = {}): FetchedPrompt => ({
   version: 7,
-  labels: [PRODUCTION_LABEL],
   prompt: [{ role: 'system', content: 'Live prompt for {{company_name}}.' }],
   config: { model: 'gpt-5.4-mini', tools: ['search_knowledge'], toolChoice: 'auto', maxSteps: 2 },
   toJSON: () => '{"name":"demo-agent-voice","version":7}',
@@ -191,12 +230,23 @@ const silent: PromptLogger = { warn: () => {} };
 
 /** `langfuse: null` throughout: an injected fetcher replaces the client, so no credentials exist. */
 const portWith = (
-  extra: Omit<LangfusePromptDeps, 'langfuse'> = {},
+  extra: Partial<Omit<LangfusePromptDeps, 'langfuse'>> = {},
 ): { port: ReturnType<typeof createLangfusePromptPort>; events: ObsEvent[] } => {
   const bus = createObsBus();
   const events: ObsEvent[] = [];
   bus.subscribe((e) => void events.push(e));
-  return { port: createLangfusePromptPort({ langfuse: null, logger: silent, bus, ...extra }), events };
+  // ttlMs is required of every caller now — the port does not read NODE_ENV. Cases that are not
+  // about caching take the dev policy value; the ones that are override it.
+  return {
+    port: createLangfusePromptPort({
+      langfuse: null,
+      logger: silent,
+      bus,
+      ttlMs: PROMPT_CACHE_TTL_DEV_MS,
+      ...extra,
+    }),
+    events,
+  };
 };
 
 test('a live prompt is served with its version, label and telemetry link', async () => {
@@ -222,6 +272,19 @@ test('the port fetches by label, never by version', async () => {
   await port.get('demo-agent-voice');
   // Fetching by label is the entire rollback mechanism: the operator moves the pointer.
   expect(seen).toEqual([PRODUCTION_LABEL]);
+});
+
+test('the label reported is the one requested, not the one the fetched prompt carries', async () => {
+  // Deliberate, and worth pinning: a Langfuse version carries its own label list, which can
+  // disagree with what we asked for (or omit it). "We are serving whatever `production` points
+  // at" is the operator-meaningful fact, and `version` says which version that turned out to be.
+  // The port cannot even see the fetched labels — `FetchedPrompt` omits them — and this is why.
+  const carryingOtherLabels = { ...fetched(), labels: ['staging', 'latest'] };
+  const { port } = portWith({ label: PRODUCTION_LABEL, fetcher: async () => carryingOtherLabels });
+
+  const p = await port.get('demo-agent-voice');
+  expect(p.label).toBe(PRODUCTION_LABEL);
+  expect(p.version).toBe(7);
 });
 
 test('a live prompt with no config at all gets the schema defaults', async () => {
@@ -279,7 +342,12 @@ test('messages Langfuse cannot supply as chat turns fall back too', async () => 
 
 test('no Langfuse configured is the same degraded path, named differently', async () => {
   const logger = collectingLogger();
-  const port = createLangfusePromptPort({ langfuse: null, logger, bus: createObsBus() });
+  const port = createLangfusePromptPort({
+    langfuse: null,
+    logger,
+    bus: createObsBus(),
+    ttlMs: PROMPT_CACHE_TTL_DEV_MS,
+  });
 
   const p = await port.get('demo-agent-text');
   expect(p.version).toBe('fallback');
@@ -364,6 +432,31 @@ test('a fallback event names its cause, so the console shows why', async () => {
 });
 
 // ------------------------------------------------------------------ cache TTL policy
+
+test('the cache window is exactly the TTL the caller supplied', async () => {
+  // The port takes ttlMs instead of reading NODE_ENV itself, so `server/config.ts` stays the one
+  // place the environment is read. This pins that the caller's value is what actually bounds the
+  // window — including the production policy value, which no test could set via a global.
+  let clock = 0;
+  let calls = 0;
+  const { port } = portWith({
+    ttlMs: promptCacheTtlMs('production'),
+    now: () => clock,
+    fetcher: async () => {
+      calls++;
+      return fetched();
+    },
+  });
+
+  await port.get('demo-agent-voice');
+  clock = PROMPT_CACHE_TTL_PROD_MS - 1;
+  await port.get('demo-agent-voice');
+  expect(calls).toBe(1);
+
+  clock = PROMPT_CACHE_TTL_PROD_MS;
+  await port.get('demo-agent-voice');
+  expect(calls).toBe(2);
+});
 
 test('the cache TTL is shorter outside production', () => {
   expect(promptCacheTtlMs('development')).toBe(PROMPT_CACHE_TTL_DEV_MS);

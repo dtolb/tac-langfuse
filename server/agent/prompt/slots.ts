@@ -22,8 +22,16 @@ export type SlotName = (typeof SLOT_NAMES)[number];
 
 export type Slots = Partial<Record<SlotName, string>>;
 
-/** Tolerates `{{ persona }}` as well as `{{persona}}`; Langfuse's editor emits both. */
-const PLACEHOLDER_RE = /\{\{\s*([^{}\s]+)\s*\}\}/g;
+/**
+ * Everything between the braces that is not itself a brace — including whitespace, and including
+ * nothing at all. Tolerating `{{ persona }}` as well as `{{persona}}` matters because Langfuse's
+ * editor emits both, but the width is load-bearing for a second reason: a capture that excluded
+ * whitespace (`[^{}\s]+`) did not match `{{company name}}`, `{{}}` or `{{ }}` at all, so those
+ * passed through into the prompt VERBATIM. That is the failure this module exists to prevent —
+ * `{{company name}}` reaches TTS and gets read aloud as braces, with no marker anywhere in the
+ * trace. Matching them and rendering a marker is the whole point; the name is trimmed in `fill`.
+ */
+const PLACEHOLDER_RE = /\{\{([^{}]*)\}\}/g;
 
 const isSlotName = (name: string): name is SlotName =>
   (SLOT_NAMES as readonly string[]).includes(name);
@@ -31,7 +39,14 @@ const isSlotName = (name: string): name is SlotName =>
 const fill = (content: string, slots: Slots): string =>
   // A replacer FUNCTION rather than a string, so a `$&` inside a slot value is inserted
   // literally instead of being interpreted as a backreference.
-  content.replace(PLACEHOLDER_RE, (_match, name: string) => {
+  content.replace(PLACEHOLDER_RE, (_match, captured: string) => {
+    // Trimmed here rather than in the pattern, so `{{ persona }}` still resolves while a name with
+    // whitespace INSIDE it stays a miss — `{{company name}}` is a typo, not a slot.
+    const name = captured.trim();
+    // An empty name is the same class of bug as a misspelt one — a stray placeholder in the prompt
+    // text — so it keeps the same marker word, and one search for `UNKNOWN SLOT` finds every kind.
+    // `(empty)` rather than a blank, because `[[UNKNOWN SLOT: ]]` reads as a fault in the marker.
+    if (name === '') return '[[UNKNOWN SLOT: (empty)]]';
     if (!isSlotName(name)) return `[[UNKNOWN SLOT: ${name}]]`;
     const value = slots[name];
     // Allowlisted but not supplied is a different bug from misspelt, and the two markers have to

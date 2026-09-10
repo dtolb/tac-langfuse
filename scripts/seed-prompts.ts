@@ -17,12 +17,16 @@
 import { LangfuseClient } from '@langfuse/client';
 import { DEFAULT_PROMPTS, PROMPT_NAMES } from '../server/agent/prompt/defaults.ts';
 import { PRODUCTION_LABEL } from '../server/agent/prompt/port.ts';
-import { loadConfig } from '../server/config.ts';
+import { loadConfig, unavailable } from '../server/config.ts';
 
 const app = loadConfig(process.env);
 if (app.langfuse === null) {
   console.error('seed:prompts needs a configured Langfuse. Missing or malformed:');
-  for (const m of app.missing.filter((v) => v.feature === 'prompts + telemetry')) {
+  // Narrowed to the Langfuse feature via the same helper the 503 bodies use, rather than an
+  // inline copy of the label. And if that label is ever reworded, print EVERYTHING instead: a
+  // heading with nothing under it is a worse diagnostic than an over-broad list.
+  const named = unavailable(app, 'prompts + telemetry').missing;
+  for (const m of named.length > 0 ? named : app.missing) {
     console.error(`  ${m.name} — ${m.breaks}`);
   }
   console.error('\nStart it with `pnpm langfuse` and check LANGFUSE_* in .env.');

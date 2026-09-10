@@ -23,7 +23,6 @@ import { fallbackPrompt } from './defaults.ts';
 import {
   PRODUCTION_LABEL,
   PromptConfigSchema,
-  promptCacheTtlMs,
   type PromptPort,
   type ResolvedPrompt,
 } from './port.ts';
@@ -61,10 +60,13 @@ export type FallbackReason =
  * The only shape this port needs from a Langfuse prompt. `ChatPromptClient` satisfies it
  * structurally, and a test can satisfy it with an object literal — which is how the fallback
  * paths get exercised without a mocking library.
+ *
+ * `labels` is deliberately absent. The port reports the label it ASKED for (see `resolve` below),
+ * so reading the fetched one would change nothing, and requiring it here would only force every
+ * test fake to supply a field nothing consumes.
  */
 export interface FetchedPrompt {
   readonly version: number;
-  readonly labels: readonly string[];
   /** Raw chat messages, validated by `MessagesSchema` rather than trusted. */
   readonly prompt: unknown;
   readonly config: unknown;
@@ -90,7 +92,14 @@ export interface LangfusePromptDeps {
    */
   readonly fetcher?: PromptFetcher;
   readonly label?: string;
-  readonly ttlMs?: number;
+  /**
+   * Cache TTL, resolved by the CALLER — the policy is `promptCacheTtlMs(nodeEnv)` in `port.ts`.
+   *
+   * Required rather than defaulted, because a default here means reading `NODE_ENV` here, and
+   * `server/config.ts` is the one place this repo reads the environment. Making the caller pass it
+   * keeps that true and makes the cache window explicit at every call site.
+   */
+  readonly ttlMs: number;
   /** Clock for the cache. Injected so the TTL can be tested without waiting for it. */
   readonly now?: () => number;
 }
@@ -128,9 +137,7 @@ export function createLangfusePromptPort(deps: LangfusePromptDeps): PromptPort {
   const log = deps.logger ?? childLogger('prompt');
   const bus = deps.bus ?? obsBus;
   const label = deps.label ?? PRODUCTION_LABEL;
-  // NODE_ENV is read here rather than in port.ts, and via a function rather than at module load,
-  // so the port stays a pure seam and `server/config.ts` remains the only top-level env reader.
-  const ttlMs = deps.ttlMs ?? promptCacheTtlMs(process.env.NODE_ENV);
+  const ttlMs = deps.ttlMs;
   const now = deps.now ?? Date.now;
   const fetcher = deps.fetcher ?? (deps.langfuse === null ? null : clientFetcher(deps.langfuse));
 
