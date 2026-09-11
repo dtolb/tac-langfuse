@@ -60,9 +60,19 @@ amnesiac agent passes every other check in this repo.
 TTFT on SMS (1599 ms) is consistently *lower* than the bench measured minutes earlier on the same model
 and prompt (2189–2624 ms). Unexplained; not chased, per the deferred-latency decision.
 
-**Still unverified:** the Langfuse trace tree for SMS. Colima was wedged
-(`vz driver is running but host agent is not`), so the stack could not start. Everything else below was
-run.
+**The SMS trace tree is now VERIFIED** (2026-09-11, second live pair of turns — T12's own two turns ran
+while Langfuse was down, so those spans were never exported and there was nothing retroactive to look
+at). One `conversation.sms` trace, both turns inside it, model calls inside their own turn span:
+
+```
+conversation.sms                    5m 00s   $0.001388   is_app_root = true
+├─ turn.sms          4.21s   "Where is order A4721?"          2 steps, lookup_order
+└─ turn.sms          0.85s   "What was the order number…"     1 step, NO tool node
+                             ttft 3720 / 604 ms · 991 / 499 input tokens
+```
+
+`closedBecause: "ended"` on the root, so it closed through `tac.onConversationEnded` →
+`conversations.end()` — the real path, not the TTL sweep and not shutdown.
 
 | | State |
 |---|---|
@@ -78,7 +88,7 @@ run.
 | **T9 `runTurn`** | done — the channel-agnostic core, verified against the real model AND in the Langfuse UI |
 | **T10 history** | done — bounded two ways, LRU on *use*; a real model repeated an order number from turn 1 and forgot it after `clear()` |
 | **T11 bench** | done — `/bench` streams a real turn in a browser with zero Twilio credentials, and the whole thing was re-run with TAC made *unresolvable* |
-| **T12 TAC/SMS** | done — a real text to `+15805630929` is answered, and turn 2 recalled the order number with **0 tool calls**. Langfuse trace tree still unverified (colima wedged) |
+| **T12 TAC/SMS** | done — a real text to `+15805630929` is answered, turn 2 recalled the order number with **0 tool calls**, and the `conversation.sms` trace tree is confirmed in the Langfuse UI |
 
 **Not started:** T13–T14 voice + built-in tools, T15–T17 Docker/Traefik, T18–T20 UI + docs.
 
@@ -91,6 +101,8 @@ the home page is a placeholder.
 ```bash
 pnpm status        # what's up, what's configured, what's therefore possible. Read-only.
 pnpm langfuse      # the 6-container Langfuse stack (~2.7 GB, ready in ~10s on warm volumes)
+                   # ⚠ if docker is dead, see "colima wedged" below BEFORE retrying — the retry
+                   #   fails with an exit code of 0 and a fatal on stderr, which reads as success
 pnpm dev:all       # agent :8910 + web :3000, ctrl-c stops both cleanly
 pnpm typecheck && pnpm test
 pnpm seed:prompts  # push the compiled defaults to Langfuse as v1 + `production`
@@ -132,6 +144,26 @@ curl -sN -X POST http://localhost:8910/api/bench/turn \
 ```
 
 Langfuse UI: <http://localhost:3100> — `demo@example.com` / `changeme-at-least-8-chars`.
+
+### colima wedged: "vz driver is running but host agent is not"
+
+`colima list` shows **Broken** and every docker command fails with
+`dial unix …/docker.sock: no such file or directory`. **`colima stop && colima start` does NOT fix
+this** — that was the guess recorded here previously and it was measured to fail on 2026-09-11. `stop`
+reports "not running" and `start` re-emits the same fatal.
+
+The real cause is a **stale pidfile whose pid has been recycled across a reboot**:
+
+```bash
+ls -la ~/.colima/_lima/colima/          # vz.pid present, ha.pid ABSENT → that asymmetry IS the message
+ps -p "$(cat ~/.colima/_lima/colima/vz.pid)"   # some unrelated Apple process, not lima
+mv ~/.colima/_lima/colima/vz.pid /tmp/ && colima start    # ~70 s, then docker works
+```
+
+Measured here: `vz.pid` dated Aug 27 held pid 1620, which after the Sep 10 reboot belonged to
+`PlugInLibraryService`. Lima checks only that the pid is *alive*, finds a live stranger, and concludes
+its driver is running forever. Verify the pid is not lima's before moving the file, and never touch the
+21 GB `disk` image next to it. The six Langfuse containers came back automatically on VM start.
 
 `.env` has a real `OPENAI_API_KEY`, local Langfuse config, and — since T12 — real Twilio credentials
 including `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` and `TWILIO_CONVERSATION_CONFIGURATION_ID`, so
@@ -203,21 +235,37 @@ Langfuse.
 
 ## Verified waterfall (Langfuse UI, via Playwright MCP)
 
-This is a real screenshot-confirmed tree, not a sketch:
+This is a real tree, confirmed in the UI **and** against ClickHouse `events_core.parent_span_id`:
 
 ```
-conversation.bench                     SPAN
+conversation.bench                     SPAN     is_app_root = true, no parent
 └─ turn.bench                          SPAN     11 attributes, all exact names
    ├─ prompt.fetch          0.04s      SPAN     cache hit ≈ 0ms, which is the point
    ├─ memory.recall                    SPAN     concurrent with prompt.fetch
    ├─ prompt.compose                   SPAN
    ├─ tools.resolve                    SPAN
-   └─ llm.stream            4.64s      SPAN
-      └─ invoke_agent gpt-5.4-mini     AGENT    the AI SDK emits these free
-         └─ step 1                     SPAN
-            ├─ chat gpt-5.4-mini       GENERATION  ×2 (2.12s + 2.50s) + native TTFT column
-            └─ lookup_order            TOOL
+   ├─ llm.stream            4.15s      SPAN     ⟵ SIBLING of invoke_agent, not its parent
+   └─ invoke_agent gpt-5.4-mini        AGENT    the AI SDK emits these free
+      ├─ step 1                        SPAN
+      │  ├─ chat gpt-5.4-mini          GENERATION  + native TTFT column
+      │  └─ lookup_order               TOOL
+      └─ step 2                        SPAN
+         └─ chat gpt-5.4-mini          GENERATION
 ```
+
+⚠ **`llm.stream` does NOT parent the model call, and earlier revisions of this file drew it that way.**
+Corrected 2026-09-11 by reading `parent_span_id` directly: on both the bench and SMS traces,
+`invoke_agent` names the **turn** span as its parent, exactly like `prompt.fetch` does. The cause is
+in `obs/spans.ts`: `startStep` uses `startObservation`, which creates an observation **without making
+it the active context**, so the AI SDK's spans parent to whatever *is* active — the turn span from
+`startActiveObservation`. So `llm.stream` is a *timer running alongside* the model call, not a
+container for it, which is why its duration and `invoke_agent`'s are near-identical rather than nested.
+
+Harmless today, and deliberately left alone: the property that actually matters is that the model
+calls sit inside their own **turn** span, which they do. But do not describe the waterfall as
+`llm.stream > invoke_agent`, and do not write an assertion that expects that nesting. Making it real
+would mean `startActiveObservation` for `llm.stream`, which the `{tokens, done}` split rules out —
+the step outlives the call that creates it (see `run-turn.ts` on why `startStep` earns its place).
 
 Span names are OTel GenAI-convention, **not** `ai.*`. Anything keying on `ai.streamText` (v6 naming)
 finds nothing.
@@ -527,31 +575,90 @@ URL → the URL says which half is wrong.
 
 ### T12: what is left
 
-1. **Langfuse trace tree for SMS** — blocked on Docker. `colima start` failed with `vz driver is
-   running but host agent is not`; needs `colima stop && colima start` (not run, because it could
-   disturb other containers). Then check via Playwright MCP that both turns sit in ONE
-   `conversation.sms` trace with the model calls nested *inside* their `turn.sms` spans.
-2. **Re-run the TAC-free proof, which is no longer trivial:** move `node_modules/twilio-agent-connect`
-   aside and drive a `/bench` turn *both* with credentials absent (the dynamic import never evaluates)
-   and with credentials present (the import rejects, the try/catch degrades, the bench still serves).
-   The second case is the stronger one and only exists because of the try/catch in `index.ts`.
+1. ~~Langfuse trace tree for SMS~~ — **DONE 2026-09-11**, see the tree near the top of this file.
+2. ~~Re-run the TAC-free proof~~ — **DROPPED by decision, 2026-09-11.** Not "not done": Dan ruled that
+   the project works *with* TAC and that maintaining a TAC-free property is not worth the complexity it
+   was pulling in. The claim as recorded under "Gaps and honest limits" stands as a statement about the
+   run made at T11; it is **not** maintained going forward, and nothing should be relocated or added to
+   keep it true.
 3. **The ngrok host is baked into the CO configuration's `statusCallbacks`.** It dies on ngrok restart,
-   and fixing it means a full-replace PUT. Repoint per session until T15 gives a stable host.
+   and fixing it means a full-replace PUT. Repoint per session until T15 gives a stable host. As of
+   2026-09-11 the tunnel is unchanged and the configuration still points at it, so no PUT was needed —
+   confirm with the GET below before assuming one is.
+
+### Two things about the CO configuration you will want on the next session
+
+The endpoint is **not** in `twil`'s command surface for writes — `twil api conversations configurations`
+has CREATE / FETCH / LIST / REMOVE and **no update** — so a repoint is a raw `PUT`. The base URL is not
+guessable either; `--log-level debug` prints it:
+
+```bash
+twil api conversations configurations fetch --sid conv_configuration_… --log-level debug   # → the URL
+# DEBU → method=GET url=https://conversations.twilio.com/v2/ControlPlane/Configurations/conv_configuration_…
+```
+
+`twil … fetch` renders only `id` and `displayName` even with `--output json`, so **GET it with curl (or
+`fetch`) when you need the whole body** — which you always do before a full-replace PUT.
+
+**`onConversationEnded` fires on a `CONVERSATION_UPDATED` webhook, not a `CONVERSATION_CLOSED` one.**
+Measured: with `statusTimeouts.closed: 5` the only event types that ever arrived were
+`CONVERSATION_CREATED`, `PARTICIPANT_ADDED`, `COMMUNICATION_CREATED` and — 300 s after the conversation
+was *created* — one `CONVERSATION_UPDATED`, in the same second as the root span ending. So the status
+rides *inside* an UPDATED envelope; grepping logs or code for `CONVERSATION_CLOSED` finds nothing. Note
+the 300 s ran from creation, not from the last message, on this one sample.
 
 **Ask before running anything that places a real call or sends a real SMS** — those are billed, and
 the standing convention in this repo is not to do it unprompted.
 
 ### T13 prerequisites discovered while doing T12
 
-- **Register `fastify-graceful-shutdown` ourselves, with a larger timeout, before `start()`.** TAC
-  registers it with **no options**, so the force-exit is the plugin's 10 s default — while TAC's own
-  handler waits up to **30 s** for WebSockets to close. With one open WS at SIGTERM the process is
-  hard-killed before `fastify.close()`, so the `preClose` flush never runs. SMS opens no WebSockets, so
-  this cannot bite yet; voice will. TAC's `hasDecorator` guard means our registration wins.
+> **READ THIS FIRST: where TAC's source is.** `node_modules/twilio-agent-connect` is **dist-only** —
+> `dist/index.js`, `dist/index.d.ts`, `dist/index.js.map`, **zero `.ts` files, no `packages/`**. So the
+> `packages/server/src/lib/server.ts:242-259` style citations in the plan and in this file do **not**
+> resolve there. They resolve in a **sibling checkout**:
+> `/Users/dtolbert/code/demo-building-tools/twilio-agent-connect-typescript`, clean at tag **`v2.2.0`
+> (`a7a58f2`)**, matching the installed version. Two path traps inside it: **`voice.ts` lives at
+> `packages/core/src/channels/voice.ts`** (1745 lines), *not* under `packages/server/`; and **TAC ships
+> no tests**, so a `tests/server.test.ts` citation is not test-backed evidence.
+>
+> For "what is actually executing", read **`dist/index.js`** — bundled but **not minified** (7021
+> lines, JSDoc intact), and it greps well. Class landmarks (2.2.0): `TACConfig` 1350, `TAC` 2698,
+> `BaseChannel` 3172, `MessagingChannel` 3528, `SMSChannel` 4170, `VoiceChannel` 4689,
+> `MemoryPromptBuilder` 6062, `TACTool` 6180, `TACServer` 6584. Line numbers below are bundle
+> coordinates unless a `packages/…` path is given.
+
+- **Register `fastify-graceful-shutdown` ourselves, with a larger `timeout`, before `start()`.**
+  Now confirmed line by line rather than predicted, and every number checks out:
+
+  | Fact | Evidence |
+  |---|---|
+  | TAC registers it with **no options** | `dist/index.js:6918` — `if (!this.fastify.hasDecorator("gracefulShutdown")) await this.fastify.register(gracefulShutdown)` |
+  | The option is named exactly **`timeout`**, default **10000** | `fastify-graceful-shutdown@5.0.0/index.js` — `const timeout = opts.timeout \|\| 10000` |
+  | The watchdog is unconditional | `terminateAfterTimeout()` → `setTimeout(() => handlerEventListener.exit(1), timeout).unref()` |
+  | TAC waits up to **30 s** for WebSockets | `dist/index.js:6970` — `async waitForWebSocketsToClose(timeoutMs = 3e4)` |
+  | Our registration wins | the guard is `hasDecorator("gracefulShutdown")`, and the plugin sets it via `fastify.decorate('gracefulShutdown', addHandler)` |
+
+  **The ordering is the whole problem.** The plugin's own `shutdown()` does
+  `await Promise.all(handlers.map(h => h(signal)))` and only **then** `await fastify.close()`. TAC's
+  handler is `waitForWebSocketsToClose()` + `tac.shutdown()`. Our `preClose` hook — the only telemetry
+  flush — runs *inside* `fastify.close()`, i.e. **behind** a wait that can last 30 s, while the
+  watchdog fires at 10 s and `exit(1)`s. So with one open WebSocket at SIGTERM: no `fastify.close()`,
+  no `preClose`, no flush, and the last turn of the call is missing from Langfuse with no error. Pick a
+  `timeout` above 30 s **plus** flush headroom. SMS opens no WebSockets, which is why T12 never saw it.
+
+  Two things not to do alongside it: don't add `process.on('SIGTERM')` in the TAC path (the plugin
+  registers `once` listeners on SIGINT/SIGTERM itself and *warns* `handler was already registered` if
+  it finds any), and don't register the plugin twice — the second `fastify.decorate` of the same name
+  throws.
+
 - **Voice `captureRules` must stay EMPTY** in the CO configuration — re-adding them double-bills STT
-  under ConversationRelay.
+  under ConversationRelay. Verified still empty on 2026-09-11: `channelSettings.VOICE.captureRules` is
+  `[]` and `statusTimeouts` is `null`. Leave both alone.
 - **Do NOT `registerChannel(voiceChannel)`** (plan footgun #2, still true), and voice needs
-  `TWILIO_VOICE_PUBLIC_DOMAIN`, which SMS did not.
+  `TWILIO_VOICE_PUBLIC_DOMAIN`, which SMS did not. TAC builds `wss://${voicePublicDomain}${wsPath}`
+  (`dist/index.js:4811`) and throws *"needs a WebSocket URL"* without it.
+- **`onMessageReady` is global across channels** (already noted above) — branch on `channel` there
+  rather than registering a second handler.
 
 ## Gaps and honest limits
 
