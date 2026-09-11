@@ -1,11 +1,13 @@
 # Handoff — demo scaffold
 
-Updated 2026-09-10. Read this first, then `~/.claude/plans/i-want-to-build-reactive-muffin.md`
+Updated 2026-09-11. Read this first, then `~/.claude/plans/i-want-to-build-reactive-muffin.md`
 for the full plan and the footgun list.
 
-**The plan is wrong in three places.** They are corrected in "Corrections to the plan" below and in
-the plan's own footgun table (#30–#32). All three fail *silently*. Read that section before you touch
-telemetry or prompt linking.
+**The plan is wrong in twelve places now.** Three concern telemetry and prompt linking — corrected in
+"Corrections to the plan" below and in the plan's own footgun table (#30–#32); all three fail
+*silently*. The other nine were found while building T12 and are listed under "T12, TAC boot for SMS".
+Read whichever section matches what you are about to touch. Do not re-derive them; each was verified by
+executing it, not by reasoning about it.
 
 **Account-specific values are deliberately NOT in this file.** SIDs, phone numbers, Conversation
 Orchestrator ids and Studio flow SIDs live in `.env` (gitignored) and in this project's session memory
@@ -14,8 +16,11 @@ at `~/.claude/projects/-Users-dtolbert-code-demo-building-tools-scaffold/memory/
 that look authoritative. What is here instead is the **method** for discovering them — see
 "Twilio credentials" below.
 
-There is a published walkthrough of everything below, written for a human rather than an agent:
+There is a published walkthrough written for a human rather than an agent:
 <https://pages-4296.twil.io/scaffold-next-steps> (public, no auth — no credentials on it).
+⚠ **It predates T12 and is now stale**: it presents gathering Twilio credentials as the next step and
+does not know SMS works. Re-publish it before showing it to anyone, or treat this file as the only
+current source.
 
 ## What this is
 
@@ -32,7 +37,7 @@ POCs don't:
 All three land in **self-hosted Langfuse**. Its prompt `config` JSON is versioned with the prompt and
 is Langfuse's own documented home for `tools`/`tool_choice`/model params.
 
-## Status: T1–T11 done, T12 code complete and unverified, all four spikes closed
+## Status: T1–T12 done, all four spikes closed
 
 ```
 pnpm typecheck   → 0          (TS 7.0.2, node project + web project)
@@ -73,11 +78,13 @@ run.
 | **T9 `runTurn`** | done — the channel-agnostic core, verified against the real model AND in the Langfuse UI |
 | **T10 history** | done — bounded two ways, LRU on *use*; a real model repeated an order number from turn 1 and forgot it after `clear()` |
 | **T11 bench** | done — `/bench` streams a real turn in a browser with zero Twilio credentials, and the whole thing was re-run with TAC made *unresolvable* |
+| **T12 TAC/SMS** | done — a real text to `+15805630929` is answered, and turn 2 recalled the order number with **0 tool calls**. Langfuse trace tree still unverified (colima wedged) |
 
-**Not started:** T12–T14 TAC, T15–T17 Docker/Traefik, T18–T20 UI + docs.
+**Not started:** T13–T14 voice + built-in tools, T15–T17 Docker/Traefik, T18–T20 UI + docs.
 
-**A human can now talk to the agent.** `pnpm dev:all`, open <http://localhost:3000/bench>, type. There
-is still no TAC, no Twilio, no Docker for the app, and the home page is a placeholder.
+**A human can talk to the agent two ways now.** `pnpm dev:all` then <http://localhost:3000/bench>, or
+**text the number** once `.env` and a tunnel are in place. Still absent: voice, Docker for the app, and
+the home page is a placeholder.
 
 ## Running it
 
@@ -126,10 +133,17 @@ curl -sN -X POST http://localhost:8910/api/bench/turn \
 
 Langfuse UI: <http://localhost:3100> — `demo@example.com` / `changeme-at-least-8-chars`.
 
-`.env` has a real `OPENAI_API_KEY` plus local Langfuse config. **No Twilio credentials**, so voice and
-SMS are unavailable; the app boots anyway and says so. Note the shell also exports real
-`TWILIO_ACCOUNT_SID` / `TWILIO_API_KEY` / `TWILIO_API_SECRET` from the user profile, so those three
-read as present.
+`.env` has a real `OPENAI_API_KEY`, local Langfuse config, and — since T12 — real Twilio credentials
+including `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` and `TWILIO_CONVERSATION_CONFIGURATION_ID`, so
+**SMS works**. Voice does not: `TWILIO_VOICE_PUBLIC_DOMAIN` is still unset, and it is the only thing
+SMS did not need. Note the shell also exports real `TWILIO_ACCOUNT_SID` / `TWILIO_API_KEY` /
+`TWILIO_API_SECRET` from the user profile, so those three read as present whatever `.env` says — a clone
+on another machine behaves differently.
+
+**Inbound SMS needs a public URL.** There is no Docker/Traefik yet (T15), so the loop is an ngrok
+tunnel to `:8910` with the CO configuration's `statusCallbacks[0].url` pointed at
+`https://<host>/webhook`. That URL is baked into the configuration, so it must be repointed whenever
+ngrok restarts — and updating it is a **full-replace PUT** where every omitted field is deleted.
 
 ## Corrections to the plan — all three fail silently
 
@@ -226,14 +240,16 @@ confirmed to bite by moving the drain out.
 
 ```
 server/
-  index.ts          thin: resolve config, report it, listen. Binds 0.0.0.0, no run-guard.
+  index.ts          resolve config, report it, then ONE of two boot paths — TAC listens, or we do.
+                    Owns the single `preClose` cleanup hook. Read its comments before editing.
   config.ts         Zod env → capability flags. NEVER THROWS. The one place env is read.
   logging.ts        the ONE pino instance (+ LogLayer view). Children inherit PII scrubbing.
   agent/
     types.ts        TurnInput/TurnOutput/TurnResult/TurnDeps + ports. ZERO vendor imports.
     run-turn.ts     THE core. Channel-agnostic. Read its header before editing.
     spans.ts        the production TurnSpans adapter over obs/spans.ts
-    memory.ts       passthrough MemoryComposePort (TAC's real one lands at T13)
+    deps.ts         createTurnDeps — the live ports, shared by the bench AND SMS
+    memory.ts       passthrough MemoryComposePort (TAC's real one lands at T14)
     history.ts      bounded per-conversation transcript. Caps + eviction policy in its header.
     prompt/         port.ts · langfuse.ts · defaults.ts · slots.ts
     tools/          registry.ts · catalog.ts · resolve.ts
@@ -243,12 +259,18 @@ server/
     sse.ts          SseHub: heartbeat, drop-on-throw, transport-agnostic
     routes-obs.ts   GET /events/stream (SSE) + /events/recent
     routes-bench.ts POST /api/bench/turn. MUST NOT import TAC — that rule is the whole point.
+  twilio/           the ONLY dir allowed to import twilio-agent-connect
+    tac.ts          TAC boot for SMS. registerChannel BEFORE new TACServer, or /webhook is never
+                    registered. Dynamically imported by index.ts so a TAC-free process stays TAC-free.
+    messaging.ts    one inbound SMS → runTurn → the reply string. Never throws, never returns ''.
   obs/
     instrumentation.ts  --import preload. NodeSDK + LangfuseSpanProcessor + registerTelemetry.
     spans.ts            THE span API. Read its header before touching telemetry.
     first-token.ts      TTFT. Pure, fake clock. `collect()` here is what SMS uses.
     bus.ts              never throws on the product path; scrubs payloads once, at the boundary
     pii.ts              our own scrubber. Ancestor-path cycle detection + a depth bound.
+    conversations.ts    per-conversation trace roots, swept + capped. Bench and SMS share it, and for
+                        SMS it is the traceparent carrier IN PREFERENCE to TAC's session.metadata.
 shared/               types + pure constants ONLY. Compiled by BOTH tsconfigs.
 web/                  Next 16 + Strix. Own package.json, own lockfile, own .npmrc.
 tests/                vitest. No mocking library, no snapshots — injection instead.
@@ -356,8 +378,8 @@ without each one. It is committed and a test fails if the code reads a variable 
 What follows is only what that file cannot tell you — how to *check* a value before the app depends
 on it, verified by running each command.
 
-**Verify credentials with `twil`, not with this app.** When T12/T13 land you want to be debugging one
-new thing, not two. All of these are read-only; none place a call or send a message.
+**Verify credentials with `twil`, not with this app.** When a channel misbehaves you want to be
+debugging one thing, not two. All of these are read-only; none place a call or send a message.
 
 **Use `twil` (`~/bin/twil`) — the official `twilio` CLI is UNINSTALLED.** It never covered
 Conversation Orchestrator or memory stores, which is why earlier revisions of this table fell back to
@@ -405,8 +427,10 @@ with no `memoryStoreId` gives you SMS but no Conversation Memory, so check that 
 assuming. `TWILIO_VOICE_PUBLIC_DOMAIN` is a **bare host, no scheme**, and `TACServer` throws at
 construction without it.
 
-**Setting these today changes nothing** — T12/T13 are unbuilt, so there is no code path that reads them
-into a channel yet. Gathering them is preparation, not wiring.
+**As of T12 these are live, not preparation.** `TWILIO_CONVERSATION_CONFIGURATION_ID` and
+`TWILIO_PHONE_NUMBER` are read into the SMS channel at boot, and `capabilities().sms` gates on both.
+`TWILIO_VOICE_PUBLIC_DOMAIN` and `TWILIO_STUDIO_HANDOFF_FLOW_SID` are still unread until T13/T14 — and
+note SMS does **not** need the voice domain, which the plan assumed it would.
 
 ## T12, TAC boot for SMS — what was built, and the nine ways the plan was wrong
 
@@ -566,10 +590,13 @@ the standing convention in this repo is not to do it unprompted.
   import strings, which a file can satisfy by not having got round to importing TAC. The real check
   was run: `node_modules/twilio-agent-connect` moved aside, agent booted, `/health` 200, and a
   complete 25-token turn with a real tool call and 2 steps — zero module-resolution errors. TAC is a
-  declared dependency and *is* installed, so this is not vacuous. Worth re-running after T12/T13 add
-  the TAC boot, when it stops being trivially true.
-- **No live-call verification.** S4 proved the TAC wiring structurally with dummy credentials;
-  nothing has placed a real call. Don't run a demo end-to-end without asking — real billed calls/SMS.
+  declared dependency and *is* installed, so this is not vacuous. **T12 has now added the TAC boot, so
+  this is no longer trivially true and re-running it is the one outstanding check that costs nothing.**
+  Two cases, and the second is the real one: credentials ABSENT (the dynamic import in `index.ts` never
+  evaluates) and credentials PRESENT (the import rejects, the try/catch degrades, `/bench` still serves).
+- **SMS is verified live; VOICE is not.** Two real SMS turns round-tripped at T12. No call has ever
+  been placed — S4 proved the voice wiring structurally with dummy credentials and nothing more. Don't
+  run a demo end-to-end without asking; calls and messages are billed.
 - `docker-compose.yml` for the app does not exist yet (T15). The Langfuse compose does.
 - Carried Minor review findings, for the final whole-branch review: a duplicated prose block across
   the two default prompts; `log.warn` outside the never-rejects guard in `prompt/langfuse.ts`;
