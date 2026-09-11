@@ -35,6 +35,7 @@
     "@opentelemetry/sdk-trace-base": "^2.11.0",
     "ai": "^7.0.93",
     "fastify": "^5.12.3",
+    "fastify-graceful-shutdown": "^5.0.0",
     "loglayer": "^9.4.0",
     "pino": "^10.3.1",
     "twilio-agent-connect": "^2.2.0",

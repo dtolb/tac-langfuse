@@ -94,16 +94,16 @@ app.addHook('preClose', async () => {
  * /health and /bench along with SMS. Degrading instead also makes the stronger TAC-free check
  * runnable — credentials present, TAC unresolvable, bench still serving.
  */
-if (caps.sms) {
+if (caps.sms || caps.voice) {
   try {
-    const { bootTacSms } = await import('./twilio/tac.ts');
-    const tac = await bootTacSms({ app, config, turn: bench.turnDeps() });
+    const { bootTac } = await import('./twilio/tac.ts');
+    const tac = await bootTac({ app, config, caps, turn: bench.turnDeps() });
     tacShutdown = tac.shutdown;
     await tac.start(); // binds the port
   } catch (err) {
     log.error(
       { err },
-      'tac: SMS boot FAILED — the agent is still serving /health and /bench, but no SMS will be answered. Check TWILIO_CONVERSATION_CONFIGURATION_ID exists on this account and that Twilio is reachable.',
+      'tac: boot FAILED — the agent is still serving /health and /bench, but no call or text will be answered. Check TWILIO_CONVERSATION_CONFIGURATION_ID exists on this account and that Twilio is reachable.',
     );
     await app.listen({ host: '0.0.0.0', port: AGENT_PORT });
   }

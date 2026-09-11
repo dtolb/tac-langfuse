@@ -240,6 +240,9 @@ importers:
       fastify:
         specifier: ^5.12.3
         version: 5.12.3
+      fastify-graceful-shutdown:
+        specifier: ^5.0.0
+        version: 5.0.0
       loglayer:
         specifier: ^9.4.0
         version: 9.4.0

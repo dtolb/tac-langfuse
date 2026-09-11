@@ -89,12 +89,14 @@ conversation.sms                    5m 00s   $0.001388   is_app_root = true
 | **T10 history** | done — bounded two ways, LRU on *use*; a real model repeated an order number from turn 1 and forgot it after `clear()` |
 | **T11 bench** | done — `/bench` streams a real turn in a browser with zero Twilio credentials, and the whole thing was re-run with TAC made *unresolvable* |
 | **T12 TAC/SMS** | done — a real text to `+15805630929` is answered, turn 2 recalled the order number with **0 tool calls**, and the `conversation.sms` trace tree is confirmed in the Langfuse UI |
+| **T13 TAC/voice** | **built, boots, and proven up to the WebSocket — no call placed yet.** A signed simulated webhook returns correct ConversationRelay TwiML. The live call is the one remaining step |
 
-**Not started:** T13–T14 voice + built-in tools, T15–T17 Docker/Traefik, T18–T20 UI + docs.
+**Not started:** T14 built-in tools + memory, T15–T17 Docker/Traefik, T18–T20 UI + docs.
 
-**A human can talk to the agent two ways now.** `pnpm dev:all` then <http://localhost:3000/bench>, or
-**text the number** once `.env` and a tunnel are in place. Still absent: voice, Docker for the app, and
-the home page is a placeholder.
+**A human can talk to the agent three ways now** — `pnpm dev:all` then
+<http://localhost:3000/bench>, **text the number**, or **call it**, the last of which has been built
+and pre-flighted but not yet dialled. Still absent: Docker for the app, and the home page is a
+placeholder.
 
 ## Running it
 
@@ -167,8 +169,11 @@ its driver is running forever. Verify the pid is not lima's before moving the fi
 
 `.env` has a real `OPENAI_API_KEY`, local Langfuse config, and — since T12 — real Twilio credentials
 including `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` and `TWILIO_CONVERSATION_CONFIGURATION_ID`, so
-**SMS works**. Voice does not: `TWILIO_VOICE_PUBLIC_DOMAIN` is still unset, and it is the only thing
-SMS did not need. Note the shell also exports real `TWILIO_ACCOUNT_SID` / `TWILIO_API_KEY` /
+**SMS works**. Since T13 `TWILIO_VOICE_PUBLIC_DOMAIN` is set to the ngrok host as well, so
+`capabilities().voice` is true and voice boots — it was the only variable SMS did not need. Only
+`TWILIO_STUDIO_HANDOFF_FLOW_SID` remains unset, and leaving it that way is currently *helpful*: with
+it set, TAC repoints the ConversationRelay `action` at Studio and `/conversation-relay-callback` is
+never hit. Note the shell also exports real `TWILIO_ACCOUNT_SID` / `TWILIO_API_KEY` /
 `TWILIO_API_SECRET` from the user profile, so those three read as present whatever `.env` says — a clone
 on another machine behaves differently.
 
@@ -308,9 +313,13 @@ server/
     routes-obs.ts   GET /events/stream (SSE) + /events/recent
     routes-bench.ts POST /api/bench/turn. MUST NOT import TAC — that rule is the whole point.
   twilio/           the ONLY dir allowed to import twilio-agent-connect
-    tac.ts          TAC boot for SMS. registerChannel BEFORE new TACServer, or /webhook is never
-                    registered. Dynamically imported by index.ts so a TAC-free process stays TAC-free.
+    tac.ts          bootTac — ONE function, both channels, because there is only one TACServer.
+                    SMS: registerChannel BEFORE new TACServer or /webhook is never registered.
+                    Voice: passed to TACServer and NEVER registered, or our prompt slot is replaced.
+                    Also owns the fastify-graceful-shutdown registration — read that constant.
     messaging.ts    one inbound SMS → runTurn → the reply string. Never throws, never returns ''.
+    voice.ts        one ConversationRelay turn → runTurn → tokens spoken as they arrive. Read its
+                    header: every failure mode on this channel is silence.
   obs/
     instrumentation.ts  --import preload. NodeSDK + LangfuseSpanProcessor + registerTelemetry.
     spans.ts            THE span API. Read its header before touching telemetry.
@@ -610,6 +619,108 @@ the 300 s ran from creation, not from the last message, on this one sample.
 **Ask before running anything that places a real call or sends a real SMS** — those are billed, and
 the standing convention in this repo is not to do it unprompted.
 
+## T13, TAC boot for VOICE — built, and what is actually proven
+
+New: `server/twilio/voice.ts`, `tests/voice.test.ts`. Changed: `server/twilio/tac.ts`
+(`bootTacSms` → **`bootTac`**, one function for both channels because there can only be one
+`TACServer`), `server/index.ts`, `server/http/app.ts`. New dep: `fastify-graceful-shutdown@^5.0.0`.
+
+**Path B, as ratified:** the `VoiceChannel` is passed to `TACServer` and **never registered**. Proof
+it worked is in the boot log — exactly one `Registering channel` line, `channel: sms`, while TAC still
+logs the three `call_event_callbacks` that only appear when a voice channel resolved.
+
+### Proven for free, before any call
+
+```
+/health                      wired: {tac: "sms+voice", voice: "ready"}, caps.voice true, caps.sms still true
+GET  /ws        (ngrok)      404, 0 bytes   ← the HEALTHY answer for a non-upgrade request, not a bug
+POST /twiml     unsigned     403 {"error":"Invalid webhook signature"}
+POST /conversation-relay-callback unsigned  403
+POST /twiml     SIGNED       200 + valid TwiML  ← `twil webhook invoke --type voice --auth-token …`
+SIGTERM                      "Received shutdown signal" → "TAC shutdown complete"
+                             → "sse hub shut down" (our preClose RAN) → exit 0, not the watchdog's exit 1
+```
+
+The signed pre-flight is the highest-value check here and it costs nothing. Its response confirms
+five things at once:
+
+```xml
+<Connect action="https://<host>/conversation-relay-callback">
+  <ConversationRelay url="wss://<host>/ws"
+    welcomeGreeting="Hello! How can I assist you today?"
+    conversationConfiguration="conv_configuration_…"
+    reportInputDuringAgentSpeech="any"/>
+</Connect>
+```
+
+1. the auth token and signature validation are good; 2. `wss://` is built correctly from
+`TWILIO_VOICE_PUBLIC_DOMAIN`; 3. **our `defaultTwimlOptions` reached the wire** — see below for why
+that attribute is the difference between a working agent and a deaf one; 4. CO is wired through the
+**noun** (`conversationConfiguration`), which is the path that is not double-billed; 5. `action`
+points at us, not Studio — `resolveActionUrl` would silently redirect it to Studio if
+`TWILIO_STUDIO_HANDOFF_FLOW_SID` were set, and our callback route would then never be hit.
+
+**Not proven, and only a real call can:** the `/ws` upgrade and its signature, STT/TTS latency,
+barge-in on real audio, the orchestrated first-turn CO poll (10 attempts, ~11 s ceiling), and whether
+`X-Forwarded-Proto` survives the upgrade. Also note the SIGTERM check above passes on the 10 s default
+too, because nothing had a WebSocket open — **the 45 s timeout only proves itself on a live call.**
+
+### The three things in `voice.ts` that are not optional
+
+1. **`sendStreamingResponse` is passed `{ signal }`.** TAC resolves
+   `options?.signal ?? activeTask?.controller.signal`, and `cancelStreamTask` aborts the controller
+   **and then deletes the map entry** — so on a barge-in the fallback is `undefined`,
+   `signal?.aborted` is falsy forever, and the caller is talked over with the answer they just
+   interrupted. `tests/voice.test.ts` asserts it is *our* signal; removing the option fails that test
+   with `expected [ undefined ]`, which is exactly the production symptom. **Proven to bite.**
+2. **`reportInputDuringAgentSpeech: 'any'`** in `VOICE_TWIML_OPTIONS`. The ConversationRelay default
+   changed from `any` to `none` in May 2025. With `none` a barge-in still stops the audio and still
+   fires `interrupt`, but the words that caused it are **never delivered as a `prompt`** — the agent
+   stops talking and then cannot hear. Every example written before May 2025 omits this attribute.
+3. **An empty answer speaks the fallback.** `sendStreamingResponse` emits the `{token:'', last:true}`
+   end-of-turn marker *only if at least one token was sent*, so a zero-token turn closes nothing and
+   the caller holds an open line forever. Also proven to bite.
+
+Voice's abort branch is the **opposite** of `messaging.ts`'s and the difference is deliberate: on SMS
+`aborted` can only be our own timeout, so it speaks a fallback and publishes `error`; on voice it means
+the caller interrupted on purpose, so it says nothing and reports nothing. TAC has already sent the
+finalization if any token went out, and sending another creates the spurious empty turn its own source
+warns about.
+
+### Deviations from the plan, both deliberate
+
+- **`memoryMode: 'never'` for voice, not `'once'`.** `composeMemory` is still `passthroughMemory`, so
+  a Recall response is fetched and discarded — `'once'` would put a Conversation Orchestrator
+  round-trip in front of the first spoken word for no effect. T14 should revisit `'once'` when it
+  wires a real compose port.
+- **Barge-in history keeps the generated partial, and that overstates what the caller heard.** Ratified
+  known limit. `streamedText` is everything we *sent*; the ground truth is `utteranceUntilInterrupt`,
+  which arrives on the `interrupt` callback *after* `history.append` has run. It is published on
+  `voice.interrupt` for the console, and deliberately not written back. Consequence to say out loud:
+  the model's history can claim it said a tail the caller never heard, and may refer back to it.
+
+### Account changes made for voice — reversible, and record them
+
+`+15805630929` could not receive voice at all: it was the **only** number on SIP trunk
+`DtolbLabsTesting` (`TKb1f1254299f6f8b5985e5bad8c0a12fb`), the trunk had **zero origination URLs**, and
+a trunked number ignores its own `voice_url`. So:
+
+| | Before | After |
+|---|---|---|
+| `trunk_sid` | `TKb1f1254299f6f8b5985e5bad8c0a12fb` | `null` (trunk now holds no numbers) |
+| `voice_url` | `null` | `https://<ngrok-host>/twiml`, POST |
+| `sms_url` | `""` | `""` — untouched; SMS still arrives via the CO `statusCallbacks` |
+
+The number's real SID is **`PNf16baa0aba70fe744717166d10d8108c`**. ⚠ `PN1dbf1c0a094e37430258834f8372f2a2`
+is `+13465978739`, a different, unused number — do not confuse them. And a trap found the hard way:
+**`DELETE /Trunks/{TK}/PhoneNumbers/{PN}` returns 204 for a number that was never on the trunk**, so a
+204 is *not* evidence that anything was detached. Verify with
+`GET /Trunks/{TK}/PhoneNumbers` afterwards.
+
+`TWILIO_VOICE_PUBLIC_DOMAIN` is the ngrok host, so **two** things must be repointed when the tunnel
+restarts: this variable *and* the number's `voice_url` — on top of the CO `statusCallbacks` that SMS
+already needed.
+
 ### T13 prerequisites discovered while doing T12
 
 > **READ THIS FIRST: where TAC's source is.** `node_modules/twilio-agent-connect` is **dist-only** —
@@ -701,9 +812,12 @@ the standing convention in this repo is not to do it unprompted.
   this is no longer trivially true and re-running it is the one outstanding check that costs nothing.**
   Two cases, and the second is the real one: credentials ABSENT (the dynamic import in `index.ts` never
   evaluates) and credentials PRESENT (the import rejects, the try/catch degrades, `/bench` still serves).
-- **SMS is verified live; VOICE is not.** Two real SMS turns round-tripped at T12. No call has ever
-  been placed — S4 proved the voice wiring structurally with dummy credentials and nothing more. Don't
-  run a demo end-to-end without asking; calls and messages are billed.
+- **SMS is verified live; VOICE is built but no call has ever been placed.** Four real SMS turns have
+  round-tripped (two at T12, two more on 2026-09-11 for the trace check). Voice boots, serves correct
+  signed ConversationRelay TwiML, and is tested on its three exit paths — but the `/ws` upgrade,
+  STT/TTS latency, barge-in on real audio and the orchestrated first-turn CO poll are all unexercised,
+  and the 45 s shutdown timeout only proves itself with a socket open. Don't run a demo end-to-end
+  without asking; calls and messages are billed.
 - `docker-compose.yml` for the app does not exist yet (T15). The Langfuse compose does.
 - Carried Minor review findings, for the final whole-branch review: a duplicated prose block across
   the two default prompts; `log.warn` outside the never-rejects guard in `prompt/langfuse.ts`;

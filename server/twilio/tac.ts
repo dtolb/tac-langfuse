@@ -2,35 +2,63 @@
  * TAC boot. THE ONLY FILE IN THE REPO THAT IMPORTS `twilio-agent-connect`.
  *
  * Imported DYNAMICALLY by `server/index.ts`, and that matters twice over: a process with no Twilio
- * credentials never loads TAC at all (which is what keeps the Twilio-free bench a runtime proof rather
- * than a static claim), and a failure in here degrades instead of killing the server.
+ * credentials never loads TAC at all, and a failure in here degrades instead of killing the server.
+ *
+ * ONE function boots BOTH channels, because there can only be one `TACServer` — it owns `listen()`.
+ * SMS and voice gate independently (`caps.sms` / `caps.voice`), so this has to cope with either one
+ * alone as well as both.
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
- * ORDER IS LOAD-BEARING IN TWO PLACES, and both fail quietly.
+ * ORDER IS LOAD-BEARING IN FOUR PLACES, and every one of them fails quietly.
  *
- * 1. `registerChannel(smsChannel)` MUST happen before `new TACServer(...)`. The constructor
- *    SNAPSHOTS channels (`messagingChannels ?? [tac.getChannel('sms'), …]`) and `setupRoutes` only
- *    registers the conversation webhook `if (webhookChannels.length > 0)`. Get it wrong and inbound
- *    SMS 404s, with nothing in the log but "No channels configured for webhook processing".
+ * 1. `await app.register(gracefulShutdown, …)` MUST come before `new TACServer(...)`, and the
+ *    `await` is part of the requirement — see `TAC_SHUTDOWN_TIMEOUT_MS`.
  *
- * 2. Our routes must already be on the Fastify instance before `start()`. They are: `buildApp()` ran
- *    long before this file is reached. TAC adds its own routes inside `start()`, so ours are first and
- *    a path collision would surface as a Fastify duplicate-route error out of `start()`.
+ * 2. `registerChannel(smsChannel)` MUST happen before `new TACServer(...)`. The constructor
+ *    SNAPSHOTS channels and `setupRoutes` only registers the conversation webhook
+ *    `if (webhookChannels.length > 0)`. Get it wrong and inbound SMS 404s, with nothing in the log
+ *    but "No channels configured for webhook processing".
+ *
+ * 3. The voice channel is the mirror image: it is passed to `TACServer` and MUST NOT be registered.
+ *    `registerChannel` installs TAC's own forwarders into the single-slot `prompt`, `interrupt`,
+ *    `error` and `conversationEnded` setters, so ours would be silently replaced — confirmed against
+ *    2.2.0 in spike S4. Passing it as `config.voiceChannel` wires every voice route just the same
+ *    (`config.voiceChannel ?? tac.getChannel('voice')`) while leaving all eight slots ours.
+ *
+ * 4. Our routes must already be on the Fastify instance before `start()`. They are: `buildApp()` ran
+ *    long before this file is reached. TAC adds its own routes inside `start()`, so ours are first.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
- * `TACServer.start()` calls `listen()` ITSELF, so `server/index.ts` must not also call it. That is why
- * this returns a handle whose `start()` is the thing that binds the port.
+ * `TACServer.start()` calls `listen()` ITSELF, so `server/index.ts` must not also call it. That is
+ * why this returns a handle whose `start()` is the thing that binds the port.
  */
 import type { FastifyInstance } from 'fastify';
+import gracefulShutdown from 'fastify-graceful-shutdown';
 import type { z } from 'zod';
-import { SMSChannel, TAC, TACConfig, TACConfigSchema, TACServer } from 'twilio-agent-connect';
+import {
+  SMSChannel,
+  TAC,
+  TACConfig,
+  TACConfigSchema,
+  TACServer,
+  VoiceChannel,
+} from 'twilio-agent-connect';
 import { AGENT_PORT } from '../../shared/ports.ts';
-import type { AppConfig } from '../config.ts';
+import type { AppConfig, Capabilities } from '../config.ts';
 import { childLogger, tacLogger } from '../logging.ts';
 import { createConversationRegistry, type ConversationRegistry } from '../obs/conversations.ts';
 import type { TurnDeps } from '../agent/types.ts';
 import type { App } from '../http/types.ts';
 import { handleInboundMessage } from './messaging.ts';
+import {
+  handleVoiceDisconnect,
+  handleVoiceInterrupt,
+  handleVoicePrompt,
+  handleVoiceSetup,
+  VOICE_CONVERSATION_TTL_MS,
+  VOICE_MAX_CONVERSATIONS,
+  VOICE_TWIML_OPTIONS,
+} from './voice.ts';
 
 const log = childLogger('tac');
 
@@ -38,33 +66,59 @@ const log = childLogger('tac');
 export const SMS_CONVERSATION_TTL_MS = 2 * 60 * 60_000;
 export const SMS_MAX_CONVERSATIONS = 200;
 
+/**
+ * How long the shutdown watchdog waits before hard-killing the process — and why we own it.
+ *
+ * `fastify-graceful-shutdown` arms `setTimeout(() => process.exit(1), timeout)` the instant a signal
+ * arrives, runs every registered handler with `Promise.all`, and only THEN calls `fastify.close()`.
+ * TAC registers that plugin with **no options**, so the deadline is the plugin's 10 s default — while
+ * TAC's own handler awaits `waitForWebSocketsToClose(timeoutMs = 3e4)`, i.e. up to 30 seconds.
+ *
+ * Our `preClose` hook — the ONLY telemetry flush, because the plugin always leaves via
+ * `process.exit` and `beforeExit` therefore never fires — lives inside `fastify.close()`. So with one
+ * open ConversationRelay socket at SIGTERM the arithmetic is: watchdog at 10 s, WebSocket wait until
+ * 30 s, `fastify.close()` never reached, flush never runs, and the whole call is missing from
+ * Langfuse. Docker reports the SIGTERM as a crash. SMS never exposed this because it opens no
+ * sockets; voice does, on every call.
+ *
+ * 45 s is 30 s of WebSocket wait plus headroom for the flush. Finite on purpose: `0` would silently
+ * become 10000 (the plugin uses `||`), and `Infinity` makes Node clamp the timer to 1 ms, which is
+ * worse than the default.
+ *
+ * TAC's guard is `if (!this.fastify.hasDecorator('gracefulShutdown'))`, so registering first is what
+ * makes ours win — and registering SECOND is not merely useless, it throws
+ * `FST_ERR_DEC_ALREADY_PRESENT`.
+ */
+export const TAC_SHUTDOWN_TIMEOUT_MS = 45_000;
+
 export interface TacHandle {
   /** Binds the port — TAC owns `listen()`. */
   start(): Promise<void>;
-  /** End every open conversation root span. Called from the `preClose` hook. */
+  /** End every open conversation root span, on both channels. Called from the `preClose` hook. */
   shutdown(): void;
-  readonly conversations: ConversationRegistry;
 }
 
 export interface TacDeps {
   readonly app: App;
   readonly config: AppConfig;
+  readonly caps: Capabilities;
   readonly turn: TurnDeps;
 }
 
 /**
- * Wire TAC for SMS. Throws on anything the caller should degrade from — see `server/index.ts`.
+ * Wire TAC for whichever channels are configured. Throws on anything the caller should degrade
+ * from — see `server/index.ts`.
  *
- * Reachable only once `capabilities().sms` is true, which guarantees `config.twilio` is non-null AND
- * `config.conversationConfigurationId` matches TAC's own shape for it. That is what makes the
- * `TACConfig` construction below safe.
+ * Reachable only once `caps.sms || caps.voice`, either of which guarantees `config.twilio` is
+ * non-null and that the corresponding channel-specific value passed our own Zod validation. That is
+ * what makes the `TACConfig` construction below safe.
  */
-export async function bootTacSms(deps: TacDeps): Promise<TacHandle> {
-  const { app, config, turn } = deps;
-  if (config.twilio === null || config.conversationConfigurationId === null) {
+export async function bootTac(deps: TacDeps): Promise<TacHandle> {
+  const { app, config, caps, turn } = deps;
+  if (config.twilio === null || (!caps.sms && !caps.voice)) {
     // Unreachable through `index.ts`, which gates on capabilities first. Explicit because the
     // alternative is a confusing ZodError from inside the vendor.
-    throw new Error('bootTacSms requires config.twilio and a valid conversationConfigurationId');
+    throw new Error('bootTac requires config.twilio and at least one of caps.sms / caps.voice');
   }
 
   /**
@@ -72,8 +126,7 @@ export async function bootTacSms(deps: TacDeps): Promise<TacHandle> {
    *
    * `fromEnv()` reads `process.env` directly, which would make it a SECOND place the environment is
    * read and break the rule that `server/config.ts` is the only one. It also reports just the first
-   * missing variable, where our config reports all of them with what each one costs. Since the five
-   * values below have already been through Zod in `config.ts`, this construction cannot fail on them.
+   * missing variable, where our config reports all of them with what each one costs.
    */
   // Annotated as the SCHEMA INPUT, not `TACConfigData`. The constructor takes a union of the two, and
   // TypeScript resolves to `TACConfigData` — which demands `voiceWebsocketPath`, `voiceActionPath`,
@@ -85,8 +138,15 @@ export async function bootTacSms(deps: TacDeps): Promise<TacHandle> {
     apiKey: config.twilio.apiKey,
     apiSecret: config.twilio.apiSecret,
     phoneNumber: config.twilio.phoneNumber,
-    conversationConfigurationId: config.conversationConfigurationId,
+    ...(config.conversationConfigurationId !== null && {
+      conversationConfigurationId: config.conversationConfigurationId,
+    }),
     ...(config.studioHandoffFlowSid !== null && { studioHandoffFlowSid: config.studioHandoffFlowSid }),
+    // Required whenever a voice channel exists: `TACServer`'s CONSTRUCTOR throws
+    // "Voice channel is configured but TACConfig.voicePublicDomain is not set" — and because that
+    // construction is shared, the throw would take SMS down with it rather than just disabling voice.
+    // Scheme-less; TAC builds `wss://${domain}${voiceWebsocketPath}` itself.
+    ...(config.voice !== null && { voicePublicDomain: config.voice.publicDomain }),
     // `undefined` MEANS "use TAC's default" and is the honest way to say it. Each of these three is
     // declared `z.ZodType<string, unknown>` — a `z.preprocess` wrapping a `.default()` — so the input
     // type is `unknown` and the key is required even though a value is not. The preprocessor maps
@@ -105,55 +165,126 @@ export async function bootTacSms(deps: TacDeps): Promise<TacHandle> {
   const tac = await TAC.create({ config: tacConfig, logger: tacLogger() });
 
   /**
-   * `memoryMode: 'never'` — deliberately NOT the plan's `'always'`, and this is the one substantive
-   * product decision in this file.
+   * OURS, FIRST, AND AWAITED. See `TAC_SHUTDOWN_TIMEOUT_MS` for the 10-s-vs-30-s arithmetic this
+   * exists to fix.
    *
-   * With `'always'`, TAC calls Recall scoped to the CURRENT conversation and folds the result into a
-   * `## Recent Message History` block of `User:`/`Assistant:` lines. `server/agent/history.ts` already
-   * puts that same exchange into the model's messages, so the model would see this conversation twice,
-   * in two formats — actively worse answers, not merely wasted work.
+   * The `await` is not stylistic. `register()` only queues the plugin; without awaiting it,
+   * `hasDecorator('gracefulShutdown')` is still false when `start()` runs, TAC registers its own
+   * copy, and the second `fastify.decorate` of the same name throws
+   * `FST_ERR_DEC_ALREADY_PRESENT` — from an avvio microtask, which makes it an uncatchable
+   * `uncaughtException` rather than something `index.ts`'s try/catch can degrade from. A working boot
+   * becomes a hard crash.
    *
-   * Note the round-trip is NOT the reason: TAC performs the Recall before invoking our callback either
-   * way, so discarding it would cost exactly the same. Only `'never'` avoids the call.
-   *
-   * T14 turns memory on properly, alongside the built-in memory tools, using `MemoryPromptBuilder`
-   * (which also supplies the profile-traits section a hand-rolled fold would drop) and excluding the
-   * current conversation from communications.
+   * Registered here rather than in `buildApp()` because `buildApp` is synchronous, and only the TAC
+   * path wants it: the no-Twilio path in `index.ts` owns its own SIGTERM/SIGINT handling, and this
+   * plugin installs its own listeners (warning loudly if it finds any already there).
    */
-  const smsChannel = new SMSChannel(tac, { memoryMode: 'never' });
-  tac.registerChannel(smsChannel); // BEFORE new TACServer — see the header.
+  await app.register(gracefulShutdown, { timeout: TAC_SHUTDOWN_TIMEOUT_MS });
 
-  const conversations = createConversationRegistry({
-    spanName: 'conversation.sms',
-    ttlMs: SMS_CONVERSATION_TTL_MS,
-    maxConversations: SMS_MAX_CONVERSATIONS,
-    logger: log,
-  });
+  /** Ended in `shutdown()`. Voice's is also ended per-call on `webSocketDisconnected`. */
+  const registries: ConversationRegistry[] = [];
+  /** Non-null only when voice is configured; `shutdown()` must clean it up itself. See below. */
+  let voiceChannel: VoiceChannel | null = null;
 
-  /**
-   * Single-slot and GLOBAL across channels — `onMessageReady` lives on TAC, not on the channel, so
-   * registering twice silently discards the first handler and voice would share this one. T13 must
-   * branch on `channel` here rather than adding a second registration.
-   */
-  tac.onMessageReady(async ({ conversationId, message, author, profileId, memory, session }) =>
-    handleInboundMessage(
-      { conversationId, message, author, profileId, memory, session },
-      { turn, conversations, logger: log },
-    ),
-  );
+  if (caps.sms) {
+    /**
+     * `memoryMode: 'never'` — deliberately NOT the plan's `'always'`.
+     *
+     * With `'always'`, TAC calls Recall scoped to the CURRENT conversation and folds the result into
+     * a `## Recent Message History` block of `User:`/`Assistant:` lines. `server/agent/history.ts`
+     * already puts that same exchange into the model's messages, so the model would see this
+     * conversation twice, in two formats — actively worse answers, not merely wasted work.
+     *
+     * T14 turns memory on properly, using `MemoryPromptBuilder` and excluding the current
+     * conversation from communications.
+     */
+    const smsChannel = new SMSChannel(tac, { memoryMode: 'never' });
+    tac.registerChannel(smsChannel); // BEFORE new TACServer — see the header.
 
-  /**
-   * Via TAC, never `smsChannel.on('conversationEnded', …)` — the channel's `.on` is a single-slot
-   * setter and TAC has already installed its own forwarder there, so ours would silently replace it
-   * and nothing would fire.
-   *
-   * Fires ONLY when Conversation Orchestrator marks the conversation CLOSED; INACTIVE does not end it.
-   * Whether CLOSED ever arrives depends on the CO configuration's `statusTimeouts`, which is why the
-   * registry's TTL sweep is the real backstop and this is the tidy path.
-   */
-  tac.onConversationEnded(({ session }) => {
-    conversations.end(session.conversationId);
-  });
+    const conversations = createConversationRegistry({
+      spanName: 'conversation.sms',
+      ttlMs: SMS_CONVERSATION_TTL_MS,
+      maxConversations: SMS_MAX_CONVERSATIONS,
+      logger: log,
+    });
+    registries.push(conversations);
+
+    /**
+     * Single-slot and GLOBAL across channels — `onMessageReady` lives on TAC, not on the channel, so
+     * registering twice silently discards the first handler. Voice does NOT come through here: it is
+     * unregistered by design and owns its own `prompt` slot, which is exactly what keeps this
+     * handler SMS-only and free of a `channel` branch.
+     */
+    tac.onMessageReady(async ({ conversationId, message, author, profileId, memory, session }) =>
+      handleInboundMessage(
+        { conversationId, message, author, profileId, memory, session },
+        { turn, conversations, logger: log },
+      ),
+    );
+
+    /**
+     * Via TAC, never `smsChannel.on('conversationEnded', …)` — the channel's `.on` is a single-slot
+     * setter and TAC has already installed its own forwarder there.
+     *
+     * Fires when Conversation Orchestrator marks the conversation CLOSED, which arrives as a
+     * `CONVERSATION_UPDATED` webhook rather than a distinct CLOSED event type. Measured: 300 s after
+     * creation with `statusTimeouts.closed: 5`. The registry's TTL sweep is the real backstop.
+     */
+    tac.onConversationEnded(({ session }) => {
+      conversations.end(session.conversationId);
+    });
+  }
+
+  if (caps.voice) {
+    const conversations = createConversationRegistry({
+      spanName: 'conversation.voice',
+      ttlMs: VOICE_CONVERSATION_TTL_MS,
+      maxConversations: VOICE_MAX_CONVERSATIONS,
+      logger: log,
+    });
+    registries.push(conversations);
+
+    /**
+     * `memoryMode: 'never'`, which DEVIATES from the plan's `'once'` — a decision, not an oversight.
+     *
+     * `'once'` would Recall on turn 1 and cache it on the session. But `composeMemory` is still the
+     * passthrough (`server/agent/deps.ts`), so the response is fetched and then discarded: the only
+     * effect available today is a Conversation Orchestrator round-trip sitting in front of the first
+     * spoken word, which is the single most latency-sensitive moment on the whole channel. T14 owns
+     * turning memory on together with a real compose port, and should revisit `'once'` then.
+     *
+     * `defaultTwimlOptions` is the static TwiML layer. See `VOICE_TWIML_OPTIONS` — the one key in it
+     * is the difference between a caller being able to interrupt us and the agent going deaf.
+     */
+    voiceChannel = new VoiceChannel(tac, {
+      memoryMode: 'never',
+      defaultTwimlOptions: VOICE_TWIML_OPTIONS,
+    });
+
+    // NOT `tac.registerChannel(voiceChannel)` — see rule 3 in the header. These four slots stay ours
+    // precisely because we never registered; TAC's own forwarders would have taken `prompt` and
+    // `interrupt` on registration, silently.
+    voiceChannel.on('setup', (data) => {
+      handleVoiceSetup(data, { turn });
+    });
+    voiceChannel.on('prompt', async (data) =>
+      handleVoicePrompt(
+        {
+          conversationId: data.conversationId,
+          transcript: data.transcript,
+          abortSignal: data.abortSignal,
+          memory: data.userMemory,
+        },
+        { turn, conversations, sender: voiceChannel as VoiceChannel, logger: log },
+      ),
+    );
+    voiceChannel.on('interrupt', (data) => {
+      handleVoiceInterrupt(data, { turn });
+    });
+    voiceChannel.on('webSocketDisconnected', (data) => {
+      handleVoiceDisconnect(data, { turn, conversations });
+    });
+  }
 
   const server = new TACServer(tac, {
     // Ours, already carrying `loggerInstance: rootLogger` and `trustProxy` — neither of which can be
@@ -166,17 +297,35 @@ export async function bootTacSms(deps: TacDeps): Promise<TacHandle> {
     // direction. Structurally identical at runtime — it is the same object TAC would have built.
     fastifyInstance: app as unknown as FastifyInstance,
     port: AGENT_PORT,
+    // Passed, never registered. Note `messagingChannels` is deliberately NOT passed alongside it:
+    // that option is a WHOLE-ARRAY override of `[sms, rcs, chat, whatsapp].filter(...)`, not an
+    // addition, so supplying it here would drop the registered SMS channel out of the `/webhook`
+    // fan-out and inbound texts would stop being answered.
+    ...(voiceChannel !== null && { voiceChannel }),
   });
 
   return {
     start: async () => {
       await server.start();
       log.info(
-        { port: AGENT_PORT, phoneNumber: config.twilio?.phoneNumber, memoryMode: 'never' },
-        'tac: SMS channel registered and listening',
+        {
+          port: AGENT_PORT,
+          phoneNumber: config.twilio?.phoneNumber,
+          sms: caps.sms,
+          voice: caps.voice,
+          voicePublicDomain: config.voice?.publicDomain ?? null,
+          memoryMode: 'never',
+          shutdownTimeoutMs: TAC_SHUTDOWN_TIMEOUT_MS,
+        },
+        `tac: listening (${[caps.sms && 'sms', caps.voice && 'voice'].filter(Boolean).join(' + ')})`,
       );
     },
-    shutdown: () => conversations.shutdown(),
-    conversations,
+    shutdown: () => {
+      for (const registry of registries) registry.shutdown();
+      // Ours to call, because `tac.shutdown()` iterates REGISTERED channels only — and the voice
+      // channel deliberately is not one. Without this its WebSocket map, prompt queues and
+      // callSid index survive the shutdown.
+      voiceChannel?.shutdown();
+    },
   };
 }

@@ -64,7 +64,12 @@ export function buildApp(deps: AppDeps): { app: App; obs: ObsRoutes; bench: Benc
     appName: config.appName,
     capabilities: caps,
     missing: config.missing.map((m) => m.name),
-    wired: { tac: caps.sms ? 'sms' : 'none', voice: 'T13', agent: 'done', bench: BENCH_TURN_PATH },
+    wired: {
+      tac: [caps.sms && 'sms', caps.voice && 'voice'].filter(Boolean).join('+') || 'none',
+      voice: caps.voice ? 'ready' : 'not configured',
+      agent: 'done',
+      bench: BENCH_TURN_PATH,
+    },
     paths: { app: APP_API_PATHS, tac: TAC_WEBHOOK_PATHS },
   }));
 
@@ -90,6 +95,24 @@ export function buildApp(deps: AppDeps): { app: App; obs: ObsRoutes; bench: Benc
   const first = (v: string | string[] | undefined): string | undefined =>
     (Array.isArray(v) ? v[0] : v)?.split(',')[0]?.trim();
 
+  /**
+   * Which channel a TAC path belongs to, so a voice call's webhooks do not all report as SMS.
+   *
+   * `/webhook` is the honest exception and is left as `sms`: it is the Conversation Orchestrator
+   * envelope endpoint, and once voice is orchestrated too, CO pushes voice conversation events
+   * through the very same route (the voice channel joins `webhookChannels`). Telling them apart means
+   * reading the envelope, which is more than an `onResponse` hook should do — and `/webhook` is
+   * still SMS's actual inbound path, whereas voice's is the WebSocket. Mislabelled voice CO events
+   * are the accepted cost; `payload.eventType` is the tiebreaker when it matters.
+   *
+   * Note this hook CANNOT see `/ws` at all: `@fastify/websocket` hijacks the reply on a successful
+   * upgrade, so `onResponse` never fires for it. A signature rejection there is a WS `close(1008)`
+   * after the 101, visible only as one TAC `log.warn` — so silence from `/ws` here is expected, and
+   * is not evidence the socket is healthy.
+   */
+  const pathChannel = (url: string): 'sms' | 'voice' =>
+    url.startsWith('/webhook') ? 'sms' : 'voice';
+
   app.addHook('onResponse', async (request, reply) => {
     if (!TAC_WEBHOOK_PATHS.some((p) => request.url.startsWith(p))) return;
     const proto = first(request.headers['x-forwarded-proto']) ?? 'https';
@@ -97,7 +120,7 @@ export function buildApp(deps: AppDeps): { app: App; obs: ObsRoutes; bench: Benc
     obsBus.publish({
       kind: 'webhook.inbound',
       summary: `${request.method} ${request.url} → ${reply.statusCode}`,
-      channel: 'sms',
+      channel: pathChannel(request.url),
       payload: {
         // Exactly the string TAC validates the signature against.
         signedUrl: `${proto}://${host}${request.url}`,
