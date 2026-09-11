@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   ABSENT_ORDER_ID,
   createToolCatalog,
+  DEMO_TOOLS,
   getStoreHours,
   lookupOrder,
   toolCatalog,
@@ -109,12 +110,20 @@ test('the 64-character limit is not off by one', () => {
   expect(() => createToolCatalog([fixture('a'.repeat(64))])).not.toThrow();
 });
 
-test('the shipped catalog holds exactly the two credential-free demo tools', () => {
-  // The T11 constraint: a complete multi-step turn has to be drivable with no credentials at all.
-  expect(toolCatalog.names).toEqual(['lookup_order', 'get_store_hours']);
-  expect(toolCatalog.all.every((t) => t.requires === undefined)).toBe(true);
+test('the shipped catalog is the two demo tools plus the voice-only end_call', () => {
+  expect(toolCatalog.names).toEqual(['lookup_order', 'get_store_hours', 'end_call']);
   expect(toolCatalog.get('lookup_order')).toBe(lookupOrder);
   expect(toolCatalog.has('send_message')).toBe(false);
+
+  // The T11 constraint, now asserted on DEMO_TOOLS rather than the whole catalog: a complete
+  // multi-step turn has to stay drivable with no credentials at all. `end_call` is deliberately NOT
+  // in that set — it requires voice, and folding it in would quietly weaken this guarantee.
+  expect(DEMO_TOOLS.map((t) => t.name)).toEqual(['lookup_order', 'get_store_hours']);
+  expect(DEMO_TOOLS.every((t) => t.requires === undefined)).toBe(true);
+
+  // And end_call must stay gated, or a bare-laptop bench run would be offered a tool that cannot
+  // work: nothing outside `server/twilio/` acts on its intent.
+  expect(toolCatalog.get('end_call')?.requires).toBe('voice');
 });
 
 // ------------------------------------------------------------------ resolve: the three buckets

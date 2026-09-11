@@ -37,11 +37,11 @@ POCs don't:
 All three land in **self-hosted Langfuse**. Its prompt `config` JSON is versioned with the prompt and
 is Langfuse's own documented home for `tools`/`tool_choice`/model params.
 
-## Status: T1–T12 done, all four spikes closed
+## Status: T1–T13 done, all four spikes closed — SMS *and* VOICE both verified live
 
 ```
 pnpm typecheck   → 0          (TS 7.0.2, node project + web project)
-pnpm test        → 228 passed, 13 files
+pnpm test        → 239 passed, 14 files
 ```
 
 **T12 IS DONE AND PROVEN AGAINST REAL SMS.** Two live turns on `+15805630929`, measured:
@@ -89,14 +89,13 @@ conversation.sms                    5m 00s   $0.001388   is_app_root = true
 | **T10 history** | done — bounded two ways, LRU on *use*; a real model repeated an order number from turn 1 and forgot it after `clear()` |
 | **T11 bench** | done — `/bench` streams a real turn in a browser with zero Twilio credentials, and the whole thing was re-run with TAC made *unresolvable* |
 | **T12 TAC/SMS** | done — a real text to `+15805630929` is answered, turn 2 recalled the order number with **0 tool calls**, and the `conversation.sms` trace tree is confirmed in the Langfuse UI |
-| **T13 TAC/voice** | **built, boots, and proven up to the WebSocket — no call placed yet.** A signed simulated webhook returns correct ConversationRelay TwiML. The live call is the one remaining step |
+| **T13 TAC/voice** | **done, proven on two real calls.** One `conversation.voice` trace held all five `turn.voice` spans; turn 2 recalled an order number with **0 tool calls**; barge-in works on real audio; and the agent hangs up by itself via `end_call` |
 
 **Not started:** T14 built-in tools + memory, T15–T17 Docker/Traefik, T18–T20 UI + docs.
 
-**A human can talk to the agent three ways now** — `pnpm dev:all` then
-<http://localhost:3000/bench>, **text the number**, or **call it**, the last of which has been built
-and pre-flighted but not yet dialled. Still absent: Docker for the app, and the home page is a
-placeholder.
+**A human can talk to the agent three ways now**, and all three have been done for real —
+`pnpm dev:all` then <http://localhost:3000/bench>, **text the number**, or **call it** and hang up by
+saying you're done. Still absent: Docker for the app, and the home page is a placeholder.
 
 ## Running it
 
@@ -107,7 +106,8 @@ pnpm langfuse      # the 6-container Langfuse stack (~2.7 GB, ready in ~10s on w
                    #   fails with an exit code of 0 and a fatal on stderr, which reads as success
 pnpm dev:all       # agent :8910 + web :3000, ctrl-c stops both cleanly
 pnpm typecheck && pnpm test
-pnpm seed:prompts  # push the compiled defaults to Langfuse as v1 + `production`
+pnpm seed:prompts                    # push BOTH compiled defaults as a new version + `production`
+pnpm seed:prompts demo-agent-voice   # just one — every run relabels what it touches, so prefer this
 
 # the four live diagnostics — each answers a question you cannot answer by reading code
 node --env-file-if-exists=.env scripts/verify-model.mjs        # is the key good, do tools fire
@@ -318,7 +318,8 @@ server/
                     Voice: passed to TACServer and NEVER registered, or our prompt slot is replaced.
                     Also owns the fastify-graceful-shutdown registration — read that constant.
     messaging.ts    one inbound SMS → runTurn → the reply string. Never throws, never returns ''.
-    voice.ts        one ConversationRelay turn → runTurn → tokens spoken as they arrive. Read its
+    voice.ts        one ConversationRelay turn → runTurn → tokens spoken as they arrive. Owns the
+                    end-session frame, which is how the agent hangs up. Read its
                     header: every failure mode on this channel is silence.
   obs/
     instrumentation.ts  --import preload. NodeSDK + LangfuseSpanProcessor + registerTelemetry.
@@ -629,7 +630,23 @@ New: `server/twilio/voice.ts`, `tests/voice.test.ts`. Changed: `server/twilio/ta
 it worked is in the boot log — exactly one `Registering channel` line, `channel: sms`, while TAC still
 logs the three `call_event_callbacks` that only appear when a voice channel resolved.
 
-### Proven for free, before any call
+### What two real calls proved
+
+```
+call 1  5 turns, ONE conversation.voice trace, all five turn.voice spans inside it
+        turn 2 "what was that order number again?"  → 1 step, 0 tools   ← from history, not a tool
+        turn 3 "actually what's the status?"        → lookup_order{A4721} from a question with no number
+        2 barge-ins, real utteranceUntilInterrupt ("and it's due Friday, September eleventh.")
+        ttft 2405 → 1077 → 1489 → 509 → 463 ms as the prompt cache warmed
+call 2  end_call fired: tool at 18:14:46, farewell "Goodbye." streamed, frame at 18:14:49.448,
+        socket closed 18:14:51.194 — the agent hung up, and the goodbye was heard first
+        also exercised live: lookup_order{A4832} → found:false, and a 230 ms barge-in
+```
+
+TTFT on voice is much better than T9's 3.3 s measurement suggested — a warm turn lands around
+500–800 ms. The slow ones are the first turn of a call and any turn that makes a tool round-trip.
+
+### Proven for free, before any call — the pre-flight worth repeating on every new tunnel
 
 ```
 /health                      wired: {tac: "sms+voice", voice: "ready"}, caps.voice true, caps.sms still true
@@ -660,10 +677,10 @@ that attribute is the difference between a working agent and a deaf one; 4. CO i
 points at us, not Studio — `resolveActionUrl` would silently redirect it to Studio if
 `TWILIO_STUDIO_HANDOFF_FLOW_SID` were set, and our callback route would then never be hit.
 
-**Not proven, and only a real call can:** the `/ws` upgrade and its signature, STT/TTS latency,
-barge-in on real audio, the orchestrated first-turn CO poll (10 attempts, ~11 s ceiling), and whether
-`X-Forwarded-Proto` survives the upgrade. Also note the SIGTERM check above passes on the 10 s default
-too, because nothing had a WebSocket open — **the 45 s timeout only proves itself on a live call.**
+**Still not proven even after two calls:** the 45 s shutdown timeout. Both SIGTERM checks ran with no
+WebSocket open, where the 10 s default would also have passed — it only bites if a SIGTERM lands
+*during* a call. And nothing has yet exercised a `/ws` signature rejection, which is invisible by
+construction (see below).
 
 ### The three things in `voice.ts` that are not optional
 
@@ -686,6 +703,57 @@ Voice's abort branch is the **opposite** of `messaging.ts`'s and the difference 
 the caller interrupted on purpose, so it says nothing and reports nothing. TAC has already sent the
 finalization if any token went out, and sending another creates the spurious empty turn its own source
 warns about.
+
+### Ending the call — `end_call`, and why it is a two-step mechanism
+
+The first live call exposed the one real gap: the agent had no way to hang up, so a finished
+conversation sat there with the line open until the caller gave up. Fixed with a tool plus one
+protocol frame, and the split between them is the whole design.
+
+**`end_call` does not end the call — it records an intent.** Tools run INSIDE the model loop, before
+the turn's final text is generated, let alone streamed and spoken. A tool that hung up where it stands
+would cut the caller off before the goodbye, often before the model had written it. So
+`server/agent/tools/end-call.ts` stores "this conversation asked to end" and returns a message
+addressed to the model (*"say one short goodbye and nothing else"*), and `voice.ts` sends the frame
+**after** `sendStreamingResponse` resolves.
+
+**The frame is `{"type":"end"}`, written to the socket ourselves.** Twilio documents it as *"End the
+session and return control of the call to Twilio"*, with `handoffData` **optional**. TAC has no
+end-session method: it builds this same frame for Studio handoff and parks it on
+`session.pendingHandoffData`, which is drained **only inside `sendResponse` and never inside
+`sendStreamingResponse`** — so on a streaming channel a parked frame would never be sent at all. That
+is a live trap for T14's handoff work. `getWebsocket()` is public, so writing the documented frame
+needs no vendor internals.
+
+Measured on the call that proved it, and both correct a guess made before it:
+
+- **ConversationRelay DOES drain queued audio before closing.** `voice.end` at 18:14:49.448,
+  `voice.disconnect` at 18:14:51.194 — a **1.75 s** gap in which "Goodbye." was spoken. The docs do
+  not promise this (`tokens-played` is named in the attribute table and appears nowhere in the
+  websocket-messages reference, and TAC drops unrecognised inbound frames anyway), so it was the one
+  thing only a call could settle. It is now settled empirically, not by inference.
+- **No Twilio alert is raised, contrary to what was predicted here.** The worry was that TAC answers
+  the `<Connect action>` route with `"OK"` as text/plain rather than TwiML, so Twilio would get
+  nothing actionable and log a warning. Checked `monitor.twilio.com/v1/Alerts` right after the call:
+  **zero alerts on the account.** The session ends, control returns, the call completes clean. So
+  returning real `<Hangup/>` TwiML from that route is NOT needed — do not "fix" what is not broken.
+
+**Interrupting the goodbye cancels the hangup.** Talking over "goodbye" is how a caller says *"wait,
+one more thing"*, so the abort branch calls `forgetEndCallRequest` rather than honouring the pending
+end. `tests/voice.test.ts` asserts both that no frame is sent AND that the intent does not survive
+into the next turn — the second half matters more, because a leaked intent hangs up on someone
+mid-conversation one turn later.
+
+`end_call` sets `requires: 'voice'` and is deliberately NOT in `DEMO_TOOLS`, whose contract is that
+every member works with zero credentials — hence the new `SHIPPED_TOOLS`. It costs a step: the model
+calls the tool and then speaks, so a closing turn uses two of the voice prompt's three.
+
+**The prompt is what decides WHEN**, and it is Langfuse-versioned, so that judgement is tunable
+without a redeploy. `demo-agent-voice` was re-seeded to **v3** carrying `end_call` and the
+when-to-end guidance. `scripts/seed-prompts.ts` now takes an optional name —
+`pnpm seed:prompts demo-agent-voice` — because every run creates a new version and moves
+`production`, so seeding everything to ship one prompt silently relabels the others and can demote an
+operator's UI edit. `demo-agent-text` was deliberately left at its v2 edit.
 
 ### Deviations from the plan, both deliberate
 
@@ -812,12 +880,11 @@ already needed.
   this is no longer trivially true and re-running it is the one outstanding check that costs nothing.**
   Two cases, and the second is the real one: credentials ABSENT (the dynamic import in `index.ts` never
   evaluates) and credentials PRESENT (the import rejects, the try/catch degrades, `/bench` still serves).
-- **SMS is verified live; VOICE is built but no call has ever been placed.** Four real SMS turns have
-  round-tripped (two at T12, two more on 2026-09-11 for the trace check). Voice boots, serves correct
-  signed ConversationRelay TwiML, and is tested on its three exit paths — but the `/ws` upgrade,
-  STT/TTS latency, barge-in on real audio and the orchestrated first-turn CO poll are all unexercised,
-  and the 45 s shutdown timeout only proves itself with a socket open. Don't run a demo end-to-end
-  without asking; calls and messages are billed.
+- **BOTH channels are now verified live.** Four SMS turns and two calls (11 voice turns total) have
+  round-tripped, including memory across turns, barge-in on real audio, the not-found tool branch, and
+  an agent-initiated hangup. What remains unexercised: the 45 s shutdown timeout (needs a SIGTERM
+  during a call), a `/ws` signature rejection, and Studio handoff. Don't run a demo end-to-end without
+  asking; calls and messages are billed.
 - `docker-compose.yml` for the app does not exist yet (T15). The Langfuse compose does.
 - Carried Minor review findings, for the final whole-branch review: a duplicated prose block across
   the two default prompts; `log.warn` outside the never-rejects guard in `prompt/langfuse.ts`;

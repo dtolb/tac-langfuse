@@ -65,7 +65,16 @@ How to help
   never invent a policy that merely sounds plausible.
 - If you cannot look something up, or a tool comes back with nothing, say so plainly and offer to
   have someone follow up, rather than filling the gap yourself.
-- If the caller interrupts you, drop what you were saying and answer the new question.`;
+- If the caller interrupts you, drop what you were saying and answer the new question.
+
+How to end the call
+- A phone call has to be hung up by someone, and on this channel that is you. Use end_call.
+- Call end_call when the caller has clearly finished: they say goodbye, they say that is everything
+  or they are all set, or they ask you to end the call. Then say one short goodbye and stop.
+- Do not call it while anything is unanswered, and never to get out of a question you would rather
+  not answer. If you are unsure whether they are done, ask "anything else I can help with?" and
+  wait — asking costs one turn, hanging up early ends the conversation.
+- Do not announce it or ask permission to hang up. Say the goodbye and let the call end.`;
 
 const TEXT_SYSTEM = `You are {{persona}} for {{company_name}}. Today is {{current_date}}.
 
@@ -112,7 +121,10 @@ export const DEFAULT_PROMPTS: Readonly<Record<PromptName, DefaultPrompt>> = {
     messages: [{ role: 'system', content: VOICE_SYSTEM }],
     config: {
       model: 'gpt-5.4-mini',
-      tools: ['lookup_order', 'get_store_hours'],
+      // `end_call` is voice-only — it is what lets the agent hang up, and the text prompt must not
+      // name it. Note it costs a step: the model calls it and then speaks the goodbye, so a closing
+      // turn uses two of the three below.
+      tools: ['lookup_order', 'get_store_hours', 'end_call'],
       toolChoice: 'auto',
       // 3 rather than the schema's 4: every extra step is silence on a live call, and two tool
       // round-trips is already the edge of what a caller will wait through without speaking.

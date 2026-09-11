@@ -23,6 +23,7 @@ import type { ConversationRegistry } from '../obs/conversations.ts';
 import { runTurn } from '../agent/run-turn.ts';
 import type { TurnDeps } from '../agent/types.ts';
 import type { ToolLogger } from '../agent/tools/registry.ts';
+import { consumeEndCallRequest, forgetEndCallRequest } from '../agent/tools/end-call.ts';
 
 /**
  * Conversation-registry bounds for voice. Tighter than SMS on both axes, because a phone call is
@@ -108,6 +109,64 @@ export interface VoiceSender {
     options?: { signal?: AbortSignal },
   ): Promise<string>;
   sendResponse(conversationId: string, message: string): Promise<void>;
+  /**
+   * The raw socket, so we can send the one ConversationRelay frame TAC has no method for — see
+   * `endSession` below. Public on `VoiceChannel`, so this needs no vendor internals.
+   */
+  getWebsocket(conversationId: string): VoiceSocket | null;
+}
+
+/** Just the two members `endSession` touches. `ws`'s WebSocket satisfies it. */
+export interface VoiceSocket {
+  send(data: string): void;
+  readonly readyState: number;
+}
+
+/** `WebSocket.OPEN`. Spelled out rather than imported, so this file needs no `ws` dependency. */
+const WS_OPEN = 1;
+
+/**
+ * End the ConversationRelay session, which is how a voice agent hangs up.
+ *
+ * `{"type":"end"}` is Twilio's documented server→ConversationRelay message: *"End the session and
+ * return control of the call to Twilio through Conversation Relay."* `handoffData` is optional per
+ * Twilio (TAC's own schema for it requires the field, but that schema is for Studio handoff, not
+ * this), so a plain end carries nothing.
+ *
+ * WHY WE SEND THE FRAME OURSELVES. TAC exposes no "end session" method. It builds this exact frame
+ * for Studio handoff and parks it on `session.pendingHandoffData` — but that is drained ONLY inside
+ * `sendResponse`, never inside `sendStreamingResponse`, so on a streaming channel like ours a parked
+ * frame would never be sent at all. `getWebsocket()` is public, so writing the documented frame is
+ * both simpler and less coupled than reaching into session state.
+ *
+ * WHAT IT DOES NOT DO: hang up. The session ends and control returns to Twilio, which then requests
+ * the `<Connect action>` URL — with `CallStatus: in-progress`. TAC answers that route with `"OK"` as
+ * **text/plain, not TwiML**, so Twilio gets nothing actionable and drops the call. That is the
+ * hangup, and it is a side effect of TAC's response rather than something we asked for; expect a
+ * TwiML warning in the Twilio debugger, and if a clean disposition ever matters, the fix is to return
+ * real `<Hangup/>` TwiML from that route rather than to change this frame.
+ *
+ * HONEST LIMIT: there is no documented way to know that audio already sent has finished playing to
+ * the caller. `tokens-played` is named in the ConversationRelay attribute table but appears nowhere
+ * in the websocket-messages reference, and TAC drops unrecognised inbound frames before dispatch
+ * anyway. So this relies on ConversationRelay draining what it has been given when it ends the
+ * session, which is the sanctioned mechanism but not a promise in writing. A timing-based hangup was
+ * the alternative and it is strictly worse: it guesses.
+ */
+function endSession(sender: VoiceSender, conversationId: string, logger: ToolLogger): boolean {
+  const ws = sender.getWebsocket(conversationId);
+  if (ws === null || ws.readyState !== WS_OPEN) {
+    // Normal, not an error: the caller may have hung up during the goodbye.
+    logger.debug({ conversationId }, 'voice: no open socket to end — the call is already gone');
+    return false;
+  }
+  try {
+    ws.send(JSON.stringify({ type: 'end' }));
+    return true;
+  } catch (err) {
+    logger.warn({ err, conversationId }, 'voice: could not send the end frame');
+    return false;
+  }
 }
 
 export interface VoiceDeps {
@@ -210,6 +269,10 @@ export async function handleVoicePrompt(params: VoicePrompt, deps: VoiceDeps): P
         // answer. KNOWN LIMIT, accepted deliberately: that partial is what we GENERATED, which is
         // more than the caller HEARD. The ground truth is `utteranceUntilInterrupt` on the interrupt
         // callback, which arrives after `history.append` has already run.
+        // And they are evidently NOT done, so drop any hangup the model had queued. Interrupting the
+        // goodbye is exactly how a caller says "wait, one more thing", and honouring the pending
+        // end_call here would hang up on them mid-sentence.
+        forgetEndCallRequest(conversationId);
         logger.debug({ conversationId }, 'voice: turn interrupted by the caller');
         return;
       }
@@ -229,6 +292,25 @@ export async function handleVoicePrompt(params: VoicePrompt, deps: VoiceDeps): P
           payload: { steps: result.steps, aborted: false },
         });
         await sender.sendResponse(conversationId, VOICE_FALLBACK_TEXT);
+      }
+
+      // ══ THE HANGUP, AND IT MUST BE LAST. ══
+      //
+      // `end_call` only recorded an intent — see `../agent/tools/end-call.ts` for why a tool cannot
+      // hang up where it stands. By here the farewell has been streamed and its `last: true` marker
+      // sent, so ending the session is the next thing the caller should experience. Doing this any
+      // earlier truncates the goodbye; doing it inside the tool truncates it before it is even
+      // written.
+      const endReason = consumeEndCallRequest(conversationId);
+      if (endReason !== null) {
+        const sent = endSession(sender, conversationId, logger);
+        turn.obs.publish({
+          kind: 'voice.end',
+          summary: sent ? `agent ended the call: ${endReason}` : `agent tried to end the call but the socket was gone: ${endReason}`,
+          channel: 'voice',
+          conversationId,
+          payload: { reason: endReason, frameSent: sent, farewell: spoken },
+        });
       }
     });
   } catch (err) {
@@ -334,4 +416,8 @@ export function handleVoiceDisconnect(
   });
   deps.conversations.end(conversationId);
   deps.turn.history.clear(conversationId);
+  // Normally already consumed by the turn that hung up. This covers the other endings — the caller
+  // hung up first, or the socket dropped between the tool call and the goodbye — so an intent cannot
+  // survive to be acted on by a later call that reuses the conversation id.
+  forgetEndCallRequest(conversationId);
 }

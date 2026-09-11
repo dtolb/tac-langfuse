@@ -9,6 +9,7 @@ import type { ModelPort } from '../server/agent/model/port.ts';
 import type { PromptPort } from '../server/agent/prompt/port.ts';
 import type { TurnDeps } from '../server/agent/types.ts';
 import { createObsBus } from '../server/obs/bus.ts';
+import { endCallTool } from '../server/agent/tools/end-call.ts';
 import type { ObsEvent } from '../shared/events.ts';
 import { createConversationRegistry } from '../server/obs/conversations.ts';
 import {
@@ -93,20 +94,34 @@ const fakeTurnDeps = (
   };
 };
 
-/** Records what was sent, and what signal it was sent with. */
-const recordingSender = (): {
+/** Records what was sent, what signal it was sent with, and any raw frames written to the socket. */
+const recordingSender = (
+  opts: { socketOpen?: boolean } = {},
+): {
   sender: VoiceSender;
   streamed: string[];
   spoken: string[];
   signals: (AbortSignal | undefined)[];
+  frames: string[];
+  order: string[];
 } => {
   const streamed: string[] = [];
   const spoken: string[] = [];
   const signals: (AbortSignal | undefined)[] = [];
+  const frames: string[] = [];
+  /**
+   * One ordered log across BOTH wires, because the property that matters is a sequence: the end
+   * frame must come after every token. Two separate arrays can each look right while the order
+   * between them is wrong, which is the actual bug (a truncated goodbye).
+   */
+  const order: string[] = [];
+  const socketOpen = opts.socketOpen ?? true;
   return {
     streamed,
     spoken,
     signals,
+    frames,
+    order,
     sender: {
       async sendStreamingResponse(_id, stream, options) {
         signals.push(options?.signal);
@@ -116,14 +131,34 @@ const recordingSender = (): {
           if (options?.signal?.aborted === true) break;
           all += chunk;
           streamed.push(chunk);
+          order.push(`token:${chunk}`);
         }
         return all;
       },
       async sendResponse(_id, message) {
         spoken.push(message);
+        order.push(`say:${message}`);
       },
+      getWebsocket: () =>
+        socketOpen
+          ? {
+              readyState: 1, // WebSocket.OPEN
+              send: (data: string) => {
+                frames.push(data);
+                order.push(`frame:${data}`);
+              },
+            }
+          : null,
     },
   };
+};
+
+/** Drive the end_call tool the way the model would, for the current conversation. */
+const requestEndCall = async (conversationId: string, reason = 'caller said goodbye'): Promise<void> => {
+  await endCallTool.execute(
+    { reason },
+    { conversationId, logger: silentLogger },
+  );
 };
 
 const registry = (): ReturnType<typeof createConversationRegistry> =>
@@ -234,6 +269,7 @@ test('a send failure still speaks the fallback rather than throwing at TAC', asy
     sendResponse: async (_id, message) => {
       spoken.push(message);
     },
+    getWebsocket: () => null,
   };
 
   // Must not reject: TAC swallows what escapes a prompt handler and only logs it, so a throw from
@@ -272,6 +308,111 @@ test('a disconnect ends the trace root and clears the transcript', async () => {
   // transcript left behind could surface in that person's next call.
   expect(turn.history.read('conv_voice_6')).toEqual([]);
   expect(events.map((e) => e.kind)).toContain('voice.disconnect');
+});
+
+test('end_call sends the end frame AFTER the farewell, not before', async () => {
+  const events: ObsEvent[] = [];
+  const turn = fakeTurnDeps(['Thanks for ', 'calling. Goodbye!'], 'Thanks for calling. Goodbye!', events);
+  const rec = recordingSender();
+  await requestEndCall('conv_voice_7');
+
+  await handleVoicePrompt(
+    {
+      conversationId: 'conv_voice_7',
+      transcript: "that's everything, thanks",
+      abortSignal: new AbortController().signal,
+      memory: undefined,
+    },
+    { turn, conversations: registry(), sender: rec.sender, logger: silentLogger },
+  );
+
+  // THE ORDER IS THE ASSERTION. Every token of the farewell, and only then the documented
+  // end-session frame — `handoffData` is optional per Twilio and we send none. Sending the frame any
+  // earlier is the truncated-goodbye bug, and it would satisfy a test that only checked both
+  // happened.
+  expect(rec.order).toEqual([
+    'token:Thanks for ',
+    'token:calling. Goodbye!',
+    'frame:{"type":"end"}',
+  ]);
+  const ended = events.find((e) => e.kind === 'voice.end');
+  expect(ended?.payload).toMatchObject({ frameSent: true, reason: 'caller said goodbye' });
+});
+
+test('a turn with no end_call sends no frame', async () => {
+  const events: ObsEvent[] = [];
+  const turn = fakeTurnDeps(['Sure, one moment.'], 'Sure, one moment.', events);
+  const rec = recordingSender();
+
+  await handleVoicePrompt(
+    {
+      conversationId: 'conv_voice_8',
+      transcript: 'can you check my order',
+      abortSignal: new AbortController().signal,
+      memory: undefined,
+    },
+    { turn, conversations: registry(), sender: rec.sender, logger: silentLogger },
+  );
+
+  expect(rec.frames).toEqual([]);
+  expect(events.some((e) => e.kind === 'voice.end')).toBe(false);
+});
+
+test('interrupting the goodbye cancels the hangup', async () => {
+  const events: ObsEvent[] = [];
+  const turn = fakeTurnDeps(['Goodbye!'], 'Goodbye!', events);
+  const rec = recordingSender();
+  const abort = new AbortController();
+  await requestEndCall('conv_voice_9');
+  abort.abort();
+
+  await handleVoicePrompt(
+    {
+      conversationId: 'conv_voice_9',
+      transcript: 'actually hold on',
+      abortSignal: abort.signal,
+      memory: undefined,
+    },
+    { turn, conversations: registry(), sender: rec.sender, logger: silentLogger },
+  );
+
+  // Talking over the goodbye is how a caller says "wait, one more thing". Hanging up on them there
+  // would be the worst possible reading of an interruption.
+  expect(rec.frames).toEqual([]);
+
+  // And the intent must be GONE, not merely skipped — otherwise the next turn inherits a hangup the
+  // caller already cancelled, and they get cut off mid-conversation.
+  const rec2 = recordingSender();
+  await handleVoicePrompt(
+    {
+      conversationId: 'conv_voice_9',
+      transcript: 'one more thing',
+      abortSignal: new AbortController().signal,
+      memory: undefined,
+    },
+    { turn: fakeTurnDeps(['Of course.'], 'Of course.', events), conversations: registry(), sender: rec2.sender, logger: silentLogger },
+  );
+  expect(rec2.frames).toEqual([]);
+});
+
+test('a hangup on a socket that has already gone reports frameSent false', async () => {
+  const events: ObsEvent[] = [];
+  const turn = fakeTurnDeps(['Bye.'], 'Bye.', events);
+  const rec = recordingSender({ socketOpen: false });
+  await requestEndCall('conv_voice_10', 'caller rang off');
+
+  await handleVoicePrompt(
+    {
+      conversationId: 'conv_voice_10',
+      transcript: 'bye',
+      abortSignal: new AbortController().signal,
+      memory: undefined,
+    },
+    { turn, conversations: registry(), sender: rec.sender, logger: silentLogger },
+  );
+
+  // Must not throw — the caller hanging up first is routine, not an error.
+  expect(events.find((e) => e.kind === 'voice.end')?.payload).toMatchObject({ frameSent: false });
 });
 
 test('the TwiML default that keeps barge-in audible is set', () => {

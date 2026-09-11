@@ -39,10 +39,31 @@ const langfuse = new LangfuseClient({
   secretKey: app.langfuse.secretKey,
 });
 
-console.log(`seeding ${PROMPT_NAMES.length} prompts into ${app.langfuse.baseUrl}\n`);
+/**
+ * Optional name filter, because seeding is not always an all-or-nothing act.
+ *
+ * Every run creates a NEW version of each prompt it touches and moves `production` onto it. So
+ * re-seeding everything to ship a change to ONE prompt silently relabels the others — and if an
+ * operator has since edited one in the Langfuse UI, that edit stops being the live version. Nothing
+ * is destroyed (versions are immutable and the label can be moved back), but it is a surprise, and
+ * the whole point of the prompt investment is that operator edits are real.
+ *
+ *   pnpm seed:prompts                      # both
+ *   pnpm seed:prompts demo-agent-voice     # just that one
+ */
+const requested = process.argv.slice(2);
+const unknown = requested.filter((n) => !(PROMPT_NAMES as readonly string[]).includes(n));
+if (unknown.length > 0) {
+  console.error(`unknown prompt name(s): ${unknown.join(', ')}`);
+  console.error(`known: ${PROMPT_NAMES.join(', ')}`);
+  process.exit(1);
+}
+const targets: readonly string[] = requested.length > 0 ? requested : PROMPT_NAMES;
+
+console.log(`seeding ${targets.length} prompt(s) into ${app.langfuse.baseUrl}\n`);
 
 let failures = 0;
-for (const name of PROMPT_NAMES) {
+for (const name of targets as readonly (typeof PROMPT_NAMES)[number][]) {
   const { messages, config } = DEFAULT_PROMPTS[name];
   try {
     const created = await langfuse.prompt.create({
@@ -60,7 +81,7 @@ for (const name of PROMPT_NAMES) {
 }
 
 if (failures > 0) {
-  console.error(`\n${failures} of ${PROMPT_NAMES.length} failed.`);
+  console.error(`\n${failures} of ${targets.length} failed.`);
   process.exit(1);
 }
 console.log('\ndone. Edit these in the Langfuse UI; move the `production` label to roll back.');

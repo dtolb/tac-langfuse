@@ -33,6 +33,12 @@ export const OBS_EVENT_KINDS = [
   'voice.setup',
   'voice.transcript',
   'voice.interrupt',
+  /**
+   * The AGENT chose to hang up and the end-session frame went out — distinct from
+   * `voice.disconnect`, which is the socket actually closing and fires on every call however it
+   * ended. Both appear when the agent ends a call; only this one appears when it decided to.
+   */
+  'voice.end',
   'voice.disconnect',
   'sms.inbound',
   'sms.outbound',
@@ -95,6 +101,7 @@ export const KIND_TONE: Record<ObsEventKind, 'neutral' | 'accent' | 'success' | 
   'voice.setup': 'accent',
   'voice.transcript': 'neutral',
   'voice.interrupt': 'warning',
+  'voice.end': 'accent',
   'voice.disconnect': 'neutral',
   'sms.inbound': 'neutral',
   'sms.outbound': 'success',

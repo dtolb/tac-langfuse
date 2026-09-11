@@ -12,6 +12,7 @@
  * account and no orchestrated mode. Neither sets `requires`.
  */
 import { z } from 'zod';
+import { endCallTool } from './end-call.ts';
 import { isValidToolName, TOOL_NAME_RE, type ToolDef } from './registry.ts';
 
 export interface ToolCatalog {
@@ -220,5 +221,16 @@ export const getStoreHours: ToolDef<typeof GetStoreHoursInput> = {
 
 export const DEMO_TOOLS: readonly ToolDef[] = [lookupOrder, getStoreHours];
 
+/**
+ * Everything the catalog ships with: the two credential-free demo tools, plus the one tool that
+ * controls the CHANNEL rather than answering a question.
+ *
+ * `end_call` is kept out of `DEMO_TOOLS` on purpose. That array's contract — stated in its docblock
+ * and asserted in `tests/tools.test.ts` — is that every member works with zero credentials and sets
+ * no `requires`, which is what lets the bench drive a complete turn on a bare laptop. `end_call` sets
+ * `requires: 'voice'`, so folding it in would quietly break that promise.
+ */
+export const SHIPPED_TOOLS: readonly ToolDef[] = [...DEMO_TOOLS, endCallTool];
+
 /** The process-wide catalog. Tests build their own with `createToolCatalog([...])`. */
-export const toolCatalog: ToolCatalog = createToolCatalog(DEMO_TOOLS);
+export const toolCatalog: ToolCatalog = createToolCatalog(SHIPPED_TOOLS);
