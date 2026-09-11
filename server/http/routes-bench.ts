@@ -27,24 +27,20 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { runTurn } from '../agent/run-turn.ts';
-import { turnSpans } from '../agent/spans.ts';
-import { passthroughMemory } from '../agent/memory.ts';
 import { createHistory, type HistoryStore } from '../agent/history.ts';
-import { createLangfusePromptPort } from '../agent/prompt/langfuse.ts';
-import { promptCacheTtlMs } from '../agent/prompt/port.ts';
-import { createOpenAiModelPort } from '../agent/model/openai.ts';
-import { resolve } from '../agent/tools/resolve.ts';
+import { createTurnDeps } from '../agent/deps.ts';
 import type { ToolLogger } from '../agent/tools/registry.ts';
 import type { TurnDeps } from '../agent/types.ts';
-import { capabilities, unavailable, type AppConfig, type Capabilities } from '../config.ts';
+import { unavailable, type AppConfig, type Capabilities } from '../config.ts';
 import { childLogger } from '../logging.ts';
 import type { ObsBus } from '../obs/bus.ts';
+import { withTurnSpan, type SpanLike } from '../obs/spans.ts';
 import {
-  startConversationSpan,
-  withTurnSpan,
-  type ConversationSpan,
-  type SpanLike,
-} from '../obs/spans.ts';
+  createConversationRegistry,
+  DEFAULT_CONVERSATION_TTL_MS,
+  DEFAULT_MAX_CONVERSATIONS,
+  type ConversationRegistry,
+} from '../obs/conversations.ts';
 import { BENCH_TURN_PATH } from '../../shared/twilio-paths.ts';
 import { formatSse, SSE_HEADERS, type SseSink } from './sse.ts';
 import type { App } from './types.ts';
@@ -52,9 +48,20 @@ import type { App } from './types.ts';
 const log = childLogger('bench');
 
 /** Longest a bench conversation may sit idle before its trace is closed. */
-export const BENCH_CONVERSATION_TTL_MS = 30 * 60_000;
+export const BENCH_CONVERSATION_TTL_MS = DEFAULT_CONVERSATION_TTL_MS;
 /** Bench conversations held at once. A browser tab minting ids is the only source. */
-export const BENCH_MAX_CONVERSATIONS = 50;
+export const BENCH_MAX_CONVERSATIONS = DEFAULT_MAX_CONVERSATIONS;
+
+/**
+ * Re-exported, not re-implemented. The registry moved to `../obs/conversations.ts` at T12, when SMS
+ * needed the identical sweep-and-cap semantics and duplicating them would have meant two copies of
+ * some genuinely subtle LRU logic. Kept exported from here because this is where every existing
+ * caller and `tests/bench-route.test.ts` already import it from.
+ */
+export {
+  createConversationRegistry,
+  type ConversationRegistry,
+} from '../obs/conversations.ts';
 
 const BenchTurnBody = z
   .object({
@@ -63,109 +70,6 @@ const BenchTurnBody = z
     conversationId: z.string().trim().min(1).max(200).optional(),
   })
   .strict();
-
-/**
- * Per-conversation trace roots, so turn 2 lands in turn 1's trace.
- *
- * The same shape voice needs at T13, exercised here where no phone is required. Voice carries its
- * traceparent on `session.metadata` because TAC persists nothing; the bench has no session object at
- * all, so it keeps them here and the browser supplies the id.
- *
- * BOUNDED AND SWEPT, because the bench has NO disconnect signal. Voice gets
- * `webSocketDisconnected`; a browser tab that is closed tells this process nothing. An unswept
- * registry would therefore hold a conversation span open forever — and an unended span does not
- * reach Langfuse AT ALL (see `../obs/spans.ts`), so the symptom is a whole missing trace with no
- * error anywhere.
- */
-export interface ConversationRegistry {
-  /** The traceparent for this conversation, starting its root span on first use. */
-  traceparentFor(conversationId: string): string | undefined;
-  /** End the root span and forget the conversation. Idempotent. */
-  end(conversationId: string): void;
-  /** End every conversation idle past the ttl. Returns how many. */
-  sweep(): number;
-  size(): number;
-  /** End every conversation, so the last trace of a run is not lost on shutdown. */
-  shutdown(): void;
-}
-
-export function createConversationRegistry(
-  opts: {
-    readonly ttlMs?: number;
-    readonly maxConversations?: number;
-    readonly now?: () => number;
-    readonly start?: (conversationId: string) => ConversationSpan;
-  } = {},
-): ConversationRegistry {
-  const ttlMs = opts.ttlMs ?? BENCH_CONVERSATION_TTL_MS;
-  const maxConversations = opts.maxConversations ?? BENCH_MAX_CONVERSATIONS;
-  const now = opts.now ?? Date.now;
-  const start =
-    opts.start ??
-    ((conversationId: string): ConversationSpan =>
-      startConversationSpan('conversation.bench', { conversationId }));
-
-  interface Entry {
-    readonly span: ConversationSpan;
-    readonly traceparent: string | undefined;
-    lastUsedAt: number;
-  }
-  const entries = new Map<string, Entry>();
-
-  const close = (conversationId: string, entry: Entry, why: string): void => {
-    entry.span.update({ metadata: { closedBecause: why } });
-    entry.span.end();
-    entries.delete(conversationId);
-  };
-
-  return {
-    traceparentFor(conversationId) {
-      const existing = entries.get(conversationId);
-      if (existing !== undefined) {
-        existing.lastUsedAt = now();
-        // Re-insert so Map order is least-recently-used, matching `history.ts`.
-        entries.delete(conversationId);
-        entries.set(conversationId, existing);
-        return existing.traceparent;
-      }
-
-      const span = start(conversationId);
-      entries.set(conversationId, { span, traceparent: span.traceparent, lastUsedAt: now() });
-
-      while (entries.size > maxConversations) {
-        const oldest = entries.entries().next();
-        if (oldest.done === true) break;
-        const [id, entry] = oldest.value;
-        close(id, entry, 'evicted at the conversation cap');
-        log.warn({ conversationId: id, maxConversations }, 'bench: evicted a conversation at the cap');
-      }
-
-      return span.traceparent;
-    },
-
-    end(conversationId) {
-      const entry = entries.get(conversationId);
-      if (entry !== undefined) close(conversationId, entry, 'ended');
-    },
-
-    sweep() {
-      const at = now();
-      let swept = 0;
-      for (const [id, entry] of [...entries]) {
-        if (at - entry.lastUsedAt < ttlMs) continue;
-        close(id, entry, `idle past ${ttlMs}ms`);
-        swept += 1;
-      }
-      return swept;
-    },
-
-    size: () => entries.size,
-
-    shutdown() {
-      for (const [id, entry] of [...entries]) close(id, entry, 'shutdown');
-    },
-  };
-}
 
 export interface BenchTurnRequest {
   readonly conversationId: string;
@@ -282,51 +186,23 @@ export async function streamBenchTurn(
 }
 
 /**
- * Build the real `TurnDeps` for the bench.
- *
- * Separate from `registerBenchRoutes` so the route can be tested against fakes: the route takes
- * `TurnDeps` injected, and only this function knows how to construct the live ports. Same seam
- * `scripts/verify-turn.ts` uses.
+ * The live ports moved to `../agent/deps.ts` at T12 as `createTurnDeps`, because SMS needs the same
+ * set and "bench" in the name had become misleading. Re-exported under the old name for the callers
+ * that already import it from here.
  */
-export function createBenchTurnDeps(deps: {
-  readonly config: AppConfig;
-  readonly bus: ObsBus;
-  readonly history: HistoryStore;
-  readonly nodeEnv: string | undefined;
-}): TurnDeps {
-  const { config, bus, history } = deps;
-  if (config.openai === null) {
-    // Unreachable through the route, which gates on `caps.llm` first. Explicit anyway: the
-    // alternative is a confusing null-deref inside the model port on a misconfigured box.
-    throw new Error('createBenchTurnDeps requires OPENAI_API_KEY; gate on capabilities.llm first');
-  }
-  return {
-    prompts: createLangfusePromptPort({
-      langfuse: config.langfuse,
-      bus,
-      ttlMs: promptCacheTtlMs(deps.nodeEnv),
-    }),
-    // T8's resolver with its process-wide arguments applied. `capabilities` comes from config,
-    // which is why `server/agent/` never reads the environment itself.
-    tools: (names, turn) =>
-      resolve(names, {
-        capabilities: capabilities(config),
-        bus,
-        conversationId: turn.conversationId,
-        channel: turn.channel,
-      }),
-    model: createOpenAiModelPort({ apiKey: config.openai.apiKey }),
-    composeMemory: passthroughMemory,
-    obs: bus,
-    spans: turnSpans,
-    branding: { persona: 'Ada, a customer support agent', companyName: 'Northwind Traders' },
-    history,
-  };
-}
+export { createTurnDeps as createBenchTurnDeps } from '../agent/deps.ts';
 
 export interface BenchRoutes {
   readonly history: HistoryStore;
   readonly conversations: ConversationRegistry;
+  /**
+   * The live ports, built on first use and memoised.
+   *
+   * Exposed so the TAC boot shares ONE set with the bench rather than constructing a parallel copy:
+   * one prompt cache (an SMS turn gets the benefit of an entry the bench already fetched) and one
+   * history store with one set of caps. Throws if `capabilities.llm` is false — gate on it first.
+   */
+  turnDeps(): TurnDeps;
   shutdown(): void;
 }
 
@@ -348,6 +224,18 @@ export function registerBenchRoutes(
   const history = createHistory(undefined, log);
   const conversations = createConversationRegistry();
 
+  // Lazy AND memoised. Lazy because construction requires an OpenAI key and boot must not depend on
+  // one; memoised because two instances would mean two prompt caches, and the TAC boot shares this.
+  let cached: TurnDeps | undefined;
+  const turnDeps = (): TurnDeps =>
+    deps.turn ??
+    (cached ??= createTurnDeps({
+      config: deps.config,
+      bus: deps.bus,
+      history,
+      nodeEnv: process.env.NODE_ENV,
+    }));
+
   app.post(BENCH_TURN_PATH, (request, reply) => {
     // The degradation contract every capability-gated route follows: 503 naming the variable, rather
     // than a stack trace or a silent 500. The page stays inspectable with no key configured.
@@ -361,10 +249,6 @@ export function registerBenchRoutes(
       void reply.code(400).send({ error: 'bad_request', detail: z.treeifyError(parsed.error) });
       return;
     }
-
-    const turnDeps =
-      deps.turn ??
-      createBenchTurnDeps({ config: deps.config, bus: deps.bus, history, nodeEnv: process.env.NODE_ENV });
 
     // Opportunistic rather than on a timer: a `setInterval` would need `unref` to stop holding the
     // process open in tests, and there is nothing to sweep when nobody is using the bench.
@@ -408,13 +292,14 @@ export function registerBenchRoutes(
         text: parsed.data.text,
         abortSignal: abort.signal,
       },
-      { turn: turnDeps, conversations, logger: log },
+      { turn: turnDeps(), conversations, logger: log },
     );
   });
 
   return {
     history,
     conversations,
+    turnDeps,
     shutdown: () => conversations.shutdown(),
   };
 }

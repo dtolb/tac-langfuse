@@ -43,6 +43,19 @@ export function buildApp(deps: AppDeps): { app: App; obs: ObsRoutes; bench: Benc
     // why compose forces that header to `https` — see docker-compose.yml.
     trustProxy: true,
     loggerInstance: rootLogger,
+    /**
+     * Without this, `fastify.close()` waits for every open connection and shutdown can hang.
+     *
+     * It matters because TAC registers `fastify-graceful-shutdown` with no options, so a 10-second
+     * watchdog `process.exit(1)`s the process — and our `preClose` cleanup (which ends spans and
+     * flushes OpenTelemetry) would never run. Two things reliably hold `close()` open past 10s: an
+     * attached `/events/stream` SSE client, and `keepAliveTimeout` (72s by default) on any idle
+     * socket, which Next's dev-mode rewrite proxy creates on every `/bench` visit.
+     *
+     * Note the `'idle'` default does NOT help: fastify only wires up `closeIdleConnections` when a
+     * `serverFactory` is supplied, which we do not do.
+     */
+    forceCloseConnections: true,
   });
 
   /** Always 200, even with nothing configured. That is the entire point of it. */
@@ -51,9 +64,49 @@ export function buildApp(deps: AppDeps): { app: App; obs: ObsRoutes; bench: Benc
     appName: config.appName,
     capabilities: caps,
     missing: config.missing.map((m) => m.name),
-    wired: { tac: 'T12/T13', agent: 'done', bench: BENCH_TURN_PATH },
+    wired: { tac: caps.sms ? 'sms' : 'none', voice: 'T13', agent: 'done', bench: BENCH_TURN_PATH },
     paths: { app: APP_API_PATHS, tac: TAC_WEBHOOK_PATHS },
   }));
+
+  /**
+   * The webhook diagnostic — the highest-value fifteen lines in this file.
+   *
+   * The most likely way the first live SMS fails is a 403 on Twilio signature validation, and TAC
+   * reports that as ONE `log.warn` with no obs event at all. From the outside it looks exactly like a
+   * Twilio outage. This hook makes the two distinguishable at a glance:
+   *
+   *   - nothing on the bus  → Conversation Orchestrator is not calling us. The CO configuration's
+   *                           statusCallbacks URL or SMS captureRules are wrong; the code is fine.
+   *   - 403 with a URL      → signature mismatch, and the URL says which half is wrong.
+   *
+   * `url` is rebuilt the way TAC's own `getWebhookUrl` does it — `X-Forwarded-Proto` (defaulting to
+   * https when absent, which is TAC's behaviour too), then `X-Forwarded-Host` or `Host`, first
+   * comma-separated value of each. It is the signed string, so if it does not match what Twilio signed,
+   * this is the line that shows it. Registered here, before TAC's `start()`, so it wraps TAC's routes.
+   *
+   * The approved plan schedules this for T15's Traefik work; it is pulled forward because the first
+   * failure happens here, on a tunnel, not there.
+   */
+  const first = (v: string | string[] | undefined): string | undefined =>
+    (Array.isArray(v) ? v[0] : v)?.split(',')[0]?.trim();
+
+  app.addHook('onResponse', async (request, reply) => {
+    if (!TAC_WEBHOOK_PATHS.some((p) => request.url.startsWith(p))) return;
+    const proto = first(request.headers['x-forwarded-proto']) ?? 'https';
+    const host = first(request.headers['x-forwarded-host']) ?? first(request.headers.host) ?? '';
+    obsBus.publish({
+      kind: 'webhook.inbound',
+      summary: `${request.method} ${request.url} → ${reply.statusCode}`,
+      channel: 'sms',
+      payload: {
+        // Exactly the string TAC validates the signature against.
+        signedUrl: `${proto}://${host}${request.url}`,
+        statusCode: reply.statusCode,
+        hasSignature: request.headers['x-twilio-signature'] !== undefined,
+        eventType: (request.body as { eventType?: unknown } | undefined)?.eventType ?? null,
+      },
+    });
+  });
 
   /**
    * Emits a synthetic turn's worth of events.

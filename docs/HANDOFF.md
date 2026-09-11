@@ -32,12 +32,32 @@ POCs don't:
 All three land in **self-hosted Langfuse**. Its prompt `config` JSON is versioned with the prompt and
 is Langfuse's own documented home for `tools`/`tool_choice`/model params.
 
-## Status: T1–T11 done, all four spikes closed
+## Status: T1–T11 done, T12 code complete and unverified, all four spikes closed
 
 ```
 pnpm typecheck   → 0          (TS 7.0.2, node project + web project)
-pnpm test        → 227 passed, 13 files
+pnpm test        → 228 passed, 13 files
 ```
+
+**T12 IS DONE AND PROVEN AGAINST REAL SMS.** Two live turns on `+15805630929`, measured:
+
+```
+turn 1  "Where is order a4721"                    ttft 1599ms  total 1979ms  2 steps  1 tool (lookup_order)  93 chars
+turn 2  "what was the order number I just        ttft 1661ms  total 1766ms  1 step   0 tools                 5 chars
+         asked about?"          → "A4721"
+both turns: conversationId conv_conversation_01m28kmbk4f7dawyafmmsehn36  (one CO conversation)
+```
+
+**Turn 2 is the assertion that matters, and `0 tool calls` is why.** The question contains no order
+number, so the answer cannot have come from a tool — it came from `server/agent/history.ts`. An
+amnesiac agent passes every other check in this repo.
+
+TTFT on SMS (1599 ms) is consistently *lower* than the bench measured minutes earlier on the same model
+and prompt (2189–2624 ms). Unexplained; not chased, per the deferred-latency decision.
+
+**Still unverified:** the Langfuse trace tree for SMS. Colima was wedged
+(`vz driver is running but host agent is not`), so the stack could not start. Everything else below was
+run.
 
 | | State |
 |---|---|
@@ -336,24 +356,37 @@ without each one. It is committed and a test fails if the code reads a variable 
 What follows is only what that file cannot tell you — how to *check* a value before the app depends
 on it, verified by running each command.
 
-**Verify credentials with the Twilio CLI, not with this app.** When T12/T13 land you want to be
-debugging one new thing, not two. All of these are read-only; none place a call or send a message.
+**Verify credentials with `twil`, not with this app.** When T12/T13 land you want to be debugging one
+new thing, not two. All of these are read-only; none place a call or send a message.
+
+**Use `twil` (`~/bin/twil`) — the official `twilio` CLI is UNINSTALLED.** It never covered
+Conversation Orchestrator or memory stores, which is why earlier revisions of this table fell back to
+raw curl for those two rows. `twil-ask` is the same binary for **mutations**: it bypasses the
+interactive-TTY gate and raises a permission prompt instead. `twil docs` is also the documentation
+source — search it before diagnosing any Twilio error, rather than reasoning from memory. Don't
+confuse `twil` with `twl`, the Raspberry Pi deploy CLI.
 
 | Question | Command |
 |---|---|
-| Which credentials is the CLI even using? | `twilio profiles:list` |
-| Do the key and secret authenticate? | `twilio phone-numbers:list` |
-| What is my `TWILIO_PHONE_NUMBER`? | same — gives E.164 plus voice/SMS capability per number |
-| Do I have a CO configuration? | `curl -s -u "$TWILIO_API_KEY:$TWILIO_API_SECRET" https://conversations.twilio.com/v2/ControlPlane/Configurations` |
-| Which Studio flow for handoff? | `twilio api:studio:v2:flows:list` — needs one whose status is `published` |
-| Is the auth token good? | `curl -o /dev/null -w '%{http_code}' -u "$TWILIO_ACCOUNT_SID:<token>" "https://api.twilio.com/2010-04-01/Accounts/$TWILIO_ACCOUNT_SID/IncomingPhoneNumbers.json?PageSize=1"` |
+| Which credentials is the CLI even using? | `twil profiles list` |
+| Do the key and secret authenticate? | `twil api core incoming-phone-numbers list` |
+| What is my `TWILIO_PHONE_NUMBER`? | same — JSON is **snake_case** (`phone_number`, `sms_url`, `capabilities`) |
+| Do I have a CO configuration? | `twil api conversations configurations list` |
+| Which memory store? | `twil api memory stores list` |
+| Which Studio flow for handoff? | `twil api studio flows.v2 list` — bare `flows` is **not** a command; needs status `published` |
+| Is the number 10DLC-registered? | `twil api messaging services list`, then `… services phone-numbers list --service-sid MG…` |
+| Is the auth token good? | `twil webhook invoke` at the running app — a **403** means the token is wrong, and it costs nothing |
 
-### 1. `twilio api:core:accounts:list` 401s on a good key
+### 1. `accounts list` 401s on a good key — and it is the KEY, not the CLI
 
 The obvious "are my credentials working" command returns **HTTP 401, error 70004** — *"the provided
 key does not have the permissions to access this endpoint"* — against a **restricted** API key, while
 the same key lists phone numbers fine. Measured on this account, and it reads as *"my credentials are
-wrong"*, which sends you rotating keys that were never the problem. Use `phone-numbers:list`.
+wrong"*, which sends you rotating keys that were never the problem.
+
+Re-confirmed under `twil`: `twil api core accounts list` returns the same 70004 **even with
+`--profile Dtolb-Twilio`**, while `twil api conversations configurations list` succeeds. Changing CLI
+does not help — prove credentials with an endpoint that works.
 
 ### 2. Three Twilio variables are exported by the shell profile on this machine
 
@@ -375,18 +408,126 @@ construction without it.
 **Setting these today changes nothing** — T12/T13 are unbuilt, so there is no code path that reads them
 into a channel yet. Gathering them is preparation, not wiring.
 
-## Next task: T12, TAC boot for SMS
+## T12, TAC boot for SMS — what was built, and the nine ways the plan was wrong
 
-The first task that needs Twilio credentials. `registerChannel(smsChannel)`, `memoryMode: 'always'`,
-`onMessageReady` returns a **string** and must never throw (TAC swallows and only logs those —
-footgun #4), and our routes go onto `server.fastify` **before** `start()`.
+New: `server/twilio/{tac,messaging}.ts`, `server/obs/conversations.ts`, `server/agent/deps.ts`.
+Changed: `server/index.ts`, `server/http/app.ts`, `server/config.ts`, `server/http/routes-bench.ts`.
 
-Read plan footguns #2, #3, #4, #9 and #22 first. In particular `new SMSChannel(tac)` **throws at
-construction** without `conversationConfigurationId`, and `TACConfig.fromEnv()` throws on any of five
-missing variables — so both are reachable only once `config.twilio !== null`.
+**How an inbound SMS reaches us — this is the part most likely to be assumed wrong.** Not the phone
+number's `sms_url`, and not a Messaging Service inbound webhook. It is the **Conversation Orchestrator
+configuration's `statusCallbacks[].url`** pointing at `POST /webhook`, plus **bidirectional**
+`channelSettings.SMS.captureRules` binding the number (`{from:'*',to:NUMBER}` and
+`{from:NUMBER,to:'*'}` — the outbound rule is what threads our reply back into the conversation).
+Proven by flight-sandbox, whose working number sits in a Messaging Service with an *empty* inbound
+webhook. TAC's `/webhook` expects a CO **event envelope**, not a Twilio form POST; send it the wrong
+shape and you get `200` plus `Unhandled event type` and total silence. Editing an existing CO
+configuration is a **full-replace PUT** where every omitted mutable field is deleted.
+
+Nine corrections to the approved plan, each verified by executing it against the installed 2.2.0:
+
+1. **`TWILIO_VOICE_PUBLIC_DOMAIN` is NOT required for SMS.** `TACServer`'s guard is
+   `voiceChannel && !voicePublicDomain`, and `voiceChannel` is undefined when none was registered.
+2. **Use `new TACConfig({...})`, not `TACConfig.fromEnv()`.** `fromEnv()` reads `process.env`, which
+   would be a *second* place the environment is read. The constructor takes values directly. Pass
+   `voiceWebsocketPath`/`voiceActionPath`/`voiceCallEventPath` as **`undefined`** — they are
+   `z.preprocess` wrapping `.default()`, so the key is required while a value is not.
+3. **`server/config.ts` now validates the CO id and Flow SID shapes**, because TAC re-validates both
+   and throws a raw `ZodError` at construction. `conv_configuration_` + **26** lowercase alphanumerics;
+   `FW` + 32 **lowercase** hex. A typo'd value would otherwise report `sms:true` and then kill boot.
+4. **`TAC.create()` MAKES A NETWORK CALL** (GETs the CO configuration) and rethrows, so it sits on the
+   boot path and can fail for reasons outside the process. It is wrapped; failure logs loudly and falls
+   through to `app.listen()` so `/health` and `/bench` survive.
+5. **`TACServer.start()` calls `listen()` itself**, so `server/index.ts` has two mutually exclusive
+   boot paths and only one of them calls `app.listen()`.
+6. **Shutdown uses `preClose`, NOT `onClose`, and NOT TAC's `gracefulShutdown` callback.** This
+   contradicts plan footgun #9 and it matters: avvio's `onClose` queue is **LIFO**
+   (`_closeQ.unshift`), and fastify registers its own server-closing hook *later*, so ours would run
+   **last** — after `server.close()`. But `obs.shutdown()` is what ends the SSE responses
+   `server.close()` is waiting on, so it deadlocks against itself. `fastify-graceful-shutdown`'s 10 s
+   watchdog then `process.exit(1)`s and **the telemetry flush never runs**. `preClose` runs inside
+   fastify's internal onClose, *before* `server.close()`, and is FIFO. `forceCloseConnections: true`
+   was added for the same reason — `keepAliveTimeout` is 72 s and Next's dev rewrite proxy holds a
+   socket open on every `/bench` visit.
+7. **`registerChannel(smsChannel)` MUST precede `new TACServer(...)`.** The constructor *snapshots*
+   channels and `setupRoutes` registers `/webhook` only `if (webhookChannels.length > 0)`. Wrong order
+   → inbound SMS 404s with nothing but `No channels configured for webhook processing`.
+8. **SMS gets NO `abortSignal` from TAC** — only voice's `prompt` path supplies one. We synthesize
+   `AbortSignal.timeout(SMS_TURN_TIMEOUT_MS)`, because an unbounded turn leaves `llm.stream` unended
+   and an unended span never reaches Langfuse. **And abort must be handled differently from voice:**
+   `runTurn` keeps a partial answer because *on voice the caller heard those words*. On SMS nothing was
+   delivered, so sending the partial would text the customer a sentence that stops mid-word. An
+   aborted SMS turn therefore sends the fallback and publishes an `error` — on SMS, `aborted` can only
+   mean our own timeout.
+9. **`memoryMode: 'never'`, NOT the plan's `'always'`.** With `'always'` TAC folds a
+   `## Recent Message History` block of `User:`/`Assistant:` lines built from Recall scoped to the
+   *current* conversation — which `server/agent/history.ts` already puts into the model's messages. The
+   model would see every conversation **twice, in two formats**. Note the round-trip is *not* the
+   reason to avoid it: TAC Recalls before invoking our callback either way, so discarding costs the
+   same. **T14 owns turning memory on properly**, with `MemoryPromptBuilder.build` (which also supplies
+   the profile-traits section a hand-rolled `buildMemoryPrompts().join()` drops) and the current
+   conversation excluded from communications.
+
+Also worth knowing: **`onMessageReady` lives on `TAC`, not on the channel** — single-slot and global
+across channels, so T13 must branch on `channel` rather than registering a second one. Returning `''`
+is a silent no-reply (`Callback returned empty string, skipping auto-send`), and a thrown error is
+caught and only logged, so `handleInboundMessage` never throws and never returns `''`. Four other
+things can drop an inbound SMS and **all of them log rather than raise**: idempotency-token dedup, the
+`lastCommunicationId` guard, participant-reconciliation failure (`dropped_inbound: true`), and the
+`author.channel` filter.
+
+**The `webhook.inbound` diagnostic in `http/app.ts` is the highest-value fifteen lines here.** The most
+likely first-SMS failure is a 403 on signature validation, which TAC reports as one `log.warn` with no
+obs event — indistinguishable from a Twilio outage. The hook publishes the **exact URL TAC signs
+against** (rebuilt from `X-Forwarded-Proto`, defaulting to `https`, then `X-Forwarded-Host`/`Host`).
+Nothing on the bus → CO is not calling us, so the configuration is wrong, not the code. A 403 with a
+URL → the URL says which half is wrong.
+
+### What the live run actually proved, and two things it corrected
+
+- **Conversation Orchestrator signs with the JSON path.** Every inbound arrived as
+  `POST /webhook?bodySHA256=<sha256 of body>`, so TAC takes the `validateRequestWithBody` branch
+  against `request.rawBody` — which only exists because `start()` installs the parser that stashes it.
+  Do not "simplify" that parser away.
+- **Our own outbound reply comes back to us as another `webhook.inbound`.** That is the *outbound*
+  capture rule (`{from: NUMBER, to: '*'}`) working as intended, not a loop. TAC's
+  `isDefaultAgentAddress` filter is what stops the agent answering itself, and it compares against
+  `TACConfig.phoneNumber` — so a wrong-but-present number there would make the agent reply to its own
+  messages. Nothing validates its shape inside TAC.
+- **A signed simulated webhook is a genuinely free pre-flight.** `twil webhook invoke --type sms <url>
+  --auth-token <token>` returned **200** and was then rejected by TAC on payload *shape*
+  (`Invalid webhook payload`) rather than on signature. That is a pass: it proves the route, the
+  preHandler, and the auth token together, before spending anything. Note `--auth-token` is
+  **required** — the CLI profile holds an API key, and Twilio signatures use the account auth token.
+- **The new CO configuration has `memoryExtractionEnabled: false`.** Irrelevant at T12
+  (`memoryMode: 'never'`), but T14 must flip it or Conversation Memory will silently extract nothing.
+
+### T12: what is left
+
+1. **Langfuse trace tree for SMS** — blocked on Docker. `colima start` failed with `vz driver is
+   running but host agent is not`; needs `colima stop && colima start` (not run, because it could
+   disturb other containers). Then check via Playwright MCP that both turns sit in ONE
+   `conversation.sms` trace with the model calls nested *inside* their `turn.sms` spans.
+2. **Re-run the TAC-free proof, which is no longer trivial:** move `node_modules/twilio-agent-connect`
+   aside and drive a `/bench` turn *both* with credentials absent (the dynamic import never evaluates)
+   and with credentials present (the import rejects, the try/catch degrades, the bench still serves).
+   The second case is the stronger one and only exists because of the try/catch in `index.ts`.
+3. **The ngrok host is baked into the CO configuration's `statusCallbacks`.** It dies on ngrok restart,
+   and fixing it means a full-replace PUT. Repoint per session until T15 gives a stable host.
 
 **Ask before running anything that places a real call or sends a real SMS** — those are billed, and
 the standing convention in this repo is not to do it unprompted.
+
+### T13 prerequisites discovered while doing T12
+
+- **Register `fastify-graceful-shutdown` ourselves, with a larger timeout, before `start()`.** TAC
+  registers it with **no options**, so the force-exit is the plugin's 10 s default — while TAC's own
+  handler waits up to **30 s** for WebSockets to close. With one open WS at SIGTERM the process is
+  hard-killed before `fastify.close()`, so the `preClose` flush never runs. SMS opens no WebSockets, so
+  this cannot bite yet; voice will. TAC's `hasDecorator` guard means our registration wins.
+- **Voice `captureRules` must stay EMPTY** in the CO configuration — re-adding them double-bills STT
+  under ConversationRelay.
+- **Do NOT `registerChannel(voiceChannel)`** (plan footgun #2, still true), and voice needs
+  `TWILIO_VOICE_PUBLIC_DOMAIN`, which SMS did not.
 
 ## Gaps and honest limits
 

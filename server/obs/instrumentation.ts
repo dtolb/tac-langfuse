@@ -61,9 +61,27 @@ if (!publicKey || !secretKey || !baseUrl) {
     flushed = true;
     void flush();
   };
+
+  /**
+   * `beforeExit` ONLY. Do NOT add SIGTERM/SIGINT handlers here.
+   *
+   * This file is a `--import` preload, so anything it registers on a signal runs BEFORE the
+   * application's own handler — Node dispatches signal listeners in registration order. This block
+   * used to register SIGTERM/SIGINT as a "backstop", and with TAC in the picture that became an active
+   * bug rather than insurance:
+   *
+   *   SIGTERM → this handler starts `sdk.shutdown()` (which flushes AND tears the provider down)
+   *           → concurrently, fastify-graceful-shutdown runs `fastify.close()` → our `preClose` hook
+   *             ends the open `conversation.sms` / `conversation.bench` root spans and flushes.
+   *
+   * Whichever wins the race, the root spans are ENDED AFTER the provider was shut down — and a span
+   * ended on a dead provider is silently dropped. The symptom is the exact one this module's sibling
+   * `spans.ts` warns about: turns present in Langfuse with no conversation to hang from.
+   *
+   * `server/index.ts` owns signal shutdown on both boot paths now, and both end spans BEFORE calling
+   * `flushTelemetry()` — which `forceFlush`es without tearing down, so ordering is preserved. This
+   * `beforeExit` remains for exits that were never signalled at all (an empty event loop, a script
+   * that just finishes), where nothing else would flush.
+   */
   process.once('beforeExit', once);
-  // Note: index.ts owns SIGTERM/SIGINT and calls flushTelemetry() before closing the server; this
-  // is the backstop for paths that bypass it.
-  process.once('SIGTERM', once);
-  process.once('SIGINT', once);
 }

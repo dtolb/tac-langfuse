@@ -50,23 +50,74 @@ preflightDefaultPromptTools();
 
 const { app, obs, bench } = buildApp({ config, caps });
 
-const shutdown = async (signal: string): Promise<void> => {
-  log.info({ signal }, 'shutting down');
-  obs.shutdown(); // close SSE clients before the server, so they get a clean end
-  // End the bench's open conversation roots BEFORE the flush, and the ordering is the whole point:
-  // an unended span does not reach Langfuse at all, so flushing first would ship every turn while
-  // silently dropping the conversation they hang from — a tree with no root.
-  bench.shutdown();
-  // Flush BEFORE closing: the last turn of a demo is usually the one being asked about, and an
-  // unflushed span never reaches Langfuse at all.
-  await flushTelemetry();
-  await app.close();
-  process.exit(0);
-};
-// TAC registers fastify-graceful-shutdown and its own signal handling once TACServer owns this
-// instance (T12). At that point this moves into TAC's shutdown callback so OTel is flushed
-// exactly once rather than twice.
-process.on('SIGTERM', () => void shutdown('SIGTERM'));
-process.on('SIGINT', () => void shutdown('SIGINT'));
+/** Set once TAC boots, so cleanup can end its conversation roots too. */
+let tacShutdown: (() => void) | null = null;
 
-await app.listen({ host: '0.0.0.0', port: AGENT_PORT });
+/**
+ * ALL cleanup, in one `preClose` hook — and `preClose` specifically, not `onClose`.
+ *
+ * This is the single most easily-got-wrong thing in this file, so the reasoning is written out.
+ * Fastify runs `preClose` hooks FIFO, inside its own internal `onClose`, and crucially BEFORE
+ * `server.close()`. An `onClose` hook would be wrong twice over:
+ *
+ *  1. avvio's `onClose` queue is LIFO (`_closeQ.unshift`), and fastify registers its own
+ *     server-closing hook LATER than anything we add here — so ours would run LAST, after
+ *     `server.close()`. But `obs.shutdown()` is what ends the SSE responses that `server.close()`
+ *     is waiting on, so it would deadlock against itself.
+ *  2. Once TAC owns the instance, `fastify-graceful-shutdown` arms a 10-second watchdog that
+ *     `process.exit(1)`s regardless. Anything queued behind a stalled `server.close()` never runs,
+ *     so the telemetry flush would be silently skipped — and an unflushed span never reaches
+ *     Langfuse at all.
+ *
+ * The ORDER inside is also deliberate and unchanged from before TAC existed: end conversation roots
+ * BEFORE flushing, because an unended span does not reach Langfuse either — flushing first would ship
+ * every turn while dropping the conversation they hang from, leaving a tree with no root.
+ */
+app.addHook('preClose', async () => {
+  obs.shutdown(); // close SSE clients first, so they get a clean end rather than a severed socket
+  bench.shutdown();
+  tacShutdown?.();
+  await flushTelemetry();
+});
+
+/**
+ * Two boot paths, because TAC's `start()` calls `listen()` ITSELF — so exactly one of these may run.
+ *
+ * The import is DYNAMIC on purpose. `server/twilio/tac.ts` is the only file that imports
+ * `twilio-agent-connect`, and a static import here would load TAC into every process, including the
+ * ones that have no Twilio credentials. That would quietly demote the Twilio-free bench from a runtime
+ * proof to a claim about import strings.
+ *
+ * The try/catch is what keeps "boot never hard-fails" true now that a network call sits on the boot
+ * path: `TAC.create` GETs the Conversation Orchestrator configuration and rethrows, so a Twilio blip, a
+ * corporate TLS proxy, or a CO id that is well-formed but does not exist would otherwise take down
+ * /health and /bench along with SMS. Degrading instead also makes the stronger TAC-free check
+ * runnable — credentials present, TAC unresolvable, bench still serving.
+ */
+if (caps.sms) {
+  try {
+    const { bootTacSms } = await import('./twilio/tac.ts');
+    const tac = await bootTacSms({ app, config, turn: bench.turnDeps() });
+    tacShutdown = tac.shutdown;
+    await tac.start(); // binds the port
+  } catch (err) {
+    log.error(
+      { err },
+      'tac: SMS boot FAILED — the agent is still serving /health and /bench, but no SMS will be answered. Check TWILIO_CONVERSATION_CONFIGURATION_ID exists on this account and that Twilio is reachable.',
+    );
+    await app.listen({ host: '0.0.0.0', port: AGENT_PORT });
+  }
+} else {
+  // No Twilio: we own the socket, and we own the signals. TAC would otherwise register
+  // fastify-graceful-shutdown and its own SIGTERM/SIGINT handling, and a second pair here would mean
+  // two shutdown paths racing (footgun #9).
+  const shutdown = async (signal: string): Promise<void> => {
+    log.info({ signal }, 'shutting down');
+    await app.close(); // runs the preClose hook above
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+
+  await app.listen({ host: '0.0.0.0', port: AGENT_PORT });
+}

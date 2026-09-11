@@ -14,7 +14,8 @@ const VALID: Env = {
   TWILIO_API_SECRET: 'y'.repeat(32),
   TWILIO_PHONE_NUMBER: '+15551234567',
   TWILIO_VOICE_PUBLIC_DOMAIN: 'scaffold.twilio.dtolb.com',
-  TWILIO_CONVERSATION_CONFIGURATION_ID: 'conv_configuration_abc',
+  // 26 lowercase alphanumerics after the prefix — TAC's own schema enforces that shape.
+  TWILIO_CONVERSATION_CONFIGURATION_ID: 'conv_configuration_01abcdefghijklmnopqrstuvwx',
   TWILIO_STUDIO_HANDOFF_FLOW_SID: 'FW' + '0'.repeat(32),
   OPENAI_API_KEY: 'sk-proj-test',
   LANGFUSE_BASE_URL: 'http://localhost:3100',
@@ -152,4 +153,12 @@ test('unavailable() names the offending variables for the 503 body', () => {
   const body = unavailable(c, 'agent');
   expect(body.error).toBe('not_configured');
   expect(body.missing.map((m) => m.name)).toContain('OPENAI_API_KEY');
+});
+
+test('a malformed CO id degrades instead of reporting sms:true and crashing TAC at boot', () => {
+  // The only case worth a test here: TAC re-validates this id and throws a raw ZodError at
+  // construction, so a `true` from capabilities() on a typo'd value is what takes boot down.
+  const c = loadConfig({ ...VALID, TWILIO_CONVERSATION_CONFIGURATION_ID: 'conv_configuration_abc' });
+  expect(c.conversationConfigurationId).toBeNull();
+  expect(capabilities(c).sms).toBe(false);
 });
