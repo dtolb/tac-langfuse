@@ -192,6 +192,28 @@ on, and exits non-zero on a surprise so it doubles as a smoke check.
 The flip itself is a **full-replace PUT**: GET the entire configuration body first, change one boolean,
 send everything back. Every omitted mutable field is deleted.
 
+**Back the configuration up before the PUT, and prove the backup is good before trusting it.** Sequence:
+
+```
+GET the full configuration body
+   └─ write it VERBATIM to .superpowers/t14/co-config-<id>-<utc-timestamp>.json
+        └─ re-read that file and confirm it parses and still contains every
+           top-level key the response had          ← do this BEFORE the PUT
+             └─ only then send the PUT
+```
+
+The re-read is not ceremony. A truncated or half-written backup is *worse* than none, because it reads as
+recoverable right up until the moment it is needed. This repo's rule is to prove a guard bites before
+trusting it, and the cheap version of that here is confirming the file round-trips.
+
+Recovery is then a single operation: PUT the saved body back, unchanged. It is the exact pre-flip state,
+so the undo needs no reconstruction and no judgement.
+
+`.superpowers/` is gitignored, which is the right place: the body carries the account's own configuration
+ids, and HANDOFF is explicit that account-specific ids must not be committed — this repo is cloned per
+demo, so a committed body hands the next clone another account's values looking authoritative. Do **not**
+put the backup in `/tmp`; it needs to outlive a reboot.
+
 **Constraints that will bite.**
 - `twil` has no update verb for this endpoint, and `twil … fetch` renders only `id` and `displayName` even
   with `--output json`. GET the full body with `curl`.
@@ -200,7 +222,8 @@ send everything back. Every omitted mutable field is deleted.
   them.
 - TAC caches the configuration at boot, so the agent must be restarted before the flip is observable to
   the process.
-- The mutation is a billable-adjacent account change: **ask before sending the PUT.**
+- The PUT is a live account mutation. It is **authorized for T14** (see Task 7's note on authorization),
+  but it is authorized *with* the backup above, not instead of it.
 
 **Done when.** The script reports `memoryExtractionEnabled: true` against a store that exists, and prints
 the current observation count as a baseline for Task 7 to compare against.
@@ -350,7 +373,14 @@ passthrough port and the three shipped tools; and a turn on either channel repor
 
 ### Task 7 — the live proof
 
-**Billed traffic. Ask before every part of this.**
+**Billed traffic, pre-authorized for T14.** The repo owner has granted standing authorization for the
+calls and messages this task needs — no per-step confirmation. That authorization is his to give for *this*
+account and is deliberately **not** recorded as a property of the scaffold: this repo is cloned per demo,
+and a committed "traffic is free" hands the next clone a permission its owner never granted. HANDOFF's
+general convention stays as it is for that reason.
+
+Two things authorization does not remove: run the free checks first (they catch most failures at no cost),
+and keep the account mutation in Task 1 behind its backup.
 
 **Goal.** Distinguish memory from history, which no other check in the repo can do.
 
@@ -412,5 +442,9 @@ the two-conversation proof written out as the repeatable procedure it now is.
   cost needs a real call; extraction needs the store read directly. None substitutes for another.
 - **Comments explain why and cite what was measured.** Several existing comments are being replaced
   precisely because they explained a mechanism nobody had checked.
-- **Ask before billed traffic** — Task 1's PUT, and all of Task 7.
+- **Billed traffic is authorized for T14** (Task 7). Still run the free checks first — a failure caught by
+  the compose-port unit test costs nothing, and the same failure caught by an SMS round-trip costs a
+  five-minute close wait before it even becomes visible.
+- **Back up before any account mutation, and verify the backup round-trips before relying on it** (Task 1).
+  Authorization to change something is not the same as being able to change it back.
 - **One review pass at the end**, over the whole change, rather than per task.
