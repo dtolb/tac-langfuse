@@ -268,12 +268,14 @@ test('the factory produces exactly the two adapted tools, each gated on its capa
   expect(tools.map((t) => t.requires)).toEqual(['memory', 'knowledge']);
 });
 
-test('the two deliberate omissions stay omitted', () => {
+test('send_message stays omitted, and handoff is no longer one of the omissions', () => {
   // `send_message` is redundant with streaming, throws SYNCHRONOUSLY on a closed socket, and is the
   // UNKNOWN-TOOL FIXTURE in tests/tools.test.ts — adding it for real turns two passing tests red for
-  // a reason unrelated to what they assert. `handoff` is T14b, blocked on the Studio flow SID.
+  // a reason unrelated to what they assert.
   const names = adapt().map((t) => t.name);
   expect(names).not.toContain('send_message');
+  // `handoff` landed at T14b, and it is NOT built by `adaptBuiltInTools`: it needs the voice channel
+  // rather than just `tac`, so `server/twilio/tac.ts` builds it and `tests/handoff.test.ts` owns it.
   expect(names).not.toContain('handoff');
 });
 

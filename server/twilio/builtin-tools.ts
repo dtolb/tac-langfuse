@@ -47,8 +47,9 @@
  * `'send_message'` is the UNKNOWN-TOOL FIXTURE in `tests/tools.test.ts`, so making it a real tool
  * turns two passing tests red for a reason that has nothing to do with what they assert.
  *
- * `handoff` — deferred to T14b. Blocked on the first of TAC's three construction guards,
- * `TWILIO_STUDIO_HANDOFF_FLOW_SID`, which is unset on this account. Guards 2 and 3 already pass.
+ * `handoff` — NOT here, and no longer deferred. It landed at T14b in `./handoff.ts`, built by
+ * `./tac.ts` rather than by this factory, because it needs `getConversationSession` off the CHANNEL
+ * (public on `BaseChannel`, absent from `TAC`) and this factory only receives `tac`.
  *
  * `createKnowledgeSearchToolAsync` — NOT used. It derives the tool's name and description by GETting
  * the knowledge base AT CONSTRUCTION, which under lazy construction would put a network call inside

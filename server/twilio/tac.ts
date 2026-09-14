@@ -52,6 +52,7 @@ import { resolve } from '../agent/tools/resolve.ts';
 import type { TurnDeps } from '../agent/types.ts';
 import type { App } from '../http/types.ts';
 import { adaptBuiltInTools } from './builtin-tools.ts';
+import { handoffTool } from './handoff.ts';
 import { createTacMemoryPort } from './memory-compose.ts';
 import { handleInboundMessage } from './messaging.ts';
 import {
@@ -195,11 +196,41 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
    * mutable global on the seam whose whole purpose is injection.
    * ══════════════════════════════════════════════════════════════════════════════════════════════
    */
+  /** Ended in `shutdown()`. Voice's is also ended per-call on `webSocketDisconnected`. */
+  const registries: ConversationRegistry[] = [];
+  /**
+   * Non-null only when voice is configured; `shutdown()` must clean it up itself. See below.
+   *
+   * Declared HERE, above the tool catalog, rather than beside the channel wiring it belonged to until
+   * T14b.2: the `handoff` tool closes over a getter that reads this binding, and a `let` declared
+   * after that closure is a temporal-dead-zone `ReferenceError` on the first transfer rather than a
+   * type error at build. None of the four ORDER IS LOAD-BEARING rules in the header involve these two
+   * declarations — those are about `app.register`, `registerChannel` and `new TACServer`, every one of
+   * which is still below this point and still in the same relative order.
+   */
+  let voiceChannel: VoiceChannel | null = null;
+
   // `knowledgeBaseId` is passed EXPLICITLY because it is not reachable through `tac`: `TAC.create`
   // reads exactly one field off the fetched Conversation Orchestrator configuration —
   // `memoryStoreId` — and never a knowledge base. Discovered while building the adapters.
   const builtInTools = adaptBuiltInTools({ tac, knowledgeBaseId: config.knowledgeBaseId });
-  const catalog = createToolCatalog([...SHIPPED_TOOLS, ...builtInTools]);
+  /**
+   * `handoff` is built here rather than inside `adaptBuiltInTools` because it needs the CHANNEL, not
+   * just `tac`: `getConversationSession` is public on `BaseChannel` and absent from `TAC`. The voice
+   * channel is constructed below, so the tool closes over a getter rather than the object — a plain
+   * reference would capture `null`.
+   *
+   * Included even when `caps.voice` is false: `requires: 'handoff'` is the gate, and building the
+   * catalog identically on every process keeps `catalog.names` honest in the boot log and in
+   * `/health`. With no voice channel the getter returns undefined and the tool reports a miss.
+   */
+  const handoff = handoffTool({
+    tac,
+    sessions: {
+      getConversationSession: (conversationId) => voiceChannel?.getConversationSession(conversationId as never),
+    },
+  });
+  const catalog = createToolCatalog([...SHIPPED_TOOLS, ...builtInTools, handoff]);
   const turnDeps: TurnDeps = {
     ...turn,
     // T8's resolver, re-bound to the AUGMENTED catalog. `caps` rather than a fresh
@@ -219,6 +250,7 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
     {
       shippedTools: SHIPPED_TOOLS.map((t) => t.name),
       builtInTools: builtInTools.map((t) => t.name),
+      handoffTool: handoff.name,
       catalog: catalog.names,
     },
     `tac: tool catalog augmented with ${builtInTools.length} TAC built-in(s)`,
@@ -240,11 +272,6 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
    * plugin installs its own listeners (warning loudly if it finds any already there).
    */
   await app.register(gracefulShutdown, { timeout: TAC_SHUTDOWN_TIMEOUT_MS });
-
-  /** Ended in `shutdown()`. Voice's is also ended per-call on `webSocketDisconnected`. */
-  const registries: ConversationRegistry[] = [];
-  /** Non-null only when voice is configured; `shutdown()` must clean it up itself. See below. */
-  let voiceChannel: VoiceChannel | null = null;
 
   if (caps.sms) {
     /**
