@@ -82,6 +82,17 @@ What you remember about this caller
   monitor arm — is that the one?" rather than assuming it still holds.
 - If it is empty or absent, this is simply the first time you have spoken. Do not mention that.
 
+How to hand off to a person
+- Use handoff when the caller asks to speak to a person, or when they are upset enough that a
+  person should take over. Then say one short line telling them you are putting them through, and
+  nothing else.
+- Do not use handoff because a question is hard. Look it up first: policy questions are answered by
+  search_knowledge, order questions by lookup_order. Transferring instead of looking something up
+  is the one thing that makes this worse than a search.
+- Do not offer a transfer unprompted just because you could not answer something. Say what you do
+  not know, offer to have someone follow up, and let the caller ask for a person if they want one.
+- handoff is not how you end a finished call — that is end_call. Never call both.
+
 How to end the call
 - A phone call has to be hung up by someone, and on this channel that is you. Use end_call.
 - Call end_call when the caller has clearly finished: they say goodbye, they say that is everything
@@ -151,9 +162,17 @@ export const DEFAULT_PROMPTS: Readonly<Record<PromptName, DefaultPrompt>> = {
     messages: [{ role: 'system', content: VOICE_SYSTEM }],
     config: {
       model: 'gpt-5.4-mini',
-      // `end_call` is voice-only — it is what lets the agent hang up, and the text prompt must not
-      // name it. Note it costs a step: the model calls it and then speaks the goodbye, so a closing
-      // turn uses two of the four below.
+      // `end_call` and `handoff` are both voice-only — one hangs up, the other transfers — and the text
+      // prompt must not name either. Note each costs a step: the model calls the tool and then speaks
+      // one line, so a closing or transferring turn uses two of the three below.
+      //
+      // `handoff` is voice-only for a REASON, not by omission. TAC's tool branches internally and its
+      // digital branch works, but it sets the conversation INACTIVE and clears its status callbacks
+      // BEFORE the POST that can fail, and TAC has no `'ACTIVE'` write and no inverse for
+      // `clearStatusCallbacks` anywhere. On SMS a failed handoff therefore leaves a customer whose next
+      // text reaches nothing. Sending the frame (`server/twilio/voice.ts`) is what mitigates that
+      // failure path on voice; nothing mitigates it on SMS. Naming it in the text prompt is a one-line
+      // change once a text-transfer destination exists and that failure path has been re-verified.
       //
       // `retrieve_profile_memory` is deliberately NOT here, though it resolves on this channel.
       // Memory already arrives in the system prompt every turn — `memoryMode: 'once'` recalls it and
@@ -161,7 +180,7 @@ export const DEFAULT_PROMPTS: Readonly<Record<PromptName, DefaultPrompt>> = {
       // the model can already read, at the price of a step, and a step on this channel is silence.
       // The text prompt names it, where the trade is different. Add it here only if a real call shows
       // the model needing a date-ranged lookup the folded block cannot answer.
-      tools: ['lookup_order', 'get_store_hours', 'search_knowledge', 'end_call'],
+      tools: ['lookup_order', 'get_store_hours', 'search_knowledge', 'end_call', 'handoff'],
       toolChoice: 'auto',
       // 3 rather than the schema's 4: every extra step is silence on a live call, and two tool
       // round-trips is already the edge of what a caller will wait through without speaking.

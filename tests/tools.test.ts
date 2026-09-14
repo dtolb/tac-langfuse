@@ -320,6 +320,11 @@ test('the boot preflight reports NO PROBLEM for the shipped defaults, and says w
     ),
   );
   expect(namedByDefaults.size).toBeGreaterThan(0);
+  // `handoff` specifically, because deriving the set above from the defaults is what made this test
+  // tolerant of a name that sits in TAC_TOOL_NAMES and no prompt names — which is the exact state
+  // T14b.1 left the repo in, and it means dropping T14b.8's one-line prompt edit would fail nothing.
+  // Both the T14b.1 implementer and its reviewer flagged that independently. This is the pin.
+  expect(namedByDefaults).toContain('handoff');
   for (const name of namedByDefaults) expect(logger.lines[0]?.msg).toContain(name);
 });
 
