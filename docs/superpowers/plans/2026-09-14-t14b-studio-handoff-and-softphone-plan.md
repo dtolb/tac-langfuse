@@ -501,22 +501,7 @@ export function handoffSnapshotCount(): number {
 Run: `pnpm test -- tests/handoff.test.ts`
 Expected: PASS, 5 tests.
 
-- [ ] **Step 5: Write the failing test for the tool**
-
-Append to `tests/handoff.test.ts`:
-
-```ts
-import type { ConversationSession } from 'twilio-agent-connect';
-import { handoffTool, consumeHandoffRequest, forgetHandoffRequest } from '../server/twilio/handoff.ts';
-import type { ToolCtx, ToolLogger } from '../server/agent/tools/registry.ts';
-import { fakeTac } from './helpers/fake-tac.ts';
-
-const silentLogger: ToolLogger = { debug: () => {}, warn: () => {}, error: () => {} };
-const ctx = (conversationId: string): ToolCtx => ({
-  conversationId,
-  logger: silentLogger,
-  profileId: 'profile_test',
-});
+- [ ] **Step 5: Create the shared TAC fake**
 
 ⚠ **`fakeTac` goes in `tests/helpers/fake-tac.ts`, not inline.** `tests/voice.test.ts` needs the same
 fake in Task 3, and `vitest.config.ts` includes only `tests/**/*.test.ts`, so a helper file there is not
@@ -559,6 +544,24 @@ export const fakeTac = (over: { flowSid?: string | null; storeId?: string | null
   };
   return tac as unknown as TAC;
 };
+```
+
+- [ ] **Step 6: Write the failing test for the tool**
+
+Append to `tests/handoff.test.ts`:
+
+```ts
+import type { ConversationSession } from 'twilio-agent-connect';
+import { handoffTool, consumeHandoffRequest, forgetHandoffRequest } from '../server/twilio/handoff.ts';
+import type { ToolCtx, ToolLogger } from '../server/agent/tools/registry.ts';
+import { fakeTac } from './helpers/fake-tac.ts';
+
+const silentLogger: ToolLogger = { debug: () => {}, warn: () => {}, error: () => {} };
+const ctx = (conversationId: string): ToolCtx => ({
+  conversationId,
+  logger: silentLogger,
+  profileId: 'profile_test',
+});
 
 const voiceSession = (conversationId: string): ConversationSession =>
   ({
@@ -644,12 +647,12 @@ test('the mirror matches what TAC declares, so a schema drift is caught here', (
 });
 ```
 
-- [ ] **Step 6: Run it and watch it fail**
+- [ ] **Step 7: Run it and watch it fail**
 
 Run: `pnpm test -- tests/handoff.test.ts`
 Expected: FAIL — `Cannot find module '../server/twilio/handoff.ts'`.
 
-- [ ] **Step 7: Write the tool**
+- [ ] **Step 8: Write the tool**
 
 Create `server/twilio/handoff.ts`:
 
@@ -881,12 +884,12 @@ export function forgetHandoffRequest(conversationId: string): void {
 }
 ```
 
-- [ ] **Step 8: Run the tool tests**
+- [ ] **Step 9: Run the tool tests**
 
 Run: `pnpm test -- tests/handoff.test.ts`
 Expected: PASS, 10 tests.
 
-- [ ] **Step 9: Register the tool in the augmented catalog**
+- [ ] **Step 10: Register the tool in the augmented catalog**
 
 In `server/twilio/tac.ts`, add the import beside `adaptBuiltInTools`:
 
@@ -930,7 +933,7 @@ Then extend the `log.info` call at line 218 to include the new tool — it alrea
       handoffTool: handoff.name,
 ```
 
-- [ ] **Step 10: Flip the stale assertions and comments**
+- [ ] **Step 11: Flip the stale assertions and comments**
 
 In `tests/builtin-tools.test.ts`, replace the `handoff` half of the "two deliberate omissions" test
 (lines 271-278) with:
@@ -956,12 +959,12 @@ In `server/twilio/builtin-tools.ts`, replace lines 50-51:
  * (public on `BaseChannel`, absent from `TAC`) and this factory only receives `tac`.
 ```
 
-- [ ] **Step 11: Verify the whole suite**
+- [ ] **Step 12: Verify the whole suite**
 
 Run: `pnpm typecheck && pnpm test`
 Expected: PASS. Test count rises from 291 to ~302.
 
-- [ ] **Step 12: Commit**
+- [ ] **Step 13: Commit**
 
 ```bash
 git add server/handoff/snapshots.ts server/twilio/handoff.ts server/twilio/tac.ts \
