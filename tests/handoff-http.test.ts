@@ -3,7 +3,8 @@ import Fastify from 'fastify';
 import { capabilities, loadConfig } from '../server/config.ts';
 import { registerHandoffRoutes } from '../server/http/routes-handoff.ts';
 import { mintVoiceToken } from '../server/twilio/voice-token.ts';
-import { CLIENT_IDENTITY, VOICE_TOKEN_PATH } from '../shared/handoff.ts';
+import { recordHandoffSnapshot, forgetHandoffSnapshot } from '../server/handoff/snapshots.ts';
+import { CLIENT_IDENTITY, HANDOFF_CONTEXT_PATH, VOICE_TOKEN_PATH } from '../shared/handoff.ts';
 import type { App } from '../server/http/types.ts';
 
 const ACCOUNT_SID = 'AC' + 'a'.repeat(32);
@@ -85,4 +86,69 @@ test('a configured process whose minter was never injected 503s rather than 500s
   expect(res.statusCode).toBe(503);
   expect(res.json().error).toBe('not_configured');
   await app.close();
+});
+
+const withContextApp = async (fn: (app: App) => Promise<void>): Promise<void> => {
+  const app = Fastify() as unknown as App;
+  const config = loadConfig(fullEnv);
+  registerHandoffRoutes(app, { config, caps: capabilities(config) });
+  await fn(app);
+  await app.close();
+};
+
+test('the screen pop returns the reason, the transcript and a MASKED number', async () => {
+  recordHandoffSnapshot({
+    conversationId: 'conv_pop_1',
+    reason: 'caller asked for a person',
+    from: '+15557778888',
+    at: '2026-09-14T10:00:00.000Z',
+    transcript: [
+      { role: 'user', text: 'I want a human' },
+      { role: 'assistant', text: 'Putting you through.' },
+    ],
+  });
+
+  await withContextApp(async (app) => {
+    const res = await app.inject({ method: 'GET', url: `${HANDOFF_CONTEXT_PATH}?conversationId=conv_pop_1` });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body).toMatchObject({ found: true, match: 'exact', reason: 'caller asked for a person' });
+    // The transcript is VERBATIM by necessity — the human needs the real words. The NUMBER is not.
+    expect(body.transcript).toHaveLength(2);
+    expect(body.transcript[0]).toEqual({ role: 'user', text: 'I want a human' });
+    expect(body.maskedFrom).not.toBe('+15557778888');
+    expect(body.maskedFrom).toContain('8888');
+    expect(JSON.stringify(body)).not.toContain('+15557778888');
+  });
+
+  forgetHandoffSnapshot('conv_pop_1');
+});
+
+test('a caller-number lookup works, which is the Studio path', async () => {
+  recordHandoffSnapshot({
+    conversationId: 'conv_pop_2',
+    reason: 'upset caller',
+    from: '+15551112222',
+    at: '2026-09-14T10:00:00.000Z',
+    transcript: [],
+  });
+
+  await withContextApp(async (app) => {
+    const res = await app.inject({
+      method: 'GET',
+      url: `${HANDOFF_CONTEXT_PATH}?from=${encodeURIComponent('+15551112222')}`,
+    });
+    expect(res.json()).toMatchObject({ found: true, match: 'caller', reason: 'upset caller' });
+  });
+
+  forgetHandoffSnapshot('conv_pop_2');
+});
+
+test('an empty store answers 200 with found:false — never a 404', async () => {
+  // The page renders this state. A 404 would land in the browser console as a failed fetch instead.
+  await withContextApp(async (app) => {
+    const res = await app.inject({ method: 'GET', url: HANDOFF_CONTEXT_PATH });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ found: false, match: 'none', reason: null, transcript: [] });
+  });
 });

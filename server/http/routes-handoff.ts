@@ -1,8 +1,8 @@
 /**
  * The two routes the softphone page calls.
  *
- * `POST /api/voice/token`   — a Voice SDK AccessToken for `CLIENT_IDENTITY`
- * `GET  /api/handoff/context` — the screen pop (added in the next task)
+ * `POST /api/voice/token`     — a Voice SDK AccessToken for `CLIENT_IDENTITY`
+ * `GET  /api/handoff/context` — the screen pop: why the caller was transferred, and what was said
  *
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  * THIS FILE MUST NOT IMPORT `twilio` OR `twilio-agent-connect`.
@@ -14,8 +14,16 @@
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  */
 import { unavailable, type AppConfig, type Capabilities, type MissingVar } from '../config.ts';
+import { findHandoffSnapshot } from '../handoff/snapshots.ts';
 import { childLogger } from '../logging.ts';
-import { CLIENT_IDENTITY, VOICE_TOKEN_PATH, VOICE_TOKEN_TTL_SECONDS } from '../../shared/handoff.ts';
+import { maskPhone } from '../obs/pii.ts';
+import {
+  CLIENT_IDENTITY,
+  HANDOFF_CONTEXT_PATH,
+  VOICE_TOKEN_PATH,
+  VOICE_TOKEN_TTL_SECONDS,
+  type HandoffContextResponse,
+} from '../../shared/handoff.ts';
 import type { App } from './types.ts';
 
 const log = childLogger('handoff-http');
@@ -81,6 +89,46 @@ export function registerHandoffRoutes(
       identity: CLIENT_IDENTITY,
       ttlSeconds: VOICE_TOKEN_TTL_SECONDS,
     });
+  });
+
+  /**
+   * The screen pop. NO CAPABILITY GATE and NO 404 — it always answers 200 with a body the page can
+   * render, because `found: false` is a state the UI shows ("no context for this call") rather than an
+   * error it has to handle. A 404 here would surface in the browser as a failed fetch and send the
+   * reader looking for a routing bug.
+   *
+   * DELIBERATELY NOT a live memory or profile lookup. Conversation Orchestrator extracts observations
+   * only AFTER a conversation ends, so for a first-time caller a memory panel would be empty at exactly
+   * the moment it is being demoed. What this returns is what the agent just heard, which is always
+   * present and always relevant.
+   */
+  app.get(HANDOFF_CONTEXT_PATH, (request, reply) => {
+    const query = request.query as { conversationId?: string; from?: string };
+    const { snapshot, match } = findHandoffSnapshot({
+      conversationId: query.conversationId ?? null,
+      from: query.from ?? null,
+    });
+
+    const body: HandoffContextResponse =
+      snapshot === null
+        ? { found: false, match: 'none', reason: null, conversationId: null, maskedFrom: null, at: null, transcript: [] }
+        : {
+            found: true,
+            match,
+            reason: snapshot.reason,
+            conversationId: snapshot.conversationId,
+            /**
+             * MASKED. `../obs/pii.ts` scrubs log lines and obs payloads and does NOT scrub this
+             * route's body — so masking has to be explicit, here, at the boundary. The transcript
+             * below is verbatim on purpose: the human agent needs the real words, and the design doc
+             * §10 states that as a new PII surface rather than hiding it.
+             */
+            maskedFrom: snapshot.from === null ? null : maskPhone(snapshot.from),
+            at: snapshot.at,
+            transcript: snapshot.transcript,
+          };
+
+    void reply.code(200).send(body);
   });
 
   return {
