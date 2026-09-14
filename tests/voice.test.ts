@@ -13,12 +13,16 @@ import { endCallTool } from '../server/agent/tools/end-call.ts';
 import type { ObsEvent } from '../shared/events.ts';
 import { createConversationRegistry } from '../server/obs/conversations.ts';
 import {
+  buildVoiceTwimlOptions,
   handleVoiceDisconnect,
   handleVoicePrompt,
   VOICE_FALLBACK_TEXT,
-  VOICE_TWIML_OPTIONS,
   type VoiceSender,
 } from '../server/twilio/voice.ts';
+import { handoffTool } from '../server/twilio/handoff.ts';
+import { findHandoffSnapshot, forgetHandoffSnapshot } from '../server/handoff/snapshots.ts';
+import { VOICE_ACTION_PATH } from '../shared/handoff.ts';
+import { fakeTac, tacCalls, voiceSession } from './helpers/fake-tac.ts';
 
 /**
  * The three voice exit paths, which are the three places voice differs from SMS — and every one of
@@ -168,6 +172,42 @@ const registry = (): ReturnType<typeof createConversationRegistry> =>
     spanName: 'conversation.voice',
     start: () => ({ traceparent: undefined, update: () => {}, end: () => {} }),
   });
+
+/**
+ * Run TAC's real handoff tool the way the model would, and hand back the LIVE session it parked the
+ * frame on — the same object the prompt handler is then given, because that is how TAC dispatches:
+ * `getConversationSession` returns the session by reference, not a copy, so the field the tool wrote
+ * is already visible on the prompt payload and the drain needs no second lookup.
+ *
+ * `voiceSession` from `./helpers/fake-tac.ts` rather than a local literal, and its `calls` argument is
+ * what makes the park land in the same ordered array as the two Conversation Orchestrator round-trips.
+ */
+const requestHandoff = async (
+  conversationId: string,
+  reason = 'caller asked for a person',
+): Promise<{ session: ReturnType<typeof voiceSession>; calls: string[] }> => {
+  const tac = fakeTac();
+  const calls = tacCalls(tac);
+  const session = voiceSession(conversationId, calls);
+  await handoffTool({ tac, sessions: { getConversationSession: () => session } }).execute(
+    { reason },
+    { conversationId, logger: silentLogger, profileId: 'profile_voice' },
+  );
+  return { session, calls };
+};
+
+/**
+ * The parked frame, read BEFORE the drain runs.
+ *
+ * Not optional pedantry: the helper implements `pendingHandoffData` as an accessor so the park is
+ * recorded, and a correct drain `delete`s that property — which removes the accessor along with the
+ * value. After the drain there is nothing left to compare the sent bytes against.
+ */
+const parkedFrame = (session: object): string =>
+  JSON.stringify((session as { pendingHandoffData?: unknown }).pendingHandoffData);
+
+const stillParked = (session: object): unknown =>
+  (session as { pendingHandoffData?: unknown }).pendingHandoffData;
 
 test('a normal turn streams to the caller and speaks no fallback', async () => {
   const events: ObsEvent[] = [];
@@ -417,9 +457,209 @@ test('a hangup on a socket that has already gone reports frameSent false', async
   expect(events.find((e) => e.kind === 'voice.end')?.payload).toMatchObject({ frameSent: false });
 });
 
-test('the TwiML default that keeps barge-in audible is set', () => {
+test("the handoff frame goes out AFTER the farewell, and is TAC's frame verbatim", async () => {
+  const events: ObsEvent[] = [];
+  const turn = fakeTurnDeps(
+    ['Of course — ', 'putting you through now.'],
+    'Of course — putting you through now.',
+    events,
+  );
+  const rec = recordingSender();
+  const { session, calls } = await requestHandoff('conv_handoff_1');
+
+  // Read before the drain, and asserted before it too: the tool did its two Orchestrator round-trips
+  // and THEN parked. That ordering is `tests/handoff.test.ts`'s business, but the third entry is what
+  // proves this test is exercising a genuinely parked frame rather than an empty field.
+  expect(calls).toEqual([
+    'update:conv_handoff_1:INACTIVE',
+    'clear:conv_handoff_1',
+    'park:conv_handoff_1',
+  ]);
+  const parked = parkedFrame(session);
+
+  await handleVoicePrompt(
+    {
+      conversationId: 'conv_handoff_1',
+      transcript: 'can I talk to a human please',
+      abortSignal: new AbortController().signal,
+      memory: undefined,
+      session,
+    },
+    { turn, conversations: registry(), sender: rec.sender, logger: silentLogger },
+  );
+
+  // THE ORDER IS THE ASSERTION, the same shape as the end_call test above. Every token of the
+  // farewell, and only then the frame. A drain that fired before the stream would leave the frame at
+  // index 0 and fail here — which is the truncated-goodbye bug, and the one failure mode no typecheck
+  // and no review can see. `toEqual` on the whole array also pins that exactly ONE frame went out:
+  // two `{"type":"end"}` messages on one socket is undefined behaviour.
+  expect(rec.order).toEqual([
+    'token:Of course — ',
+    'token:putting you through now.',
+    `frame:${parked}`,
+  ]);
+
+  // And the bytes are TAC'S, not a frame we rebuilt. The double encoding is REQUIRED — Twilio
+  // documents `handoffData` as a JSON-encoded string, so this is a string inside a string.
+  const frame = JSON.parse(parked);
+  expect(frame.type).toBe('end');
+  expect(typeof frame.handoffData).toBe('string');
+  expect(JSON.parse(frame.handoffData)).toMatchObject({ conversationId: 'conv_handoff_1' });
+
+  // Drained from the session, so a later turn on a reused conversation id cannot send it again. This
+  // is unforgeable: the value was readable two assertions ago, so `undefined` here can only mean the
+  // drain deleted it.
+  expect(stillParked(session)).toBeUndefined();
+
+  const published = events.find((e) => e.kind === 'handoff');
+  expect(published?.payload).toMatchObject({
+    reason: 'caller asked for a person',
+    frameSent: true,
+    hadPayload: true,
+  });
+
+  forgetHandoffSnapshot('conv_handoff_1');
+});
+
+test('the snapshot holds the CURRENT turn — the request and the farewell', async () => {
+  const events: ObsEvent[] = [];
+  const turn = fakeTurnDeps(['Putting you through.'], 'Putting you through.', events);
+  const rec = recordingSender();
+  const { session } = await requestHandoff('conv_handoff_2', 'upset caller');
+
+  await handleVoicePrompt(
+    {
+      conversationId: 'conv_handoff_2',
+      transcript: 'I need a person, now',
+      abortSignal: new AbortController().signal,
+      memory: undefined,
+      session,
+    },
+    { turn, conversations: registry(), sender: rec.sender, logger: silentLogger },
+  );
+
+  // `run-turn.ts:621` appends the user+assistant pair BEFORE `done` resolves, so snapshotting at the
+  // drain — not inside the tool — is what captures the line that caused the transfer. Inside the tool
+  // history would hold neither turn, and `handleVoiceDisconnect` clears it moments later.
+  const { snapshot, match } = findHandoffSnapshot({ conversationId: 'conv_handoff_2' });
+  expect(match).toBe('exact');
+  expect(snapshot?.reason).toBe('upset caller');
+  // From `session.authorInfo.address`, which is the only correlator the Studio path leaves us.
+  expect(snapshot?.from).toBe('+15554443333');
+  expect(snapshot?.transcript).toEqual([
+    { role: 'user', text: 'I need a person, now' },
+    { role: 'assistant', text: 'Putting you through.' },
+  ]);
+
+  forgetHandoffSnapshot('conv_handoff_2');
+});
+
+test('a handoff BEATS a pending end_call, and only one frame is sent', async () => {
+  const events: ObsEvent[] = [];
+  const turn = fakeTurnDeps(['One moment.'], 'One moment.', events);
+  const rec = recordingSender();
+  // Both intents pending at once, which a model can produce in one turn. Two `{"type":"end"}` frames
+  // on one socket is undefined behaviour, and hanging up on someone who has just asked for a human is
+  // the worst available outcome — so the hangup must be DROPPED, not queued behind the transfer.
+  await requestEndCall('conv_handoff_3');
+  const { session } = await requestHandoff('conv_handoff_3');
+  const parked = parkedFrame(session);
+
+  await handleVoicePrompt(
+    {
+      conversationId: 'conv_handoff_3',
+      transcript: 'get me a human',
+      abortSignal: new AbortController().signal,
+      memory: undefined,
+      session,
+    },
+    { turn, conversations: registry(), sender: rec.sender, logger: silentLogger },
+  );
+
+  // One frame, and it is the handoff one — a bare `{"type":"end"}` here would mean the hangup won.
+  expect(rec.frames).toEqual([parked]);
+  expect(events.some((e) => e.kind === 'handoff')).toBe(true);
+  expect(events.some((e) => e.kind === 'voice.end')).toBe(false);
+
+  // CONSUMED, not merely skipped. A second turn on the same id must not inherit the hangup, which is
+  // what would happen if the drain returned early without clearing the end_call intent.
+  const rec2 = recordingSender();
+  await handleVoicePrompt(
+    {
+      conversationId: 'conv_handoff_3',
+      transcript: 'still there?',
+      abortSignal: new AbortController().signal,
+      memory: undefined,
+      session,
+    },
+    {
+      turn: fakeTurnDeps(['Yes.'], 'Yes.', events),
+      conversations: registry(),
+      sender: rec2.sender,
+      logger: silentLogger,
+    },
+  );
+  expect(rec2.frames).toEqual([]);
+
+  forgetHandoffSnapshot('conv_handoff_3');
+});
+
+test('interrupting the "putting you through" line cancels the transfer', async () => {
+  const events: ObsEvent[] = [];
+  const turn = fakeTurnDeps(['Putting you through.'], 'Putting you through.', events);
+  const rec = recordingSender();
+  const abort = new AbortController();
+  const { session } = await requestHandoff('conv_handoff_4');
+  abort.abort();
+
+  await handleVoicePrompt(
+    {
+      conversationId: 'conv_handoff_4',
+      transcript: 'wait, no',
+      abortSignal: abort.signal,
+      memory: undefined,
+      session,
+    },
+    { turn, conversations: registry(), sender: rec.sender, logger: silentLogger },
+  );
+
+  expect(rec.frames).toEqual([]);
+
+  // And the INTENT is gone, not merely skipped — otherwise the next turn transfers a caller who has
+  // just objected. `session.pendingHandoffData` deliberately survives; see the comment at the
+  // barge-in branch in `server/twilio/voice.ts` for why that asymmetry is correct.
+  const rec2 = recordingSender();
+  await handleVoicePrompt(
+    {
+      conversationId: 'conv_handoff_4',
+      transcript: 'one more thing',
+      abortSignal: new AbortController().signal,
+      memory: undefined,
+      session,
+    },
+    {
+      turn: fakeTurnDeps(['Of course.'], 'Of course.', events),
+      conversations: registry(),
+      sender: rec2.sender,
+      logger: silentLogger,
+    },
+  );
+  expect(rec2.frames).toEqual([]);
+  expect(events.some((e) => e.kind === 'handoff')).toBe(false);
+});
+
+test('the action URL is pinned, non-empty, and points at a path we own', () => {
+  const opts = buildVoiceTwimlOptions('demo.ngrok.app');
   // Not a tautology: the ConversationRelay default changed to `none` in May 2025, which stops the
   // audio on a barge-in but never delivers the words that caused it — the agent goes deaf mid-call
   // and every pre-2025 example omits this attribute. `none` here would be a silent regression.
-  expect(VOICE_TWIML_OPTIONS.reportInputDuringAgentSpeech).toBe('any');
+  expect(opts.reportInputDuringAgentSpeech).toBe('any');
+  expect(opts.actionUrl).toBe(`https://demo.ngrok.app${VOICE_ACTION_PATH}`);
+  // Verified in the 2.2.0 bundle, `generateTwiml` at `dist/index.js:5901`:
+  // `response.connect(options.actionUrl ? { action: options.actionUrl } : {})`. An empty string is
+  // falsy, so it DELETES the attribute and throws nothing — `TwiMLOptionsSchema.actionUrl` declares
+  // `.min(1)` but never runs on `defaultTwimlOptions`, which is a plain interface. Hence the boot-time
+  // throw, and hence this assertion.
+  expect(() => buildVoiceTwimlOptions('')).toThrow(/publicDomain/);
+  expect(() => buildVoiceTwimlOptions('   ')).toThrow(/publicDomain/);
 });

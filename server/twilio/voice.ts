@@ -24,6 +24,9 @@ import { runTurn } from '../agent/run-turn.ts';
 import type { TurnDeps } from '../agent/types.ts';
 import type { ToolLogger } from '../agent/tools/registry.ts';
 import { consumeEndCallRequest, forgetEndCallRequest } from '../agent/tools/end-call.ts';
+import { VOICE_ACTION_PATH, type HandoffTranscriptTurn } from '../../shared/handoff.ts';
+import { consumeHandoffRequest, forgetHandoffRequest } from './handoff.ts';
+import { recordHandoffSnapshot } from '../handoff/snapshots.ts';
 
 /**
  * Conversation-registry bounds for voice. Tighter than SMS on both axes, because a phone call is
@@ -49,14 +52,54 @@ export const VOICE_FALLBACK_TEXT =
 /**
  * TwiML applied to every call, via `VoiceChannelConfig.defaultTwimlOptions`.
  *
- * ONE SETTING, AND IT IS NOT OPTIONAL: `reportInputDuringAgentSpeech`. Its default changed from
+ * A FUNCTION rather than a constant since T14b, because the second key depends on the public host.
+ *
+ * ── `actionUrl`, AND WHY IT IS NOT OPTIONAL ───────────────────────────────────────────────────────
+ *
+ * This is the `<Connect action>` URL: where Twilio POSTs when the ConversationRelay session ends, and
+ * therefore the only place a handoff can be routed. Left unset, TAC's `resolveActionUrl`
+ * (`dist/index.js:5447-5460`) falls through to Studio when a flow SID is configured, or to its own
+ * derived `/conversation-relay-callback`. BOTH are wrong for a handoff:
+ *
+ *  - TAC's own route answers `{status: 200, content: 'OK', contentType: 'text/plain'}`
+ *    (`handleConversationRelayCallback`, `dist/index.js:5618`) — never TwiML. And its
+ *    `ConversationRelayCallbackPayloadSchema` (`dist/index.js:1020-1051`) has no `HandoffData` field;
+ *    being a plain non-strict `z.object` it STRIPS it. So the POST arrives, the handoff is silently
+ *    discarded, and the call is dropped.
+ *  - Studio's own handoff webhook works but takes the routing decision away from this process, so the
+ *    zero-Studio-setup path (`<Dial><Client>`) becomes unreachable.
+ *
+ * `defaultTwimlOptions` is layer 2 of the five `resolveActionUrl` checks, and nothing sits between it
+ * and Studio: layer 1 is the `onInboundCallTwiml` customizer, which this repo never registers, and
+ * layer 3 is the calling host's per-call options, which is always undefined inbound because `TACServer`
+ * calls `handleIncomingCall(twimlRequest)` with no second argument (`dist/index.js:6757`). So pinning
+ * here wins over Studio, which is what makes `POST /api/voice/relay-action` reachable at all.
+ *
+ * MEASURED against 2.2.0, both directions, with `studioHandoffFlowSid` set: this builder's value emits
+ * `<Connect action="https://…/api/voice/relay-action">`, and the same channel with `actionUrl` omitted
+ * emits `<Connect action="https://webhooks.twilio.com/v1/Accounts/…/Flows/FW…?Trigger=incomingCall">`.
+ * The precedence is not inferred from the source; it was driven through `handleIncomingCall`.
+ *
+ * ── THE THROW IS THE POINT ────────────────────────────────────────────────────────────────────────
+ *
+ * `TwiMLOptionsSchema` declares `actionUrl: z.string().min(1, 'actionUrl must not be empty')`, but
+ * `VoiceChannelConfig` is a plain INTERFACE, so that validation never runs for `defaultTwimlOptions` —
+ * `resolveActionUrl` reads the field straight off it. Read in the 2.2.0 bundle: `generateTwiml` emits
+ * `response.connect(options.actionUrl ? { action: options.actionUrl } : {})` (`dist/index.js:5901`), so
+ * an empty string is falsy, the attribute is simply absent, and nothing throws anywhere. An empty
+ * public domain would therefore delete end-of-call routing in silence — so this asserts at boot, where
+ * it is one loud line, rather than on a live call, where it is a dropped transfer.
+ *
+ * ── AND THE KEY THAT WAS ALREADY HERE ─────────────────────────────────────────────────────────────
+ *
+ * `reportInputDuringAgentSpeech` is unchanged. Its default changed from
  * `any` to `none` in May 2025, and `none` means the caller can interrupt us — `interruptible`
  * defaults to `any`, so the audio does stop and an `interrupt` message does arrive — but **the words
  * that caused the interruption are never delivered as a `prompt`**. The agent stops talking and then
  * cannot hear, which on a live call is indistinguishable from a crash. Every ConversationRelay
  * example written before May 2025 assumes the old default and therefore omits this line.
  *
- * Deliberately the only key. TAC's remaining defaults are good ones (ElevenLabs TTS, Deepgram
+ * Deliberately still only TWO keys. TAC's remaining defaults are good ones (ElevenLabs TTS, Deepgram
  * `nova-3-general`, `interruptible: 'any'`, `interruptSensitivity: 'high'`, `speechTimeout: 'auto'`,
  * `elevenlabsTextNormalization: 'off'` which matters for latency), and pinning them here would
  * silently freeze them at 2.2.0's values on the next upgrade. Per-call overrides, if ever needed,
@@ -66,9 +109,23 @@ export const VOICE_FALLBACK_TEXT =
  * (`none | dtmf | speech | any`). The sibling `ConversationRelayAttributes` type declares it as a
  * BOOLEAN, which is stale — do not reach for that one.
  */
-export const VOICE_TWIML_OPTIONS = {
-  reportInputDuringAgentSpeech: 'any',
-} as const;
+export function buildVoiceTwimlOptions(publicDomain: string): {
+  readonly reportInputDuringAgentSpeech: 'any';
+  readonly actionUrl: string;
+} {
+  if (publicDomain.trim() === '') {
+    throw new Error(
+      'buildVoiceTwimlOptions requires a non-empty publicDomain: an empty actionUrl silently deletes ' +
+        'the action attribute without throwing, which drops every handoff',
+    );
+  }
+  return {
+    reportInputDuringAgentSpeech: 'any',
+    // Scheme included, unlike `voicePublicDomain` — TAC builds `wss://` itself for the socket, but the
+    // action URL is handed to Twilio verbatim.
+    actionUrl: `https://${publicDomain}${VOICE_ACTION_PATH}`,
+  };
+}
 
 /**
  * What TAC's `prompt` callback hands us, narrowed to what this file reads.
@@ -97,11 +154,41 @@ export interface VoicePrompt {
    * TAC's per-conversation session. Optional because TAC declares it so — a defensive `?.` on
    * `profileId` is cheaper than an assumption that would fail as silence on a live call.
    *
-   * Narrowed to the one field this file reads. Note TAC's `getConversationSession` returns the LIVE
-   * object by reference, not a copy, so anything mutating it here would be mutating TAC's own state.
-   * We only read.
+   * Narrowed to the three fields this file touches. TAC's `getConversationSession` returns the LIVE
+   * object by reference, not a copy, so this is TAC's own state — and since T14b one field of it is
+   * WRITTEN here rather than only read. See `pendingHandoffData` below.
+   *
+   * ⚠ THIS SHAPE IS NOT CHECKED AT THE REAL CALL SITE, so the test is what pins it. `BaseChannel.on`
+   * is declared `on(event: string, callback: (...args: any[]) => void)` (`dist/index.d.ts:3696`), so
+   * `data` in `./tac.ts`'s `voiceChannel.on('prompt', …)` is `any` and every field forwarded from it is
+   * unchecked. `tests/voice.test.ts` therefore passes a real `ConversationSession` — which is why each
+   * member below is written to accept TAC's own optionality (`string | undefined`, never `null`) rather
+   * than a convenient local shape that would compile and then miss on a live call.
    */
-  readonly session?: { readonly profileId?: string | null } | undefined;
+  readonly session?:
+    | {
+        readonly profileId?: string | undefined;
+        /**
+         * The caller's address — a phone number on this channel. Read at drain time so the screen pop
+         * can correlate on it, which is the only correlator the Studio path leaves us: its
+         * `connect-call-to` widget cannot pass parameters to a client, and dialling a client mints a
+         * new call leg with a new CallSid.
+         */
+        readonly authorInfo?: { readonly address?: string } | undefined;
+        /**
+         * TAC's parked handoff frame — a COMPLETE `{type:'end', handoffData}` message, not raw data
+         * (`dist/index.js:6485-6490`).
+         *
+         * Read here rather than via a second `getConversationSession` lookup because TAC hands us the
+         * LIVE object by reference, so the field its tool assigned is already visible on this payload.
+         * MUTATED at drain time (deleted after sending), which is the one place this file writes to
+         * TAC's state — deliberately, and for the same reason TAC's own drain does it
+         * (`delete session.pendingHandoffData`, `dist/index.js:5249`): a frame sent twice is undefined
+         * behaviour. Hence NOT `readonly`.
+         */
+        pendingHandoffData?: { readonly type: string; readonly handoffData: string } | undefined;
+      }
+    | undefined;
   /**
    * TAC's per-conversation abort controller, created at the top of its prompt handling. Aborted on
    * exactly three events: a barge-in, a newer prompt for the same conversation, and the socket
@@ -171,7 +258,12 @@ const WS_OPEN = 1;
  * session, which is the sanctioned mechanism but not a promise in writing. A timing-based hangup was
  * the alternative and it is strictly worse: it guesses.
  */
-function endSession(sender: VoiceSender, conversationId: string, logger: ToolLogger): boolean {
+function sendFrame(
+  sender: VoiceSender,
+  conversationId: string,
+  frame: object,
+  logger: ToolLogger,
+): boolean {
   const ws = sender.getWebsocket(conversationId);
   if (ws === null || ws.readyState !== WS_OPEN) {
     // Normal, not an error: the caller may have hung up during the goodbye.
@@ -179,13 +271,24 @@ function endSession(sender: VoiceSender, conversationId: string, logger: ToolLog
     return false;
   }
   try {
-    ws.send(JSON.stringify({ type: 'end' }));
+    ws.send(JSON.stringify(frame));
     return true;
   } catch (err) {
     logger.warn({ err, conversationId }, 'voice: could not send the end frame');
     return false;
   }
 }
+
+/**
+ * A bare end, carrying nothing. The `end_call` case.
+ *
+ * `sendFrame` was generalised out of this at T14b because handoff and `end_call` differ ONLY in the
+ * payload: `{"type":"end"}` alone for a hangup, `{"type":"end","handoffData":"<json>"}` for a transfer.
+ * Both end the session and return control of the call to Twilio, which then requests the
+ * `<Connect action>` URL — the entire difference is in what that route is told.
+ */
+const endSession = (sender: VoiceSender, conversationId: string, logger: ToolLogger): boolean =>
+  sendFrame(sender, conversationId, { type: 'end' }, logger);
 
 export interface VoiceDeps {
   readonly turn: TurnDeps;
@@ -293,6 +396,15 @@ export async function handleVoicePrompt(params: VoicePrompt, deps: VoiceDeps): P
         // goodbye is exactly how a caller says "wait, one more thing", and honouring the pending
         // end_call here would hang up on them mid-sentence.
         forgetEndCallRequest(conversationId);
+        // Same argument for the transfer: interrupting the "putting you through" line is how a caller
+        // says "wait, no". Honouring a queued transfer here would send them to a human mid-objection.
+        //
+        // ⚠ This clears the INTENT and leaves `session.pendingHandoffData` parked, and the asymmetry is
+        // correct rather than a leak: the frame is inert unless something sends it, TAC's own drain in
+        // `sendResponse` would legitimately send it if a later turn took that path, and the tool has
+        // already set the conversation INACTIVE — so the parked frame is the one thing still able to
+        // release the call cleanly. Do not "fix" this by deleting it.
+        forgetHandoffRequest(conversationId);
         logger.debug({ conversationId }, 'voice: turn interrupted by the caller');
         return;
       }
@@ -314,13 +426,92 @@ export async function handleVoicePrompt(params: VoicePrompt, deps: VoiceDeps): P
         await sender.sendResponse(conversationId, VOICE_FALLBACK_TEXT);
       }
 
-      // ══ THE HANGUP, AND IT MUST BE LAST. ══
+      // ══ THE TRANSFER AND THE HANGUP, IN THAT ORDER, AND THEY MUST BE LAST. ══
       //
-      // `end_call` only recorded an intent — see `../agent/tools/end-call.ts` for why a tool cannot
-      // hang up where it stands. By here the farewell has been streamed and its `last: true` marker
-      // sent, so ending the session is the next thing the caller should experience. Doing this any
-      // earlier truncates the goodbye; doing it inside the tool truncates it before it is even
-      // written.
+      // Both tools only recorded an intent — see `../agent/tools/end-call.ts` and `./handoff.ts` for
+      // why neither can act where it stands. By here the farewell has been streamed and its
+      // `last: true` marker sent, so ending the session is the next thing the caller should
+      // experience. Doing this any earlier truncates the goodbye; doing it inside a tool truncates it
+      // before it is even written.
+      //
+      // ══ TRANSFER WINS UNCONDITIONALLY. ══
+      //
+      // Two `{"type":"end"}` frames on one socket is undefined behaviour, so exactly one goes out.
+      // Hanging up on someone who has just asked for a human is the worst available outcome, so the
+      // handoff is checked FIRST and a pending `end_call` is dropped, not queued.
+      const handoffReason = consumeHandoffRequest(conversationId);
+      if (handoffReason !== null) {
+        forgetEndCallRequest(conversationId);
+
+        /**
+         * SNAPSHOT BEFORE THE FRAME GOES OUT, and this is the only moment it can be taken.
+         *
+         * `handleVoiceDisconnect` calls `history.clear()` when the socket closes, and the socket closes
+         * BECAUSE we are about to send this frame. Taking it here rather than inside the tool is also
+         * what makes it complete: `../agent/run-turn.ts` appends the user+assistant pair at the END of
+         * the turn, before `done` resolves, so by this line history holds the caller's request AND the
+         * farewell. Inside the tool it would hold neither.
+         *
+         * A snapshot failure must NOT block the transfer — the screen pop degrades to reason-only,
+         * which is still a working handoff. Hence the try/catch around the store and not around the
+         * send. `system` turns are dropped rather than trusted to be absent: they are the compiled
+         * prompt, and a human agent's screen is not a place to leak it.
+         */
+        try {
+          const transcript: HandoffTranscriptTurn[] = turn.history
+            .read(conversationId)
+            .filter((m): m is { role: 'user' | 'assistant'; content: string } => m.role !== 'system')
+            .map((m) => ({ role: m.role, text: m.content }));
+          recordHandoffSnapshot({
+            conversationId,
+            reason: handoffReason,
+            from: params.session?.authorInfo?.address ?? null,
+            at: new Date().toISOString(),
+            transcript,
+          });
+        } catch (err) {
+          logger.warn({ err, conversationId }, 'voice: could not snapshot the transcript for the screen pop');
+        }
+
+        /**
+         * THE FIVE LINES TAC OMITS HERE.
+         *
+         * `session.pendingHandoffData` is already a complete frame, and TAC's own drain for it is five
+         * lines sitting inside `sendResponse` (`dist/index.js:5246-5250`). `sendStreamingResponse`
+         * (`dist/index.js:5278`) — which is what this channel uses on every turn — has ZERO references
+         * to the field; those three, plus the schema declaration at `dist/index.js:263` and the tool's
+         * assignment at `6490`, are every mention in the bundle. So on a streaming app the parked frame
+         * is never sent at all, and TAC's own streaming example never drains it either.
+         *
+         * Falling back to a plain `{type:'end'}` is deliberate: if the tool succeeded but the frame is
+         * somehow absent, ending the session still returns control to Twilio and our action route still
+         * answers, so the caller reaches a human without the payload rather than sitting on a dead line.
+         */
+        const parked = params.session?.pendingHandoffData;
+        const sent = sendFrame(sender, conversationId, parked ?? { type: 'end' }, logger);
+        if (parked !== undefined && params.session !== undefined) {
+          // Exactly what TAC's drain does, and for the same reason: a frame sent twice is undefined
+          // behaviour, and Orchestrator reuses a conversation id per profile.
+          delete params.session.pendingHandoffData;
+        }
+
+        turn.obs.publish({
+          kind: 'handoff',
+          summary: sent
+            ? `transferred to a human: ${handoffReason}`
+            : `tried to transfer but the socket was gone: ${handoffReason}`,
+          channel: 'voice',
+          conversationId,
+          payload: {
+            reason: handoffReason,
+            frameSent: sent,
+            hadPayload: parked !== undefined,
+            farewell: spoken,
+          },
+        });
+        return;
+      }
+
       const endReason = consumeEndCallRequest(conversationId);
       if (endReason !== null) {
         const sent = endSession(sender, conversationId, logger);
@@ -440,4 +631,9 @@ export function handleVoiceDisconnect(
   // hung up first, or the socket dropped between the tool call and the goodbye — so an intent cannot
   // survive to be acted on by a later call that reuses the conversation id.
   forgetEndCallRequest(conversationId);
+  // The INTENT only. The SNAPSHOT deliberately survives — this handler fires the moment the socket
+  // closes, which on a transfer is seconds BEFORE a human presses answer, so clearing it here would
+  // make the screen pop reliably empty on the one path it exists for. `../handoff/snapshots.ts` bounds
+  // its lifetime by eviction instead, and says so in `forgetHandoffSnapshot`'s header.
+  forgetHandoffRequest(conversationId);
 }

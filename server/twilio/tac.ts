@@ -63,7 +63,7 @@ import {
   handleVoiceSetup,
   VOICE_CONVERSATION_TTL_MS,
   VOICE_MAX_CONVERSATIONS,
-  VOICE_TWIML_OPTIONS,
+  buildVoiceTwimlOptions,
 } from './voice.ts';
 
 const log = childLogger('tac');
@@ -345,6 +345,12 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
   }
 
   if (caps.voice) {
+    // UNREACHABLE, and kept as an assertion for the same reason the `config.twilio` check above is:
+    // `caps.voice` is a separate boolean, so TypeScript does not narrow `config.voice` from it, and the
+    // thing this guards is invisible — an empty `publicDomain` would delete the `<Connect action>`
+    // attribute with no error anywhere. `capabilities()` already requires `config.voice !== null`.
+    if (config.voice === null) throw new Error('caps.voice without config.voice');
+
     const conversations = createConversationRegistry({
       spanName: 'conversation.voice',
       ttlMs: VOICE_CONVERSATION_TTL_MS,
@@ -375,12 +381,13 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
      * price it. If turn 1 becomes unacceptable, the escape hatch is `'never'` plus recalling inside
      * our own port, where it would at least be visible.
      *
-     * `defaultTwimlOptions` is the static TwiML layer. See `VOICE_TWIML_OPTIONS` — the one key in it
-     * is the difference between a caller being able to interrupt us and the agent going deaf.
+     * `defaultTwimlOptions` is the static TwiML layer, and layer 2 of TAC's five-layer `actionUrl`
+     * resolution — which is what makes it, and not Studio, decide where a handoff is routed. See
+     * `buildVoiceTwimlOptions`: one key keeps barge-in audible, the other keeps the transfer reachable.
      */
     voiceChannel = new VoiceChannel(tac, {
       memoryMode: 'once',
-      defaultTwimlOptions: VOICE_TWIML_OPTIONS,
+      defaultTwimlOptions: buildVoiceTwimlOptions(config.voice.publicDomain),
     });
 
     // NOT `tac.registerChannel(voiceChannel)` — see rule 3 in the header. These four slots stay ours
