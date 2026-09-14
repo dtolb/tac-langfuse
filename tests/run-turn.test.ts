@@ -263,6 +263,7 @@ const harness = (over: {
   readonly history?: HistoryStore;
   readonly userText?: string;
   readonly conversationId?: string;
+  readonly profileId?: string | null;
 } = {}): Harness => {
   const bus = createObsBus();
   const events: ObsEvent[] = [];
@@ -296,7 +297,7 @@ const harness = (over: {
       userText: over.userText ?? 'where is order A4721?',
       memory: null,
       sessionMetadata: {},
-      profileId: null,
+      profileId: over.profileId ?? null,
       abortSignal: abort.signal,
       span: turnSpan.span,
     },
@@ -951,7 +952,7 @@ test('toAiSdkTool converts a ToolDef and keeps its execute reachable, with our c
       return { found: true, id };
     },
   };
-  const ctx: ToolCtx = { conversationId: 'conv-1', logger: silentLogger };
+  const ctx: ToolCtx = { conversationId: 'conv-1', logger: silentLogger, profileId: null };
 
   const sdkTool = toAiSdkTool(def as ToolDef, ctx);
 
@@ -988,6 +989,67 @@ const toolCallingModel = (text: string): ModelPort => ({
     })(),
     done: Promise.resolve({ ...EMPTY_RESULT, text, steps: 2 }),
   }),
+});
+
+/**
+ * `profileId` is on `TurnInput`, and both the memory port and every tool need it. Forwarding it is two
+ * one-line changes in `runTurn`, and DROPPING either one is completely silent: the memory port would
+ * simply never render a `## Customer Profile` section, and TAC's memory-retrieval tool would throw
+ * "No profile ID available for memory retrieval" inside a tool body whose failures are caught and fed
+ * back to the model. The agent keeps answering, a little worse, forever.
+ *
+ * So this asserts the plumbing directly rather than trusting it, and it asserts BOTH destinations —
+ * they are separate lines and a fix to one does not imply the other.
+ */
+test('profileId reaches both the memory port and the tool ctx', async () => {
+  const PROFILE = 'mem_profile_01m28kmbhfe55r68m1brcsn9rm';
+  const composedWith: Array<string | null> = [];
+  const toolSaw: Array<string | null> = [];
+
+  const recordingTool: ToolDef<z.ZodObject<{ id: z.ZodString }>> = {
+    name: 'lookup_widget',
+    description: 'Look up a widget by id.',
+    input: z.object({ id: z.string() }),
+    execute: async ({ id }, ctx) => {
+      toolSaw.push(ctx.profileId);
+      return { found: true, id };
+    },
+  };
+
+  const h = harness({
+    profileId: PROFILE,
+    catalog: createToolCatalog([recordingTool as ToolDef]),
+    model: toolCallingModel('found it'),
+    composeMemory: {
+      compose: async (input) => {
+        composedWith.push(input.profileId);
+        return null;
+      },
+    },
+  });
+
+  await drive(h);
+
+  expect(composedWith).toEqual([PROFILE]);
+  expect(toolSaw).toEqual([PROFILE]);
+});
+
+test('a null profileId reaches both, rather than the key going missing', async () => {
+  // The bench has no Orchestrator profile, and `null` is the value that says so. A port or tool that
+  // received `undefined` instead could not tell "no profile" from "not plumbed".
+  const composedWith: Array<string | null> = [];
+  const h = harness({
+    composeMemory: {
+      compose: async (input) => {
+        composedWith.push(input.profileId);
+        return null;
+      },
+    },
+  });
+
+  await drive(h);
+
+  expect(composedWith).toEqual([null]);
 });
 
 test('a tool that runs is reported on the bus with its own duration', async () => {

@@ -76,14 +76,32 @@ export const VOICE_TWIML_OPTIONS = {
  * `memory` is `unknown` for the same reason as in `./messaging.ts`: it is a class instance with
  * getters, only `composeMemory` knows its shape, and typing it here would drag the vendor in.
  *
- * There is no `profileId` on this payload — voice does not get one, so the turn passes `null`. And
- * only three of the five keys are guaranteed: `userMemory` and `session` are *conditionally spread*
- * by TAC, so under `memoryMode: 'never'` the key is absent rather than undefined.
+ * ⚠ CORRECTED AT T14, and the old wording was wrong in a way that cost us a feature. It said *"there
+ * is no `profileId` on this payload — voice does not get one"* and that `session` is absent under
+ * `memoryMode: 'never'`. Only the first half of the second claim is true. TAC's emit site
+ * (`packages/core/src/channels/voice.ts:726-742`; dist `index.js:5167-5176`) spreads
+ * `...userMemory !== undefined && { userMemory }` and `...session !== undefined && { session }` — so
+ * `userMemory` is memory-mode gated but **`session` is gated only on its own existence**, and a
+ * session always exists by the time TAC dispatches a prompt. The session was therefore reachable on
+ * every turn since T13 and was simply being discarded, `profileId` along with it.
+ *
+ * `session.profileId` is what makes Conversation Memory and TAC's memory-retrieval tool work on this
+ * channel: the tool takes the profile as a constructor argument and throws
+ * "No profile ID available for memory retrieval" without one.
  */
 export interface VoicePrompt {
   readonly conversationId: string;
   /** The caller's utterance, already finalised by STT. */
   readonly transcript: string;
+  /**
+   * TAC's per-conversation session. Optional because TAC declares it so — a defensive `?.` on
+   * `profileId` is cheaper than an assumption that would fail as silence on a live call.
+   *
+   * Narrowed to the one field this file reads. Note TAC's `getConversationSession` returns the LIVE
+   * object by reference, not a copy, so anything mutating it here would be mutating TAC's own state.
+   * We only read.
+   */
+  readonly session?: { readonly profileId?: string | null } | undefined;
   /**
    * TAC's per-conversation abort controller, created at the top of its prompt handling. Aborted on
    * exactly three events: a barge-in, a newer prompt for the same conversation, and the socket
@@ -217,8 +235,10 @@ export async function handleVoicePrompt(params: VoicePrompt, deps: VoiceDeps): P
           // Empty by design: `withTurnSpan` above already applied the traceparent, and voice carries
           // it in the registry rather than in TAC's session.
           sessionMetadata: {},
-          // Not on the voice prompt payload at all — unlike SMS, which gets one from Orchestrator.
-          profileId: null,
+          // From TAC's session, which is on the prompt payload in EVERY memory mode — see the
+          // corrected note on `VoicePrompt`. `null` when Orchestrator resolved no customer, which is
+          // a real state (an unrecognised caller), not an error.
+          profileId: params.session?.profileId ?? null,
           abortSignal,
           span,
         },

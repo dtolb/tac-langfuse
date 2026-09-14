@@ -209,7 +209,13 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       ),
       deps.spans.timeStep(
         'memory.recall',
-        () => deps.composeMemory.compose({ memory: input.memory, conversationId, channel }),
+        () =>
+          deps.composeMemory.compose({
+            memory: input.memory,
+            conversationId,
+            channel,
+            profileId: input.profileId,
+          }),
         (m) => ({ chars: m === null ? 0 : m.length }),
       ),
     ]);
@@ -303,7 +309,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     });
 
     // ---- 4. the model call ----
-    const toolCtx: ToolCtx = { conversationId, logger };
+    const toolCtx: ToolCtx = { conversationId, logger, profileId: input.profileId };
     const request: ModelRequest = {
       model: prompt.config.model,
       system: composed.system,

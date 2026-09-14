@@ -157,7 +157,9 @@ const recordingSender = (
 const requestEndCall = async (conversationId: string, reason = 'caller said goodbye'): Promise<void> => {
   await endCallTool.execute(
     { reason },
-    { conversationId, logger: silentLogger },
+    // `profileId: null` deliberately: `end_call` is the one shipped tool that must work for an
+    // unrecognised caller, because hanging up cannot depend on Orchestrator having resolved a customer.
+    { conversationId, logger: silentLogger, profileId: null },
   );
 };
 

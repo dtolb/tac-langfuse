@@ -70,7 +70,11 @@ const fixture = (name: string, requires?: keyof Capabilities): ToolDef => ({
   execute: async () => ({ ok: true }),
 });
 
-const ctx = (logger: ToolLogger = silent): ToolCtx => ({ conversationId: 'test-conv', logger });
+const ctx = (logger: ToolLogger = silent, profileId: string | null = null): ToolCtx => ({
+  conversationId: 'test-conv',
+  logger,
+  profileId,
+});
 
 const capture = (): { readonly bus: ObsBus; readonly events: readonly ObsEvent[] } => {
   const bus = createObsBus();

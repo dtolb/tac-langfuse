@@ -165,6 +165,16 @@ export interface MemoryComposePort {
     readonly memory: unknown | null;
     readonly conversationId: string;
     readonly channel: TurnChannel;
+    /**
+     * The Orchestrator customer this turn belongs to, or `null`.
+     *
+     * Needed because the richest thing memory can contribute — a customer's profile TRAITS — does
+     * not arrive with the recall payload at all. TAC never populates the session's profile field,
+     * and the recall response carries no traits, so the traits section only exists if the port
+     * fetches it, and the fetch is keyed by profile. A port that only ever renders observations can
+     * ignore this.
+     */
+    readonly profileId: string | null;
   }): Promise<string | null>;
 }
 

@@ -274,6 +274,10 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
           transcript: data.transcript,
           abortSignal: data.abortSignal,
           memory: data.userMemory,
+          // Forwarded from T14 on. TAC spreads `session` gated on its own existence rather than on
+          // `memoryMode`, so this has been available on every turn since T13 and was being dropped —
+          // and `session.profileId` is what Conversation Memory and the memory-retrieval tool need.
+          session: data.session,
         },
         { turn, conversations, sender: voiceChannel as VoiceChannel, logger: log },
       ),

@@ -42,14 +42,25 @@ export interface ToolLogger {
 /**
  * What a tool implementation gets besides its arguments.
  *
- * Two fields, on purpose: a logger so a tool can say what it did, and `conversationId` so those
- * lines can be tied to the turn that caused them. Nothing speculative — T14's TAC built-ins will
- * need a TAC handle and can widen this when they land. A field no tool reads is a field whose
- * meaning nobody can check.
+ * Three fields, each of which some tool actually reads — a field no tool reads is a field whose
+ * meaning nobody can check. A logger so a tool can say what it did; `conversationId` so those lines
+ * can be tied to the turn that caused them; and `profileId`, the Conversation Orchestrator customer
+ * this turn belongs to.
+ *
+ * `profileId` landed at T14, and this comment used to predict that T14's TAC built-ins would need
+ * "a TAC handle" here. They do NOT, and that is worth recording rather than quietly deleting:
+ * `server/twilio/builtin-tools.ts` builds its adapters from a factory that CLOSES OVER the live
+ * `TAC`, so the vendor object never reaches this seam and `server/agent/` still names nothing from
+ * `twilio-agent-connect`. Only `profileId` had to cross, because TAC's memory-retrieval tool takes
+ * the profile as a CONSTRUCTOR argument and we construct it per call rather than at boot.
+ *
+ * `null` is a real value here, not a missing key: the bench has no Orchestrator profile at all, so a
+ * tool needing one must degrade rather than assume.
  */
 export interface ToolCtx {
   readonly conversationId: string;
   readonly logger: ToolLogger;
+  readonly profileId: string | null;
 }
 
 export interface ToolDef<S extends z.ZodType = z.ZodType> {
