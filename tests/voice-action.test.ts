@@ -1,8 +1,19 @@
 import { test, expect } from 'vitest';
 import Fastify from 'fastify';
 import formbody from '@fastify/formbody';
+/**
+ * THE VENDOR IS IMPORTED HERE ON PURPOSE, and it is the only import in this file that needs defending.
+ *
+ * `server/http/routes-voice-action.ts` may not import `twilio-agent-connect` — `tests/architecture.test.ts`
+ * confines it to `server/twilio/` and `scripts/` — so it writes the Studio URL out as a literal. That
+ * literal used to be pinned against a SECOND literal in this file, which pinned nothing: no code in the
+ * repo read TAC's own `studioVoiceHandoffUrl`, so a change to its shape would have diverged silently.
+ * Test files are outside the architecture test's scan (it covers `server/`, `shared/` and `web/src/`),
+ * which is what makes reading the vendor here both legal and the correct place to do it.
+ */
+import { studioVoiceHandoffUrl } from 'twilio-agent-connect';
 import { buildActionTwiml, registerVoiceActionRoutes } from '../server/http/routes-voice-action.ts';
-import { capabilities, loadConfig } from '../server/config.ts';
+import { loadConfig } from '../server/config.ts';
 import { createObsBus } from '../server/obs/bus.ts';
 import { VOICE_ACTION_PATH, CLIENT_IDENTITY } from '../shared/handoff.ts';
 import type { App } from '../server/http/types.ts';
@@ -20,10 +31,9 @@ const handoffData = JSON.stringify({
 test('with a flow SID configured it redirects to Studio', () => {
   const { twiml, route } = buildActionTwiml({ handoffData, accountSid: ACCOUNT_SID, flowSid: FLOW_SID });
   expect(route).toBe('studio');
-  // TAC's own `studioVoiceHandoffUrl` shape, written out here because this module may not import TAC.
-  expect(twiml).toContain(
-    `https://webhooks.twilio.com/v1/Accounts/${ACCOUNT_SID}/Flows/${FLOW_SID}?Trigger=incomingCall`,
-  );
+  // Asserted against TAC'S OWN FUNCTION, not against a copy of the route's literal. This is the
+  // divergence guard the route's header claims: if 2.2.x changes the URL shape, this line goes red.
+  expect(twiml).toContain(studioVoiceHandoffUrl(ACCOUNT_SID, FLOW_SID));
   expect(twiml).toContain('<Redirect method="POST">');
 });
 
@@ -78,7 +88,7 @@ test('the route answers XML with a 200 and publishes one handoff event', async (
     TWILIO_CONVERSATION_CONFIGURATION_ID: 'conv_configuration_' + 'a'.repeat(26),
     TWILIO_STUDIO_HANDOFF_FLOW_SID: FLOW_SID,
   });
-  registerVoiceActionRoutes(app, { config, caps: capabilities(config), bus });
+  registerVoiceActionRoutes(app, { config, bus });
 
   const res = await app.inject({
     method: 'POST',
@@ -104,12 +114,44 @@ test('the route answers XML with a 200 and publishes one handoff event', async (
   await app.close();
 });
 
+test('a DUPLICATED form key does not discard the pending transfer', async () => {
+  /**
+   * `@fastify/formbody` turns a repeated key into an ARRAY, which fails `z.string()` even though every
+   * field in `ActionBody` is optional — so "cannot happen with every field optional" was wrong. The old
+   * fallback was `body = {}`, which threw away `HandoffData` along with the offending field and turned a
+   * pending transfer into `<Hangup/>`: a caller who asked for a human, hung up on, because a duplicate
+   * `From` arrived. Salvaging per field is what keeps the routing decision.
+   */
+  const bus = createObsBus();
+  const app = Fastify() as unknown as App;
+  await app.register(formbody);
+  const config = loadConfig({ TWILIO_STUDIO_HANDOFF_FLOW_SID: FLOW_SID });
+  registerVoiceActionRoutes(app, { config, bus });
+
+  const res = await app.inject({
+    method: 'POST',
+    url: VOICE_ACTION_PATH,
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    // `From` twice. Everything else, including `HandoffData`, is well-formed.
+    payload: `From=%2B15557778888&From=%2B15559990000&HandoffData=${encodeURIComponent(handoffData)}`,
+  });
+
+  expect(res.statusCode).toBe(200);
+  // No account SID configured, so the client path — but the point is that it ROUTED at all, and that it
+  // still carries the correlator parsed out of the payload the old code discarded.
+  expect(res.body).toContain('<Dial');
+  expect(res.body).toContain('<Parameter name="conversationId" value="conv_action_1"/>');
+  // Not a bare hangup document, which is what the discard-the-whole-body path produced.
+  expect(res.body).not.toBe('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>');
+  await app.close();
+});
+
 test('a failed session is logged and hung up, not redirected', async () => {
   const bus = createObsBus();
   const app = Fastify() as unknown as App;
   await app.register(formbody);
   const config = loadConfig({ TWILIO_STUDIO_HANDOFF_FLOW_SID: FLOW_SID });
-  registerVoiceActionRoutes(app, { config, caps: capabilities(config), bus });
+  registerVoiceActionRoutes(app, { config, bus });
 
   const res = await app.inject({
     method: 'POST',

@@ -9,9 +9,11 @@
  *
  * ── THE BACKUP IS NOT OPTIONAL, AND IT IS RE-READ ───────────────────────────────────────────────
  *
- * A flow update is a FULL REPLACE of `Definition`. So this GETs the current flow, writes it verbatim to
- * `.superpowers/t14b/`, re-reads that file and checks it parses and still carries a `definition` with a
- * `states` array, and only then PUTs. A truncated backup is worse than none, because it reads as
+ * A flow update is a FULL REPLACE of `Definition`. So this GETs the current flow, writes it to
+ * `.superpowers/t14b/` as `JSON.stringify(parsed, null, 2)` — a re-serialisation rather than the bytes
+ * Twilio sent, so whitespace and key order may differ from the wire; recovery is unaffected because it
+ * PUTs the parsed `definition` back — re-reads that file and checks it parses and still carries a
+ * `definition` with a `states` array, and only then PUTs. A truncated backup is worse than none, because it reads as
  * recoverable right up until it is needed — which is why the re-read exists rather than trusting the
  * write. Recovery is PUTting the saved `definition` back unchanged.
  *

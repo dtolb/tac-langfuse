@@ -152,3 +152,49 @@ test('an empty store answers 200 with found:false — never a 404', async () => 
     expect(res.json()).toMatchObject({ found: false, match: 'none', reason: null, transcript: [] });
   });
 });
+
+test('a query with NO correlator cannot read the last caller off a populated store', async () => {
+  /**
+   * The one test in this file that is about exposure rather than behaviour. This route is
+   * unauthenticated by design and `/api` is what Traefik and the ngrok tunnel route here, so
+   * `findHandoffSnapshot`'s `recent` rung — `all.at(-1)` on an empty query — made
+   * `curl https://<public-domain>/api/handoff/context` return the newest transcript verbatim, 200 OK,
+   * with up to `HANDOFF_MAX_SNAPSHOTS` calls reachable that way.
+   *
+   * The store above it is deliberately POPULATED, which is what the pre-existing empty-store test could
+   * not distinguish: it passed both before and after the guard.
+   */
+  recordHandoffSnapshot({
+    conversationId: 'conv_pop_3',
+    reason: 'caller was shouting',
+    from: '+15559990000',
+    at: '2026-09-14T10:00:00.000Z',
+    transcript: [{ role: 'user', text: 'my card number is 4111 1111 1111 1111' }],
+  });
+
+  await withContextApp(async (app) => {
+    for (const url of [
+      HANDOFF_CONTEXT_PATH,
+      // An empty value is absent too, or the guard is bypassed by one character.
+      `${HANDOFF_CONTEXT_PATH}?from=`,
+      `${HANDOFF_CONTEXT_PATH}?conversationId=`,
+    ]) {
+      const res = await app.inject({ method: 'GET', url });
+      // Still 200 with a renderable body — the route's other promise is unchanged.
+      expect(res.statusCode, url).toBe(200);
+      expect(res.json(), url).toMatchObject({ found: false, match: 'none', transcript: [] });
+      expect(res.body, url).not.toContain('4111');
+      expect(res.body, url).not.toContain('shouting');
+    }
+
+    // And the `recent` rung still works for the case it exists for: a caller number that matched
+    // nothing, which is a Studio flow that dropped `caller_id`.
+    const withNumber = await app.inject({
+      method: 'GET',
+      url: `${HANDOFF_CONTEXT_PATH}?from=${encodeURIComponent('+15550000001')}`,
+    });
+    expect(withNumber.json()).toMatchObject({ found: true, match: 'recent', reason: 'caller was shouting' });
+  });
+
+  forgetHandoffSnapshot('conv_pop_3');
+});

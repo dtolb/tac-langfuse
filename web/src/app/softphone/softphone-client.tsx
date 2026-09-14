@@ -98,8 +98,17 @@ export function SoftphoneClient() {
       });
 
       // A token that quietly expires takes the softphone offline with nothing on screen to say why.
+      //
+      // The `.catch` is the whole point of the handler. Without it a failed refresh is an unhandled
+      // rejection, the Device goes offline the moment the old token expires, and the UI still reads
+      // `registered` — the exact silent-offline failure this handler exists to prevent.
       device.on('tokenWillExpire', () => {
-        void fetchToken().then((fresh) => device.updateToken(fresh));
+        void fetchToken()
+          .then((fresh) => device.updateToken(fresh))
+          .catch((err: unknown) => {
+            setStatus('error');
+            setError(err instanceof Error ? `token refresh failed: ${err.message}` : String(err));
+          });
       });
 
       device.on('incoming', (incoming) => {
@@ -166,11 +175,14 @@ export function SoftphoneClient() {
             <>
               <p className="text-sm font-medium">Why: {context.reason}</p>
               {/* The match quality is SHOWN, not hidden: `recent` can be the wrong call under load, and
-                  a human reading a transcript needs to know how confident the correlation was. */}
-              <p className="text-xs text-text-secondary">
-                matched on {context.match}
-                {context.maskedFrom === null ? '' : ` — ${context.maskedFrom}`}
-              </p>
+                  a human reading a transcript needs to know how confident the correlation was.
+
+                  `context.maskedFrom` is deliberately NOT rendered. The line above already shows
+                  `call.parameters.From` in full — a human agent about to speak to this person needs the
+                  real number — so printing the masked copy two lines below it defeated nothing and read
+                  as a bug. The masking in `server/http/routes-handoff.ts` still matters: it is what keeps
+                  the number out of the response body for every other consumer of that route. */}
+              <p className="text-xs text-text-secondary">matched on {context.match}</p>
               <ol className="flex flex-col gap-1 text-sm">
                 {context.transcript.map((turn, i) => (
                   <li key={i}>

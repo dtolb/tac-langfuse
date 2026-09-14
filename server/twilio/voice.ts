@@ -113,7 +113,13 @@ export function buildVoiceTwimlOptions(publicDomain: string): {
   readonly reportInputDuringAgentSpeech: 'any';
   readonly actionUrl: string;
 } {
-  if (publicDomain.trim() === '') {
+  // Trailing slashes are STRIPPED, not merely tolerated. `../config.ts`'s `voiceSchema` rejects only a
+  // scheme, so `example.ngrok.app/` is a legal configured value — and concatenating it with a path that
+  // already starts with `/` yields `https://host//api/voice/relay-action`, which Fastify does not match.
+  // Twilio would get a 404 on the action POST, which the caller experiences as a dropped transfer with
+  // nothing in this process's log to explain it.
+  const host = publicDomain.trim().replace(/\/+$/, '');
+  if (host === '') {
     throw new Error(
       'buildVoiceTwimlOptions requires a non-empty publicDomain: an empty actionUrl silently deletes ' +
         'the action attribute without throwing, which drops every handoff',
@@ -123,7 +129,7 @@ export function buildVoiceTwimlOptions(publicDomain: string): {
     reportInputDuringAgentSpeech: 'any',
     // Scheme included, unlike `voicePublicDomain` — TAC builds `wss://` itself for the socket, but the
     // action URL is handed to Twilio verbatim.
-    actionUrl: `https://${publicDomain}${VOICE_ACTION_PATH}`,
+    actionUrl: `https://${host}${VOICE_ACTION_PATH}`,
   };
 }
 
@@ -411,11 +417,31 @@ export async function handleVoicePrompt(params: VoicePrompt, deps: VoiceDeps): P
 
       if (sendFailure !== null) throw sendFailure;
 
+      // ══ THE TRANSFER INTENT IS READ HERE, ABOVE THE EMPTY-ANSWER FALLBACK, AND THE ORDER IS A FIX. ══
+      //
+      // It used to be read below, and that produced TWO `{"type":"end"}` frames on one socket. TAC's
+      // `sendResponse` drains `session.pendingHandoffData` ITSELF — it sends the parked frame and then
+      // `delete`s it (`dist/index.js:5245-5254`, read in the installed 2.2.0 bundle). So on a turn that
+      // called `handoff` and then produced zero tokens — reachable, because `maxSteps` is 3 and a
+      // search-then-transfer turn can exhaust it — the fallback `sendResponse` below would send the
+      // parked frame as a side effect, and the drain further down would then find the intent, see
+      // `parked === undefined`, and send a SECOND bare `{"type":"end"}`. The obs event also reported
+      // `hadPayload: false` for a transfer that did carry one.
+      //
+      // Reading it first also gives the caller the better utterance: someone who has just asked for a
+      // person should not hear "Sorry, I didn't catch that" and *then* be transferred.
+      const handoffReason = consumeHandoffRequest(conversationId);
+
       // AN EMPTY ANSWER IS DEAD AIR, and not for the obvious reason. `sendStreamingResponse` emits
       // the `{token: '', last: true}` end-of-turn marker only if at least one token was sent, so a
       // zero-token stream closes nothing: ConversationRelay keeps waiting for us and the caller
       // hears an open line forever. Speaking real text is what ends the talk cycle.
-      if (spoken === '') {
+      //
+      // UNLESS A TRANSFER IS PENDING, in which case the end frame below closes the talk cycle instead —
+      // and speaking here would both duplicate the frame (see above) and stall the transfer behind a
+      // sentence the caller did not ask for. The silent zero-token transfer is still observable: the
+      // `handoff` event below carries `farewell: ''`.
+      if (spoken === '' && handoffReason === null) {
         turn.obs.publish({
           kind: 'error',
           summary: 'voice turn produced no tokens — spoke the fallback to close the talk cycle',
@@ -439,7 +465,6 @@ export async function handleVoicePrompt(params: VoicePrompt, deps: VoiceDeps): P
       // Two `{"type":"end"}` frames on one socket is undefined behaviour, so exactly one goes out.
       // Hanging up on someone who has just asked for a human is the worst available outcome, so the
       // handoff is checked FIRST and a pending `end_call` is dropped, not queued.
-      const handoffReason = consumeHandoffRequest(conversationId);
       if (handoffReason !== null) {
         forgetEndCallRequest(conversationId);
 
@@ -483,9 +508,18 @@ export async function handleVoicePrompt(params: VoicePrompt, deps: VoiceDeps): P
          * assignment at `6490`, are every mention in the bundle. So on a streaming app the parked frame
          * is never sent at all, and TAC's own streaming example never drains it either.
          *
-         * Falling back to a plain `{type:'end'}` is deliberate: if the tool succeeded but the frame is
-         * somehow absent, ending the session still returns control to Twilio and our action route still
-         * answers, so the caller reaches a human without the payload rather than sitting on a dead line.
+         * ⚠ WHAT THE `?? {type:'end'}` FALLBACK ACTUALLY DOES, corrected. It does NOT transfer. A bare
+         * end produces an action POST with no `HandoffData`, and `../http/routes-voice-action.ts`'s
+         * `buildActionTwiml` takes its `handoffData === undefined` branch and answers `<Hangup/>` — so
+         * the fallback ends the call CLEANLY rather than reaching a human. (The claim here before was
+         * written at Task 3 as a forward reference to a route that did not exist yet; Task 4 built it the
+         * other way.) It is kept because a clean hangup is still better than an open line, but it is the
+         * outcome the "TRANSFER WINS UNCONDITIONALLY" note above calls the worst available one.
+         *
+         * The path is now UNREACHABLE for the case that used to reach it: the only way the tool could
+         * succeed and the frame be absent was TAC's own drain inside the fallback `sendResponse`, which
+         * the hoisted `handoffReason` above no longer lets run. `parked` can still be `undefined` if TAC
+         * ever stops parking a frame at all, which is what this fallback now covers.
          */
         const parked = params.session?.pendingHandoffData;
         const sent = sendFrame(sender, conversationId, parked ?? { type: 'end' }, logger);

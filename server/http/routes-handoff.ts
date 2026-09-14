@@ -101,13 +101,42 @@ export function registerHandoffRoutes(
    * only AFTER a conversation ends, so for a first-time caller a memory panel would be empty at exactly
    * the moment it is being demoed. What this returns is what the agent just heard, which is always
    * present and always relevant.
+   *
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   * AT LEAST ONE CORRELATOR IS REQUIRED, and that guard is the only thing standing between this route
+   * and a public transcript dump.
+   *
+   * This route is UNAUTHENTICATED by design (see above), and `/api` is exactly what Traefik and the
+   * ngrok tunnel route to this process. `findHandoffSnapshot`'s third rung answers an empty query with
+   * `all.at(-1)` — the newest snapshot — so a parameterless `GET /api/handoff/context` returned the
+   * last caller's VERBATIM transcript, reason and number with a 200. Snapshots are deliberately not
+   * cleared on disconnect and have no TTL, so up to `HANDOFF_MAX_SNAPSHOTS` recent calls were
+   * retrievable by one `curl`.
+   *
+   * The guard lives HERE rather than in `findHandoffSnapshot` because the `recent` rung is correct for
+   * the caller that has a number but no match — a Studio flow that dropped the `caller_id` — and it is
+   * asserted as such by `tests/handoff.test.ts`. Narrowing the store would change the meaning of the
+   * documented three-rung ladder for every caller in order to fix one exposed boundary. The boundary is
+   * where the exposure is, so the boundary is where the check goes.
+   *
+   * Answering `found: false` rather than a 400 keeps the route's other promise: every response is a
+   * body the page can render. The softphone always sends `from` on a real ring
+   * (`web/src/app/softphone/softphone-client.tsx`), so nothing legitimate reaches this branch.
+   *
+   * An EMPTY value counts as absent. `?from=` parses to `''`, which is `!= null`, so it would reach the
+   * store, match nothing, and land on `recent` — the guard bypassed by one character.
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
    */
   app.get(HANDOFF_CONTEXT_PATH, (request, reply) => {
     const query = request.query as { conversationId?: string; from?: string };
-    const { snapshot, match } = findHandoffSnapshot({
-      conversationId: query.conversationId ?? null,
-      from: query.from ?? null,
-    });
+    const correlator = (value: string | undefined): string | null =>
+      value === undefined || value.trim() === '' ? null : value;
+    const conversationId = correlator(query.conversationId);
+    const from = correlator(query.from);
+    const { snapshot, match } =
+      conversationId === null && from === null
+        ? { snapshot: null, match: 'none' as const }
+        : findHandoffSnapshot({ conversationId, from });
 
     const body: HandoffContextResponse =
       snapshot === null

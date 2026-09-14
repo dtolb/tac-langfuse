@@ -202,8 +202,9 @@ export function buildApp(deps: AppDeps): {
   });
 
   // Registered unconditionally and with no capability gate — Twilio is mid-call by the time it POSTs
-  // here, so a 404 or a 503 is a dropped call. See the route's own header.
-  registerVoiceActionRoutes(app, { config, caps, bus: obsBus });
+  // here, so a 404 or a 503 is a dropped call. See the route's own header. It is the only route in this
+  // file that takes no `caps`, precisely because it has nothing to gate on.
+  registerVoiceActionRoutes(app, { config, bus: obsBus });
 
   // Registered unconditionally too, but for a different reason: the token route is capability-GATED and
   // answers 503 naming the variable, while the screen pop always answers 200. The minter arrives later

@@ -24,7 +24,9 @@
  */
 import { z } from 'zod';
 import { CLIENT_IDENTITY, VOICE_ACTION_PATH } from '../../shared/handoff.ts';
-import type { AppConfig, Capabilities } from '../config.ts';
+// No `Capabilities`: this route is deliberately ungated (see the handler below), so taking one would be
+// a dependency that documents the opposite of what the route does.
+import type { AppConfig } from '../config.ts';
 import { childLogger } from '../logging.ts';
 import type { ObsBus } from '../obs/bus.ts';
 import { maskPhone } from '../obs/pii.ts';
@@ -70,9 +72,14 @@ const hangup = (): string => `${DECLARATION}<Response><Hangup/></Response>`;
  * The Studio voice webhook URL.
  *
  * Written out rather than imported from TAC's `studioVoiceHandoffUrl(accountSid, flowSid)` — which
- * produces this exact string — because this module may not import `twilio-agent-connect`. Kept
- * byte-identical, and `tests/voice-action.test.ts` pins it, so a TAC change to the shape is a visible
- * test failure rather than a silent divergence.
+ * produces this exact string (`dist/index.js:4674`) — because this module may not import
+ * `twilio-agent-connect`; `tests/architecture.test.ts` confines it to `server/twilio/` and `scripts/`.
+ *
+ * The divergence guard is real rather than asserted: `tests/voice-action.test.ts` imports
+ * `studioVoiceHandoffUrl` from TAC — test files are outside the architecture test's scan, which covers
+ * only `server/`, `shared/` and `web/src/` — and asserts the emitted TwiML contains ITS output, not a
+ * second copy of this literal. A TAC change to the URL shape is therefore a test failure. It was NOT
+ * before: the test pinned the string against its own literal, so nothing in the repo read the vendor's.
  *
  * `Trigger=incomingCall` is what makes Studio start a voice execution. Note the flow receives NO
  * handoff data: a `<Redirect>` starts a FRESH incoming-call execution, whose trigger variables are the
@@ -159,9 +166,29 @@ export function buildActionTwiml(input: {
   return { twiml: dialClient(conversationId), route: 'client', conversationId, reasonCode };
 }
 
+/**
+ * Salvage the fields that DID parse, rather than discarding the payload.
+ *
+ * `ActionBody.safeParse` can fail even with every field optional: a field present with the wrong TYPE
+ * fails. `@fastify/formbody` turns a duplicated form key into an ARRAY, so one repeated `From` used to
+ * take `body = {}` — discarding `HandoffData` along with it and turning a pending transfer into
+ * `<Hangup/>`. Per-field coercion keeps the transfer: anything that is not a string is simply dropped,
+ * which is what the optional schema already means.
+ */
+const salvageStrings = (raw: unknown): z.infer<typeof ActionBody> => {
+  if (typeof raw !== 'object' || raw === null) return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'string') out[key] = value;
+  }
+  // Re-parsed rather than cast, so unknown keys are stripped exactly as the normal path strips them.
+  const parsed = ActionBody.safeParse(out);
+  return parsed.success ? parsed.data : {};
+};
+
 export function registerVoiceActionRoutes(
   app: App,
-  deps: { readonly config: AppConfig; readonly caps: Capabilities; readonly bus: ObsBus },
+  deps: { readonly config: AppConfig; readonly bus: ObsBus },
 ): void {
   /**
    * NO CAPABILITY GATE, unlike every other route in this directory. Twilio is already executing TwiML
@@ -171,11 +198,16 @@ export function registerVoiceActionRoutes(
    */
   app.post(VOICE_ACTION_PATH, (request, reply) => {
     const parsed = ActionBody.safeParse(request.body ?? {});
-    const body = parsed.success ? parsed.data : {};
+    const body = parsed.success ? parsed.data : salvageStrings(request.body);
     if (!parsed.success) {
-      // Cannot happen with every field optional, but a schema edit could make it possible, and the
-      // consequence would be a dropped call. Logged rather than thrown.
-      log.warn({ url: request.url }, 'voice-action: could not parse the action callback body');
+      // REACHABLE, despite every field being optional: a duplicated form key makes `@fastify/formbody`
+      // produce an array, which fails `z.string()`. Salvaging per field rather than falling back to `{}`
+      // is what keeps `HandoffData` — dropping the whole body there turned a pending transfer into
+      // `<Hangup/>`. Logged rather than thrown; a throw here is a dropped call.
+      log.warn(
+        { url: request.url, salvaged: Object.keys(body) },
+        'voice-action: the action callback body did not parse cleanly — salvaged the string fields',
+      );
     }
 
     if (body.SessionStatus === 'failed') {

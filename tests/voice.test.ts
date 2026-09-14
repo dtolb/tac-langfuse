@@ -98,9 +98,24 @@ const fakeTurnDeps = (
   };
 };
 
-/** Records what was sent, what signal it was sent with, and any raw frames written to the socket. */
+/**
+ * Records what was sent, what signal it was sent with, and any raw frames written to the socket.
+ *
+ * ── `sendResponse` DRAINS THE PARKED FRAME, BECAUSE THE VENDOR DOES ─────────────────────────────
+ *
+ * Pass `session` and this fake emulates TAC's drain: `sendResponse` sends the text, then — if
+ * `session.pendingHandoffData` is set — writes that frame to the socket and `delete`s the field
+ * (`dist/index.js:5245-5254` in the installed 2.2.0 bundle, read rather than assumed). Without this the
+ * fake diverged from the vendor on the exact behaviour this feature is built around, which is why a real
+ * double-frame bug was invisible to a suite of eleven voice tests: the fallback `sendResponse` on a
+ * zero-token turn sent the parked frame as a side effect, and the drain then sent a second bare
+ * `{"type":"end"}`.
+ *
+ * Deliberately NOT emulated: the vendor's closed-socket guard, which throws SYNCHRONOUSLY from a method
+ * declared to return a promise. That belongs to the error-path tests, which supply their own sender.
+ */
 const recordingSender = (
-  opts: { socketOpen?: boolean } = {},
+  opts: { socketOpen?: boolean; session?: { pendingHandoffData?: unknown } } = {},
 ): {
   sender: VoiceSender;
   streamed: string[];
@@ -120,6 +135,10 @@ const recordingSender = (
    */
   const order: string[] = [];
   const socketOpen = opts.socketOpen ?? true;
+  const write = (data: string): void => {
+    frames.push(data);
+    order.push(`frame:${data}`);
+  };
   return {
     streamed,
     spoken,
@@ -142,15 +161,20 @@ const recordingSender = (
       async sendResponse(_id, message) {
         spoken.push(message);
         order.push(`say:${message}`);
+        // TAC's drain, in the order the bundle does it: the text frame first, then the parked handoff
+        // frame, then the field is deleted. `sendStreamingResponse` above has NO such drain, which is
+        // the asymmetry `server/twilio/voice.ts` exists to cover.
+        const session = opts.session;
+        if (session !== undefined && session.pendingHandoffData !== undefined) {
+          if (socketOpen) write(JSON.stringify(session.pendingHandoffData));
+          delete session.pendingHandoffData;
+        }
       },
       getWebsocket: () =>
         socketOpen
           ? {
               readyState: 1, // WebSocket.OPEN
-              send: (data: string) => {
-                frames.push(data);
-                order.push(`frame:${data}`);
-              },
+              send: write,
             }
           : null,
     },
@@ -604,6 +628,53 @@ test('a handoff BEATS a pending end_call, and only one frame is sent', async () 
   forgetHandoffSnapshot('conv_handoff_3');
 });
 
+test('a ZERO-TOKEN handoff turn sends exactly ONE frame, and it carries the payload', async () => {
+  /**
+   * THE REGRESSION TEST FOR A DOUBLE `{"type":"end"}`, and the reason the fake above now drains.
+   *
+   * Reachable in production: `maxSteps` is 3, and a turn that searches and then transfers can exhaust
+   * the budget and produce no text at all. Before the fix, `consumeHandoffRequest` was read BELOW the
+   * empty-answer block, so the sequence was — fallback text out, TAC's `sendResponse` drain sends the
+   * parked frame, our drain then finds the intent, sees `parked === undefined`, and sends a SECOND bare
+   * `{"type":"end"}`. Two end frames on one socket is undefined behaviour, and the `handoff` event
+   * reported `hadPayload: false` for a transfer that did carry one.
+   *
+   * Run this test against the pre-fix ordering and it fails three ways: `rec.frames` has length 2, the
+   * second entry is `{"type":"end"}`, and `rec.spoken` holds the fallback line.
+   */
+  const events: ObsEvent[] = [];
+  // Zero deltas AND empty text: the turn produced nothing to say.
+  const turn = fakeTurnDeps([], '', events);
+  const { session } = await requestHandoff('conv_handoff_5', 'caller asked for a person');
+  const rec = recordingSender({ session: session as unknown as { pendingHandoffData?: unknown } });
+  const parked = parkedFrame(session);
+
+  await handleVoicePrompt(
+    {
+      conversationId: 'conv_handoff_5',
+      transcript: 'just put me through to somebody',
+      abortSignal: new AbortController().signal,
+      memory: undefined,
+      session,
+    },
+    { turn, conversations: registry(), sender: rec.sender, logger: silentLogger },
+  );
+
+  // ONE frame, and it is TAC's parked one. `toEqual` on the whole array is the assertion — a length
+  // check alone would pass on the buggy ordering if the frames happened to be equal.
+  expect(rec.frames).toEqual([parked]);
+  // And nothing was SAID. A caller who has just asked for a person must not hear "Sorry, I didn't catch
+  // that" and then be transferred; the end frame closes the talk cycle here, so the fallback is not
+  // needed to close it either.
+  expect(rec.spoken).toEqual([]);
+  expect(rec.order).toEqual([`frame:${parked}`]);
+
+  const published = events.find((e) => e.kind === 'handoff');
+  expect(published?.payload).toMatchObject({ frameSent: true, hadPayload: true, farewell: '' });
+
+  forgetHandoffSnapshot('conv_handoff_5');
+});
+
 test('interrupting the "putting you through" line cancels the transfer', async () => {
   const events: ObsEvent[] = [];
   const turn = fakeTurnDeps(['Putting you through.'], 'Putting you through.', events);
@@ -662,4 +733,19 @@ test('the action URL is pinned, non-empty, and points at a path we own', () => {
   // throw, and hence this assertion.
   expect(() => buildVoiceTwimlOptions('')).toThrow(/publicDomain/);
   expect(() => buildVoiceTwimlOptions('   ')).toThrow(/publicDomain/);
+
+  // A TRAILING SLASH IS LEGAL IN THE ENV VAR — `server/config.ts`'s `voiceSchema` rejects a scheme and
+  // nothing else — and concatenating it with a path that already starts with `/` used to produce
+  // `https://host//api/voice/relay-action`, which Fastify does not match. Twilio would 404 the action
+  // POST and the caller would lose the transfer with nothing logged here to say why.
+  expect(buildVoiceTwimlOptions('demo.ngrok.app/').actionUrl).toBe(
+    `https://demo.ngrok.app${VOICE_ACTION_PATH}`,
+  );
+  expect(buildVoiceTwimlOptions('demo.ngrok.app///').actionUrl).toBe(
+    `https://demo.ngrok.app${VOICE_ACTION_PATH}`,
+  );
+  // A base path is legal per TAC and must SURVIVE — only the trailing slash goes.
+  expect(buildVoiceTwimlOptions('demo.example.com/server1/').actionUrl).toBe(
+    `https://demo.example.com/server1${VOICE_ACTION_PATH}`,
+  );
 });
