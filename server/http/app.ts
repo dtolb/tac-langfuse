@@ -17,6 +17,7 @@ import { obsBus } from '../obs/bus.ts';
 import { registerObsRoutes, type ObsRoutes } from './routes-obs.ts';
 import { registerBenchRoutes, type BenchRoutes } from './routes-bench.ts';
 import { registerVoiceActionRoutes } from './routes-voice-action.ts';
+import { registerHandoffRoutes, type HandoffRoutes } from './routes-handoff.ts';
 import { APP_API_PATHS, BENCH_TURN_PATH, TAC_WEBHOOK_PATHS } from '../../shared/twilio-paths.ts';
 import type { TurnDeps } from '../agent/types.ts';
 import type { App } from './types.ts';
@@ -35,7 +36,12 @@ export interface AppDeps {
   readonly turn?: TurnDeps;
 }
 
-export function buildApp(deps: AppDeps): { app: App; obs: ObsRoutes; bench: BenchRoutes } {
+export function buildApp(deps: AppDeps): {
+  app: App;
+  obs: ObsRoutes;
+  bench: BenchRoutes;
+  handoff: HandoffRoutes;
+} {
   const { config, caps } = deps;
 
   const app = Fastify({
@@ -199,7 +205,12 @@ export function buildApp(deps: AppDeps): { app: App; obs: ObsRoutes; bench: Benc
   // here, so a 404 or a 503 is a dropped call. See the route's own header.
   registerVoiceActionRoutes(app, { config, caps, bus: obsBus });
 
-  return { app, obs, bench };
+  // Registered unconditionally too, but for a different reason: the token route is capability-GATED and
+  // answers 503 naming the variable, while the screen pop always answers 200. The minter arrives later
+  // via `handoff.setMintToken` — see the route module's header on why it cannot be passed in here.
+  const handoff = registerHandoffRoutes(app, { config, caps });
+
+  return { app, obs, bench, handoff };
 }
 
 export type { App } from './types.ts';

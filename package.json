@@ -40,6 +40,7 @@
     "fastify-graceful-shutdown": "^5.0.0",
     "loglayer": "^9.4.0",
     "pino": "^10.3.1",
+    "twilio": "5.13.1",
     "twilio-agent-connect": "^2.2.0",
     "zod": "^4.5.4"
   },

@@ -35,6 +35,18 @@ export const VOICE_TOKEN_PATH = '/api/voice/token';
 export const HANDOFF_CONTEXT_PATH = '/api/handoff/context';
 
 /**
+ * AccessToken lifetime. One hour, which is Twilio's own default.
+ *
+ * Lives in `shared/` because both sides need it and neither may import the other's: the minter is in
+ * `server/twilio/` (it imports the `twilio` package) and the route that reports it is in `server/http/`
+ * (which may not). Two hard-coded 3600s would drift the moment one was tuned.
+ *
+ * The page re-fetches on `tokenWillExpire` regardless, because a token that expires mid-demo takes the
+ * softphone offline silently — the Device stops registering and nothing on screen says why.
+ */
+export const VOICE_TOKEN_TTL_SECONDS = 3600;
+
+/**
  * How confidently the screen pop was matched to the ringing call.
  *
  * Reported to the UI rather than hidden, because the two weak cases are real: Studio's

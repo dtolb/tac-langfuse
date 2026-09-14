@@ -48,7 +48,7 @@ if (config.appName === 'scaffold') {
 // as an opaque 400 from OpenAI in the middle of a call.
 preflightDefaultPromptTools();
 
-const { app, obs, bench } = buildApp({ config, caps });
+const { app, obs, bench, handoff } = buildApp({ config, caps });
 
 /** Set once TAC boots, so cleanup can end its conversation roots too. */
 let tacShutdown: (() => void) | null = null;
@@ -99,6 +99,32 @@ if (caps.sms || caps.voice) {
     const { bootTac } = await import('./twilio/tac.ts');
     const tac = await bootTac({ app, config, caps, turn: bench.turnDeps() });
     tacShutdown = tac.shutdown;
+
+    /**
+     * The softphone's minter, injected on the SUCCESS PATH ONLY — a failed boot must leave
+     * `POST /api/voice/token` answering 503 rather than handing out a token from a process that cannot
+     * answer the call the token is for.
+     *
+     * Dynamic, exactly like the `bootTac` import above it and for the same reason: a process with no
+     * Twilio credentials must never load the `twilio` SDK.
+     *
+     * `config.twilio` is non-null in this branch by construction — `caps.sms` and `caps.voice` both
+     * require it — but a capability flag carries no type information, so the narrowing is re-done here
+     * rather than asserted away.
+     */
+    const twilioConfig = config.twilio;
+    if (twilioConfig !== null) {
+      const { mintVoiceToken } = await import('./twilio/voice-token.ts');
+      handoff.setMintToken((identity) =>
+        mintVoiceToken({
+          accountSid: twilioConfig.accountSid,
+          apiKey: twilioConfig.apiKey,
+          apiSecret: twilioConfig.apiSecret,
+          identity,
+        }),
+      );
+    }
+
     await tac.start(); // binds the port
   } catch (err) {
     log.error(

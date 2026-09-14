@@ -20,7 +20,7 @@
  * is small and worth naming precisely: an unauthenticated POST here returns routing TwiML and nothing
  * else — no account data, no token, no side effect beyond one obs event. It cannot place a call; only
  * Twilio executing TwiML for a call that already reached us can. If this ever needs signing, inject a
- * validator from `server/twilio/` the way Task 5 injects `mintToken` into `./routes-handoff.ts`.
+ * validator from `server/twilio/` the way `./routes-handoff.ts` has `mintToken` injected into it.
  */
 import { z } from 'zod';
 import { CLIENT_IDENTITY, VOICE_ACTION_PATH } from '../../shared/handoff.ts';

@@ -252,6 +252,9 @@ importers:
       pino:
         specifier: ^10.3.1
         version: 10.3.1
+      twilio:
+        specifier: 5.13.1
+        version: 5.13.1
       twilio-agent-connect:
         specifier: ^2.2.0
         version: 2.2.0
