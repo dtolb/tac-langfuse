@@ -50,6 +50,13 @@ export const tacCalls = (tac: TAC): string[] => (tac as unknown as { calls: stri
  * `pendingHandoffData` is an accessor, not a field, so the assignment TAC makes
  * (`session.pendingHandoffData = pending`, `dist/index.js:6487-6490`) both lands in the log as
  * `park:<conversationId>` and stays readable for the frame-shape assertions.
+ *
+ * `configurable: true` is NOT boilerplate: the drain deletes the property after sending the frame,
+ * exactly as the vendor's own drain does (`delete session.pendingHandoffData`, `dist/index.js:5249`).
+ * `Object.defineProperty` defaults `configurable` to false, and these files are ESM — always strict
+ * mode — so a `delete` would THROW rather than return false, failing a correctly written drain for a
+ * reason that exists only in this fake. The delete removes the accessor with it, so a session that is
+ * parked AGAIN after a drain stops recording `park:` — read the log before draining, not after.
  */
 export const voiceSession = (conversationId: string, calls: string[]): ConversationSession => {
   let parked: unknown;
@@ -63,6 +70,7 @@ export const voiceSession = (conversationId: string, calls: string[]): Conversat
   };
   Object.defineProperty(session, 'pendingHandoffData', {
     enumerable: true,
+    configurable: true,
     get: () => parked,
     set: (value: unknown) => {
       parked = value;

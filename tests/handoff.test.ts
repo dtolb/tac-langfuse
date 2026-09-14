@@ -184,7 +184,10 @@ test("an unset flow SID is a miss, not a boot crash — construction is lazy", a
  *    validation failure for us and would be accepted by TAC. Deliberate — an empty reason renders as a
  *    blank line on the human's screen pop — and `server/twilio/handoff.ts` records it at the mirror.
  *    Stripped from BOTH sides so the comparison stays symmetric, and covered instead by the
- *    `safeParse('')` assertion below.
+ *    `safeParse('')` assertion below. Stripping from both sides is what makes the claim "TAC has no
+ *    bound" unfalsifiable by this deep-equal, so the test asserts TAC's `minLength` is absent BEFORE
+ *    normalising — a release adding one would otherwise stay green and leave that claim, and the same
+ *    one in `server/twilio/handoff.ts`, confidently wrong.
  */
 const normalise = (schema: unknown): Record<string, unknown> => {
   const copy = structuredClone(schema) as Record<string, unknown>;
@@ -206,6 +209,10 @@ test("the mirror matches TAC's own JSON Schema, so a schema drift is caught here
     description: def.description,
     attributes: { reasonCode: 'live-agent-handoff' },
   });
+
+  // Pin the ASYMMETRY that `normalise` then hides. Read off the vendor bundle, not assumed.
+  const tacReason = (tacTool.parameters as { properties?: { reason?: { minLength?: number } } }).properties?.reason;
+  expect(tacReason?.minLength).toBeUndefined();
 
   expect(normalise(z.toJSONSchema(def.input, { io: 'input' }))).toEqual(normalise(tacTool.parameters));
 });
