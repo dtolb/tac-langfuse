@@ -5,9 +5,9 @@
  * Two adapters, not one, since T14b.1 appended index 2:
  *
  *  - indices 0 and 1 (`retrieve_profile_memory`, `search_knowledge`) → `server/twilio/builtin-tools.ts`
- *  - index 2 (`handoff`) → `server/twilio/handoff.ts`, which T14b.2 creates. Until it lands the name is
- *    in this list with no adapter behind it; see "the open window" below, because that is a real if
- *    deliberate cost.
+ *  - index 2 (`handoff`) → `server/twilio/handoff.ts`, added by T14b.2. It is built by
+ *    `server/twilio/tac.ts` rather than by `adaptBuiltInTools`, because it needs the voice CHANNEL and
+ *    not just a `TAC` handle.
  *
  * ── Why these names live in `shared/` rather than beside the tools ──────────────────────────────
  *
@@ -39,7 +39,7 @@
  * This is only the answer to "is this string a tool this codebase knows how to build at all, given the
  * right credentials?"
  *
- * ── What guards the list, and the open window while T14b builds out ────────────────────────────
+ * ── What guards the list ───────────────────────────────────────────────────────────────────────
  *
  * A name here that no longer matches a real adapter makes the boot preflight in
  * `server/agent/tools/resolve.ts` silently forgive a real typo: `isTacToolName(name)` sends the name to
@@ -55,11 +55,12 @@
  *    and the preflight tests, which derive their expectations from the compiled DEFAULTS rather than
  *    from this list for the same superset reason.
  *
- * ⚠ The guard is genuinely weaker until `server/twilio/handoff.ts` lands. `isTacToolName('handoff')` is
- * already true, so a prompt naming `handoff` today is bucketed `unavailable` and logged at debug even
- * though NO adapter exists to make it available under any credentials — which is indistinguishable from
- * a configured-but-unconfigured tool. The window is deliberate: index 2 has to exist before the code
- * that reads it by position can be written, and it closes when T14b.2 adds the adapter.
+ * Every name in the list now has an adapter behind it, so `unavailable` means what it says again — "this
+ * codebase can build it, given the credentials". That was NOT true between T14b.1 and T14b.2:
+ * `isTacToolName('handoff')` was already true while no adapter existed, so a prompt naming `handoff`
+ * was bucketed `unavailable` and logged at debug, indistinguishable from a tool that was merely
+ * unconfigured. The gap was deliberate — index 2 had to exist before the code that reads it by position
+ * could be written — and any future append reopens it for exactly as long as its adapter is missing.
  *
  * ⚠ APPEND ONLY. `server/twilio/builtin-tools.ts` reads index 0 and index 1 by position, and
  * `server/twilio/handoff.ts` reads index 2. Inserting a name renames live tools silently, which a

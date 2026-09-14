@@ -43,7 +43,9 @@ import type { ToolDef, ToolLogger } from '../agent/tools/registry.ts';
 const HANDOFF_NAME = TAC_TOOL_NAMES[2];
 
 /**
- * OURS, and it is load-bearing for the same reason `search_knowledge`'s is.
+ * OURS, and it is load-bearing for the same reason `search_knowledge`'s is. This is the string the model
+ * actually reads, as `ToolDef.description` — not the copy handed to `createStudioHandoffTool` in
+ * `execute`, which reaches nothing.
  *
  * TAC's default — "Use this when the customer requests a human, or when you cannot adequately handle
  * the request" — invites a transfer whenever the model feels stuck. On a demo that means transferring
@@ -63,11 +65,21 @@ const HANDOFF_DESCRIPTION =
 
 /**
  * The mirror of TAC's own parameter schema (`dist/index.js:6455-6466`), including the object-level
- * description, so `tests/handoff.test.ts` can deep-equal against it.
+ * description, so `tests/handoff.test.ts` deep-equals this against
+ * `createStudioHandoffTool(...).parameters` — the vendor's real declaration, read out of the installed
+ * bundle. That comparison is the only thing standing between a renamed TAC field and a live transfer
+ * that quietly sends `reason: undefined`, because TAC merges `{...staticAttributes, reason:
+ * params.reason}` and `defineTool` validates nothing.
  *
  * Unlike `search_knowledge`'s mirror, the top-level `.describe()` is kept: TAC hard-codes this
  * schema and never echoes `options.description` into it, so there is no circularity and no duplicated
  * prose — the string is 39 characters rather than 900.
+ *
+ * ONE DELIBERATE DIVERGENCE: `.min(1)`. TAC's schema declares no `minLength`, so `reason: ''` would be
+ * accepted there and is a mid-turn validation failure here. Kept because the reason is rendered on a
+ * human's screen pop (`server/handoff/snapshots.ts`) and a blank one is worse than no handoff at all —
+ * the drift test normalises `minLength` off both sides and pins the behaviour with a `safeParse('')`
+ * assertion instead, so this stays visible rather than merged into the deep-equal.
  */
 const HandoffInput = z
   .object({
@@ -98,10 +110,13 @@ const pending = new Map<string, string>();
 /**
  * The two members of `VoiceChannel` this file needs, narrowed the way `./voice.ts` narrows its sender.
  *
- * METHOD SYNTAX IS LOAD-BEARING. TAC declares `getConversationSession(id: ConversationId)` with a
- * BRANDED string, and TypeScript checks method parameters bivariantly — so a `VoiceChannel` stays
- * assignable to this interface without a cast anywhere. Declared as a property (`getConversationSession:
- * (id: string) => ...`) it would be checked contravariantly and rejected.
+ * METHOD SYNTAX, not a property, and the reason is worth keeping even though nothing depends on it yet.
+ * TAC declares `getConversationSession(id: ConversationId)` with a BRANDED string; TypeScript checks
+ * method parameters bivariantly, so a `VoiceChannel` would satisfy this interface as written, where a
+ * property (`getConversationSession: (id: string) => ...`) is checked contravariantly and would be
+ * rejected. The only call site does NOT exercise that: `./tac.ts` passes an object literal whose getter
+ * reads a possibly-null channel and widens the id to `ConversationId` itself. So the method form buys
+ * the option of handing a channel straight in, not something already relied on.
  *
  * `getConversationSession` is public on `BaseChannel`, so it comes off the CHANNEL and not off `TAC` —
  * the design doc records the opposite claim in `docs/HANDOFF.md` as one of its corrections.
@@ -156,6 +171,11 @@ export function handoffTool(deps: HandoffToolDeps): ToolDef<typeof HandoffInput>
       }
 
       try {
+        // `attributes` is the only one of these three options that changes anything we observe. We read
+        // exactly ONE field off the returned tool — `.implementation` — and TAC's `name`/`description`
+        // go nowhere but the `TACTool` we discard (`defineTool`, `dist/index.js:6265-6279`, only stores
+        // them). What the model reads is `ToolDef.name` / `ToolDef.description` above. They are passed
+        // for symmetry, so a reader diffing our tool against TAC's sees one contract, not two.
         const tool = createStudioHandoffTool(deps.tac, session, {
           name: HANDOFF_NAME,
           description: HANDOFF_DESCRIPTION,

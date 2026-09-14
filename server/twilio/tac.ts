@@ -42,6 +42,7 @@ import {
   TACConfigSchema,
   TACServer,
   VoiceChannel,
+  type ConversationId,
 } from 'twilio-agent-connect';
 import { AGENT_PORT } from '../../shared/ports.ts';
 import type { AppConfig, Capabilities } from '../config.ts';
@@ -202,11 +203,15 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
    * Non-null only when voice is configured; `shutdown()` must clean it up itself. See below.
    *
    * Declared HERE, above the tool catalog, rather than beside the channel wiring it belonged to until
-   * T14b.2: the `handoff` tool closes over a getter that reads this binding, and a `let` declared
-   * after that closure is a temporal-dead-zone `ReferenceError` on the first transfer rather than a
-   * type error at build. None of the four ORDER IS LOAD-BEARING rules in the header involve these two
-   * declarations — those are about `app.register`, `registerChannel` and `new TACServer`, every one of
-   * which is still below this point and still in the same relative order.
+   * T14b.2 — co-located with its one interesting reader, the `handoff` tool below. What is load-bearing
+   * is not the declaration's POSITION but that the tool closes over a GETTER: the binding is still
+   * `null` when the catalog is built and only becomes a channel inside the `caps.voice` block, so
+   * anything that captured the value instead of reading it at transfer time would capture `null`
+   * forever.
+   *
+   * Audited when the declarations moved: none of the four ORDER IS LOAD-BEARING rules in the header
+   * involve this one or `registries` — those are about `app.register`, `registerChannel` and
+   * `new TACServer`, every one of which is still below this point and still in the same relative order.
    */
   let voiceChannel: VoiceChannel | null = null;
 
@@ -227,7 +232,12 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
   const handoff = handoffTool({
     tac,
     sessions: {
-      getConversationSession: (conversationId) => voiceChannel?.getConversationSession(conversationId as never),
+      // The cast crosses TAC's brand: `ConversationId` is `string & { _brand }` (`dist/index.d.ts:1229`)
+      // and ours arrives off `ToolCtx` as a plain string, with `isConversationId` the only widener TAC
+      // exports. Narrowest cast that compiles, on purpose — `as never` satisfies ANY parameter type, so
+      // a release that changed this argument to a session object would keep building and pass a string.
+      getConversationSession: (conversationId) =>
+        voiceChannel?.getConversationSession(conversationId as ConversationId),
     },
   });
   const catalog = createToolCatalog([...SHIPPED_TOOLS, ...builtInTools, handoff]);

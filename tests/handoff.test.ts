@@ -1,5 +1,6 @@
 import { test, expect } from 'vitest';
-import type { ConversationSession } from 'twilio-agent-connect';
+import { z } from 'zod';
+import { createStudioHandoffTool } from 'twilio-agent-connect';
 import {
   recordHandoffSnapshot,
   findHandoffSnapshot,
@@ -9,7 +10,7 @@ import {
 } from '../server/handoff/snapshots.ts';
 import { handoffTool, consumeHandoffRequest, forgetHandoffRequest } from '../server/twilio/handoff.ts';
 import type { ToolCtx, ToolLogger } from '../server/agent/tools/registry.ts';
-import { fakeTac } from './helpers/fake-tac.ts';
+import { fakeTac, tacCalls, voiceSession } from './helpers/fake-tac.ts';
 
 const snap = (conversationId: string, from: string | null, at: string) => ({
   conversationId,
@@ -18,6 +19,20 @@ const snap = (conversationId: string, from: string | null, at: string) => ({
   at,
   transcript: [{ role: 'user' as const, text: 'I want a human' }],
 });
+
+/**
+ * Empty the module-global store through its PUBLIC API — `findHandoffSnapshot({})` always returns the
+ * newest entry, so no reset export and no mocking library is needed. Used by the test below that
+ * asserts on an empty store, which would otherwise be passing only because the tests above it happen
+ * to run first and clean up after themselves.
+ */
+const drainSnapshots = (): void => {
+  while (handoffSnapshotCount() > 0) {
+    const { snapshot } = findHandoffSnapshot({});
+    if (snapshot === null) break;
+    forgetHandoffSnapshot(snapshot.conversationId);
+  }
+};
 
 test('an exact conversationId match beats a caller match', () => {
   recordHandoffSnapshot(snap('conv_a', '+15551110000', '2026-09-14T10:00:00.000Z'));
@@ -57,6 +72,7 @@ test('an unknown number falls back to the most recent snapshot and SAYS it did',
 });
 
 test('an empty store reports none, not a throw', () => {
+  drainSnapshots();
   expect(handoffSnapshotCount()).toBe(0);
   expect(findHandoffSnapshot({ from: '+15550000000' })).toEqual({ snapshot: null, match: 'none' });
 });
@@ -80,19 +96,9 @@ const ctx = (conversationId: string): ToolCtx => ({
   profileId: 'profile_test',
 });
 
-const voiceSession = (conversationId: string): ConversationSession =>
-  ({
-    conversationId,
-    channel: 'voice',
-    profileId: 'profile_test',
-    startedAt: new Date('2026-09-14T10:00:00.000Z'),
-    authorInfo: { address: '+15554443333' },
-    metadata: {},
-  }) as unknown as ConversationSession;
-
 test('the tool parks a complete end frame on the session and records the reason', async () => {
-  const session = voiceSession('conv_tool_1');
   const tac = fakeTac();
+  const session = voiceSession('conv_tool_1', tacCalls(tac));
   const tool = handoffTool({ tac, sessions: { getConversationSession: () => session } });
 
   expect(tool.name).toBe('handoff');
@@ -122,19 +128,21 @@ test('the tool parks a complete end frame on the session and records the reason'
 });
 
 test('TAC sets the conversation INACTIVE and clears status callbacks BEFORE parking the frame', async () => {
-  const session = voiceSession('conv_tool_2');
   const tac = fakeTac();
+  const session = voiceSession('conv_tool_2', tacCalls(tac));
   const tool = handoffTool({ tac, sessions: { getConversationSession: () => session } });
 
   await tool.execute({ reason: 'escalation' }, ctx('conv_tool_2'));
 
-  // Both are warn-only inside TAC and neither has an inverse. On the SUCCESS path Studio flips the
-  // status back to ACTIVE on pickup; the unreverted-INACTIVE landmine is the FAILURE path, which is
-  // exactly what sending the frame eliminates. Design doc §2.5.
-  expect((tac as unknown as { calls: string[] }).calls).toEqual([
-    'update:conv_tool_2:INACTIVE',
-    'clear:conv_tool_2',
-  ]);
+  // THREE entries in ONE array, and the park is the third — that is what makes this an ordering
+  // assertion rather than three existence assertions. `tests/helpers/fake-tac.ts` records the park via
+  // an accessor on `pendingHandoffData` for exactly this reason. Measured, not assumed: parking the
+  // frame ahead of the two awaits in the vendor bundle turns this red (and was reverted).
+  //
+  // Both Orchestrator calls are warn-only inside TAC and neither has an inverse. On the SUCCESS path
+  // Studio flips the status back to ACTIVE on pickup; the unreverted-INACTIVE landmine is the FAILURE
+  // path, which is exactly what sending the frame eliminates. Design doc §2.5.
+  expect(tacCalls(tac)).toEqual(['update:conv_tool_2:INACTIVE', 'clear:conv_tool_2', 'park:conv_tool_2']);
   forgetHandoffRequest('conv_tool_2');
 });
 
@@ -148,17 +156,66 @@ test('a missing session is a structured miss, never a throw', async () => {
 test("an unset flow SID is a miss, not a boot crash — construction is lazy", async () => {
   // TAC's first guard throws at CONSTRUCTION. Constructing inside `execute` is what turns that into
   // something the model can speak about instead of dead air.
-  const tool = handoffTool({
-    tac: fakeTac({ flowSid: null }),
-    sessions: { getConversationSession: () => voiceSession('conv_tool_4') },
-  });
+  const tac = fakeTac({ flowSid: null });
+  const session = voiceSession('conv_tool_4', tacCalls(tac));
+  const tool = handoffTool({ tac, sessions: { getConversationSession: () => session } });
   const result = await tool.execute({ reason: 'x' }, ctx('conv_tool_4'));
   expect(result).toMatchObject({ found: false });
   expect(consumeHandoffRequest('conv_tool_4')).toBeNull();
+  // Nothing happened at all: the guard fires before the first Orchestrator call.
+  expect(tacCalls(tac)).toEqual([]);
 });
 
-test('the mirror matches what TAC declares, so a schema drift is caught here', () => {
-  const tool = handoffTool({ tac: fakeTac(), sessions: { getConversationSession: () => undefined } });
-  expect(tool.input.safeParse({}).success).toBe(false);
-  expect(tool.input.safeParse({ reason: 'caller asked for a human' }).success).toBe(true);
+// ------------------------------------------------------------------ schema drift
+
+/**
+ * The house pattern from `tests/builtin-tools.test.ts` — deep-equal our Zod mirror, projected to JSON
+ * Schema, against the vendor's own `parameters` — with a different set of normalisations, because this
+ * mirror differs from those two in three ways:
+ *
+ *  - `$schema` is stripped for the same reason there — Zod stamps it, TAC writes no such key.
+ *  - `required` needs no defaulting: both sides say `['reason']`.
+ *  - The TOP-LEVEL `description` is deliberately COMPARED here, where `builtin-tools.test.ts` has to
+ *    strip it. TAC hard-codes this schema and never echoes `options.description` into it
+ *    (`dist/index.js:6455-6466`), so the comparison is not circular, and the string is 39 characters
+ *    rather than 900 — cheap enough to also send to the model.
+ *  - `minLength` IS stripped, and that is a real difference rather than a spelling one: our mirror is
+ *    `z.string().min(1)` where TAC's JSON Schema has no bound at all, so `reason: ''` is a mid-turn
+ *    validation failure for us and would be accepted by TAC. Deliberate — an empty reason renders as a
+ *    blank line on the human's screen pop — and `server/twilio/handoff.ts` records it at the mirror.
+ *    Stripped from BOTH sides so the comparison stays symmetric, and covered instead by the
+ *    `safeParse('')` assertion below.
+ */
+const normalise = (schema: unknown): Record<string, unknown> => {
+  const copy = structuredClone(schema) as Record<string, unknown>;
+  delete copy.$schema;
+  const properties = copy.properties as Record<string, Record<string, unknown>> | undefined;
+  if (properties?.reason !== undefined) delete properties.reason.minLength;
+  return copy;
+};
+
+test("the mirror matches TAC's own JSON Schema, so a schema drift is caught here", () => {
+  const def = handoffTool({ tac: fakeTac(), sessions: { getConversationSession: () => undefined } });
+  const tac = fakeTac();
+  // TAC's REAL factory, against the installed bundle. `parameters` does not depend on the session or
+  // on `options`, so the fake handle and a fake session are enough to read the vendor's schema out —
+  // and a release that renamed `reason` to anything else now fails HERE rather than silently sending
+  // `reason: undefined` on every live transfer.
+  const tacTool = createStudioHandoffTool(tac, voiceSession('conv_drift', tacCalls(tac)), {
+    name: def.name,
+    description: def.description,
+    attributes: { reasonCode: 'live-agent-handoff' },
+  });
+
+  expect(normalise(z.toJSONSchema(def.input, { io: 'input' }))).toEqual(normalise(tacTool.parameters));
+});
+
+test('the mirror rejects an empty reason, which is where it deliberately differs from TAC', () => {
+  // The half a deep-equal cannot show: that the mirror VALIDATES, and that the one stripped key above
+  // is load-bearing rather than cosmetic. `defineTool` performs no argument validation, so this is the
+  // only gate in front of TAC's implementation.
+  const input = handoffTool({ tac: fakeTac(), sessions: { getConversationSession: () => undefined } }).input;
+  expect(input.safeParse({}).success).toBe(false);
+  expect(input.safeParse({ reason: '' }).success).toBe(false);
+  expect(input.safeParse({ reason: 'caller asked for a human' }).success).toBe(true);
 });
