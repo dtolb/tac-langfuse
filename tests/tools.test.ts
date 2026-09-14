@@ -24,7 +24,7 @@ import { DEFAULT_PROMPTS, PROMPT_NAMES } from '../server/agent/prompt/defaults.t
 import type { Capabilities } from '../server/config.ts';
 import { createObsBus, type ObsBus } from '../server/obs/bus.ts';
 import type { ObsEvent } from '../shared/events.ts';
-import { TAC_TOOL_NAMES } from '../shared/tac-tool-names.ts';
+import { TAC_TOOL_NAMES, isTacToolName } from '../shared/tac-tool-names.ts';
 
 // ------------------------------------------------------------------ fakes, injected not mocked
 
@@ -281,6 +281,15 @@ test('every tool name in every compiled default is one this codebase can build',
   }
 });
 
+test('handoff is a known TAC tool name, appended so the positional reads do not move', () => {
+  // `server/twilio/builtin-tools.ts` reads TAC_TOOL_NAMES[0] and [1] by index. Appending is the
+  // only safe edit; inserting would silently rename two live tools.
+  expect(TAC_TOOL_NAMES[0]).toBe('retrieve_profile_memory');
+  expect(TAC_TOOL_NAMES[1]).toBe('search_knowledge');
+  expect(TAC_TOOL_NAMES[2]).toBe('handoff');
+  expect(isTacToolName('handoff')).toBe(true);
+});
+
 test('the TAC-provided names are disjoint from the credential-free catalog', () => {
   // The two lists must not overlap, or `createToolCatalog` would throw on a duplicate name the moment
   // `bootTac` concatenated them — a boot crash rather than the degradation this design is built on.
@@ -302,7 +311,16 @@ test('the boot preflight reports NO PROBLEM for the shipped defaults, and says w
   // a bare-laptop run and every test in this file would emit it, which trains a reader to skip the
   // line that does mean something.
   expect(logger.lines.map((l) => l.level)).toEqual(['debug']);
-  for (const name of TAC_TOOL_NAMES) expect(logger.lines[0]?.msg).toContain(name);
+  // Derived from the DEFAULTS, not from TAC_TOOL_NAMES: the preflight reports the TAC-provided names a
+  // compiled prompt names, which is a subset. Asserting the whole list would fail the moment a tool is
+  // added to the list before a prompt names it — which is exactly what T14b.1 does.
+  const namedByDefaults = new Set(
+    PROMPT_NAMES.flatMap((p) => DEFAULT_PROMPTS[p].config.tools).filter((n) =>
+      (TAC_TOOL_NAMES as readonly string[]).includes(n),
+    ),
+  );
+  expect(namedByDefaults.size).toBeGreaterThan(0);
+  for (const name of namedByDefaults) expect(logger.lines[0]?.msg).toContain(name);
 });
 
 test('the preflight logs one ERROR per offending name, naming the prompt and the tool', () => {

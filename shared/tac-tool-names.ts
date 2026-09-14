@@ -24,8 +24,12 @@
  *
  * A name here that no longer matches a real adapter would make the preflight silently forgive a real
  * typo, so `tests/builtin-tools.test.ts` asserts the adapted tools' names against this list.
+ *
+ * ⚠ APPEND ONLY. `server/twilio/builtin-tools.ts` reads index 0 and index 1 by position, and
+ * `server/twilio/handoff.ts` reads index 2. Inserting a name renames live tools silently, which a
+ * prompt naming the old string then reports only as one `unknown` warning per turn.
  */
-export const TAC_TOOL_NAMES = ['retrieve_profile_memory', 'search_knowledge'] as const;
+export const TAC_TOOL_NAMES = ['retrieve_profile_memory', 'search_knowledge', 'handoff'] as const;
 
 export type TacToolName = (typeof TAC_TOOL_NAMES)[number];
 
