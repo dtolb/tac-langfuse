@@ -178,11 +178,61 @@ export function createTacMemoryPort(tac: ProfileFetcher, deps: TacMemoryDeps = {
    *
    * No `AbortSignal`: `MemoryComposePort.compose` is not given one and `fetchProfile` takes none.
    * A barged-into turn therefore pays for a profile fetch nobody will hear.
+   *
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   * CACHED PER CONVERSATION, and that is a FIX rather than an optimisation.
+   *
+   * Voice runs `memoryMode: 'once'`, which caches TAC's Recall on `session.cachedMemory`
+   * (`dist/index.js:3465-3477`) precisely so that a Conversation Orchestrator round-trip does not sit
+   * in front of every spoken answer. The first version of this port then did an UNCACHED
+   * `fetchProfile` on every turn, which partly defeated that. Measured on the first real call:
+   * `profileMs` of 76, 623, 113 and 134 ms across four turns — every one of them in front of the
+   * first token, and the 623 ms outlier alone is longer than a whole warm turn was at T13.
+   *
+   * So the profile is fetched at most once per conversation. Traits are set when Orchestrator resolves
+   * the customer and effectively do not change mid-call, so re-reading them per turn bought nothing.
+   *
+   * A NEGATIVE RESULT IS CACHED TOO — `null` is a real answer here ("this profile has no traits", or
+   * "the fetch failed"), and re-trying it every turn is exactly the case that hurt: a profile that
+   * 404s would pay full latency on every turn of the call, forever.
+   *
+   * BOUNDED, with no lifecycle hook, and that is a decision rather than an omission. There is
+   * deliberately no `forget(conversationId)` on `MemoryComposePort` for the channels to call on
+   * disconnect: conversation ids are unique, so a stale entry can never be READ again — the only cost
+   * of keeping one is the bytes — and adding the method would thread a new call through `types.ts`,
+   * `voice.ts` and `tac.ts` to reclaim a few hundred small objects. The cap is what makes that safe,
+   * so it is the cap, not a cleanup path, that must not be removed. Add the hook if a profile ever
+   * grows large enough that 200 of them matter.
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
    */
+  const profileCache = new Map<string, Profile | null>();
+
+  /**
+   * Small on purpose. The only legitimate entries are conversations currently in flight, and voice
+   * caps itself at `VOICE_MAX_CONVERSATIONS` anyway — this is the backstop for an entry whose
+   * conversation ended by a route that never called `forgetProfile`, not a second conversation store.
+   */
+  const MAX_CACHED_PROFILES = 200;
+
+  const remember = (conversationId: string, profile: Profile | null): void => {
+    if (profileCache.size >= MAX_CACHED_PROFILES) {
+      // Oldest-first, matching `end-call.ts`. Map iteration is insertion-ordered, and insertion order
+      // is close enough to age here: an entry is written once, on the conversation's first turn.
+      const oldest = profileCache.keys().next();
+      if (oldest.done !== true) profileCache.delete(oldest.value);
+    }
+    profileCache.set(conversationId, profile);
+  };
+
   const fetchTraits = async (
     profileId: string,
     conversationId: string,
   ): Promise<{ readonly profile: Profile | null; readonly ms: number }> => {
+    // `has`, not a truthy check on `get`: a cached `null` is a hit, and treating it as a miss would
+    // reinstate the per-turn fetch this cache exists to remove.
+    if (profileCache.has(conversationId)) {
+      return { profile: profileCache.get(conversationId) ?? null, ms: 0 };
+    }
     const at = now();
     try {
       const fetched = await tac.fetchProfile(profileId);
@@ -192,12 +242,17 @@ export function createTacMemoryPort(tac: ProfileFetcher, deps: TacMemoryDeps = {
       // `{"id":"mem_profile_…","traits":{"Contact":{"phone":"+1919…"}}}`. TAC's renderer
       // JSON-stringifies a non-primitive value, so a group arrives as `- Contact: {"phone":"…"}`.
       // No traits at all means no section, so there is nothing to carry.
-      return { profile: traits === undefined ? null : { profileId, traits }, ms: now() - at };
+      const profile = traits === undefined ? null : { profileId, traits };
+      remember(conversationId, profile);
+      return { profile, ms: now() - at };
     } catch (err) {
       logger.warn(
         { err, conversationId, profileId },
         'memory: profile fetch failed — composing without traits',
       );
+      // Cached deliberately. See the docblock: without this, a profile that fails pays full latency
+      // in front of every spoken answer for the rest of the call.
+      remember(conversationId, null);
       return { profile: null, ms: now() - at };
     }
   };

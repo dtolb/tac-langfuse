@@ -63,6 +63,88 @@ const recordingFetcher = (
 
 const turn = { conversationId: 'CH_test', channel: 'sms' } as const;
 
+// ------------------------------------------------------------------ the per-conversation cache
+
+/**
+ * The profile is fetched at most ONCE per conversation, and these tests exist because the first
+ * version of this port did not do that.
+ *
+ * Measured on the first real call: `profileMs` of 76, 623, 113 and 134 ms across four turns of ONE
+ * call, every one of them in front of the first spoken word. Voice runs `memoryMode: 'once'`
+ * specifically so that TAC's Recall does not sit there on every turn; an uncached profile fetch
+ * bolted on top partly undid that, and the 623 ms outlier alone is longer than a whole warm turn was
+ * at T13.
+ *
+ * Nothing else in the suite could catch it: every other test drives a single turn, and a per-turn
+ * fetch is indistinguishable from a per-conversation one until the second turn arrives.
+ */
+test('the profile is fetched once per conversation, not once per turn', async () => {
+  const { fetcher, asked } = recordingFetcher({ Contact: { phone: '+15551234567' } });
+  const port = createTacMemoryPort(fetcher, { logger: silentLogger, bus: createObsBus() });
+
+  for (let i = 0; i < 4; i += 1) {
+    await port.compose({ memory: { observations: [], summaries: [] }, ...turn, profileId: 'mem_profile_x' });
+  }
+
+  expect(asked).toEqual(['mem_profile_x']);
+});
+
+test('a different conversation fetches again', async () => {
+  // The cache must be keyed by conversation, not global: a second caller has a different profile, and
+  // serving them the first caller's traits would be a PII leak, not merely a stale read.
+  const { fetcher, asked } = recordingFetcher({ Contact: { phone: '+15551234567' } });
+  const port = createTacMemoryPort(fetcher, { logger: silentLogger, bus: createObsBus() });
+
+  await port.compose({ memory: { observations: [], summaries: [] }, conversationId: 'CH_one', channel: 'sms', profileId: 'prof_one' });
+  await port.compose({ memory: { observations: [], summaries: [] }, conversationId: 'CH_two', channel: 'sms', profileId: 'prof_two' });
+  await port.compose({ memory: { observations: [], summaries: [] }, conversationId: 'CH_one', channel: 'sms', profileId: 'prof_one' });
+
+  expect(asked).toEqual(['prof_one', 'prof_two']);
+});
+
+test('a FAILED fetch is cached too, so it is not retried every turn', async () => {
+  // The case that actually hurt. Without caching the negative, a profile that 404s or times out pays
+  // full latency in front of every spoken answer for the rest of the call — worse than the happy path,
+  // because a failure is usually a timeout rather than a fast 404.
+  const asked: string[] = [];
+  const port = createTacMemoryPort(
+    {
+      fetchProfile: async (profileId) => {
+        asked.push(profileId);
+        throw new Error('Memory API 503');
+      },
+    },
+    { logger: silentLogger, bus: createObsBus() },
+  );
+
+  for (let i = 0; i < 3; i += 1) {
+    const composed = await port.compose({ memory: { observations: [], summaries: [] }, ...turn, profileId: 'mem_profile_x' });
+    // Still composes — a profile failure costs the profile section and nothing else.
+    expect(composed).toBeNull();
+  }
+
+  expect(asked).toEqual(['mem_profile_x']);
+});
+
+test('a cache hit reports profileMs 0 rather than re-timing a fetch it did not make', async () => {
+  // `profileMs` is the instrument for "what did the profile cost this turn". A cache hit costing 0 is
+  // the honest answer, and it is also how an operator sees the cache working.
+  const bus = createObsBus();
+  const seen: ObsEvent[] = [];
+  bus.subscribe((e) => void seen.push(e));
+  const port = createTacMemoryPort(recordingFetcher({ Contact: { phone: '+1555' } }).fetcher, {
+    logger: silentLogger,
+    bus,
+  });
+
+  await port.compose({ memory: { observations: [], summaries: [] }, ...turn, profileId: 'mem_profile_x' });
+  await port.compose({ memory: { observations: [], summaries: [] }, ...turn, profileId: 'mem_profile_x' });
+
+  const recalls = seen.filter((e) => e.kind === 'memory.recall');
+  expect(recalls).toHaveLength(2);
+  expect((recalls[1]?.payload as { profileMs?: number } | undefined)?.profileMs).toBe(0);
+});
+
 // ------------------------------------------------------------------ what memory contributes
 
 test('observations reach the composed context', async () => {
