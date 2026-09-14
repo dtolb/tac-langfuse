@@ -1033,7 +1033,7 @@ Do not treat that prose as decorative.
 - **`lsof -ti :8910` MATCHES NGROK, and killing it takes the tunnel down.** That list includes
   processes holding a *connection* to the port, not just the listener — and ngrok, while forwarding,
   is one. Three "the tunnel keeps dropping" incidents were self-inflicted. Use
-  **`lsof -ti :8910 -sTCP:LISTEN`**.
+  **`lsof -ti :8910 -sTCP:LISTEN`** — verified: with the filter, a restart leaves the tunnel up.
 - **`twil webhook invoke` against `localhost` returns a FALSE 403.** It signs
   `http://localhost:8910/…` while TAC rebuilds the URL defaulting to **https** when
   `X-Forwarded-Proto` is absent, and `twil` has no header flag. Sign the `https://` form and POST to
@@ -1059,10 +1059,31 @@ unique, so a stale entry can never be re-read).
 model call)` — our whole preamble is **~79ms**. Every turn made a tool call (2 steps); T13's fast
 463–509ms turns were single-step, no-tool turns. The cost is the tool round-trip.
 
-**Still open:** the first turn answered with **455 characters** against a prompt asking for one or two
-sentences, and the caller barged in at 459ms and 346ms — i.e. cut it off. `demo-agent-voice` v5 adds
-"say only the part that answers what they asked, then offer the rest". **Unverified — needs one more
-call.**
+**Both of those are now VERIFIED on a later call, and the way they were verified is the lesson.**
+
+The verbosity problem was real: the first call's opening turn ran to **455 characters** against a prompt
+asking for one or two sentences, and the caller barged in at 459 ms and 346 ms — cutting it off.
+`demo-agent-voice` v5 adds *"say only the part that answers what they asked, then offer the rest"*.
+Measured after: **310 / 231 / 265 / 247 / 214 characters**, and the barge-ins moved out to
+462 / 782 / 1601 / 1121 ms. Better rather than perfect — still above "one or two sentences", and worth
+another pass if a demo audience notices, but no longer the thing that gets you interrupted.
+
+The profile cache is verified too — same conversation, `profileMs` **82 then 0**.
+
+⚠ **AND THE FIRST ATTEMPT TO VERIFY IT WAS A FALSE NEGATIVE, for a reason worth internalising.** The
+call showed `profileMs` of 75/142/108/127/139 — non-zero on every turn, i.e. the cache apparently doing
+nothing — while its unit tests passed. The code was fine: **the agent process had been started 53
+minutes BEFORE the fix was committed**, and Node does not hot-reload. The prompt fix landed on that same
+call because a Langfuse prompt is fetched at run time behind a ~20 s TTL; the code fix could not, because
+it is compiled into a process.
+
+That is Layer 0 of the dev loop demonstrating its own value by accident: **a prompt change needs no
+restart, a code change always does.** When a fix "does not work" on a live channel, check the process
+start time against the commit time before debugging the logic — `ps -p <pid> -o lstart=`.
+
+The cheap way to verify a per-conversation cache without spending a call: send ONE SMS from another
+number on the account. The double-capture trap (above) produces two turns in the SAME conversation, so
+the second is a guaranteed cache hit.
 
 ## T14b, NOT STARTED — Studio handoff + browser softphone, and what is already known
 
@@ -1155,13 +1176,14 @@ precisely why TAC repoints the action at Studio instead of parsing it.
   this is no longer trivially true and re-running it is the one outstanding check that costs nothing.**
   Two cases, and the second is the real one: credentials ABSENT (the dynamic import in `index.ts` never
   evaluates) and credentials PRESENT (the import rejects, the try/catch degrades, `/bench` still serves).
-- **BOTH channels are verified live, now including memory ACROSS conversations.** Eight SMS turns and
-  three calls (15 voice turns total) have round-tripped, including memory across a conversation
+- **BOTH channels are verified live, now including memory ACROSS conversations.** Ten SMS turns and
+  four calls (20 voice turns total) have round-tripped, including memory across a conversation
   boundary with 0 tool calls, barge-in on real audio, the not-found tool branch, an agent-initiated
   hangup, and `search_knowledge` against a real Knowledge Base on both channels.
   What remains unexercised: the **45 s shutdown timeout** (needs a SIGTERM *during* a call), a **`/ws`
-  signature rejection** (invisible by construction), **Studio handoff** (T14b), and the **voice
-  verbosity fix** in `demo-agent-voice` v5, which needs one more call.
+  signature rejection** (invisible by construction), and **Studio handoff** (T14b). Everything else in
+  T14 — memory across conversations, the profile cache, `search_knowledge` on both channels, the voice
+  verbosity fix — has been measured against real traffic.
 - **The demo's memory story needs TWO conversations and a five-minute gap, and that is a product fact,
   not a limitation to engineer around.** Extraction is post-conversation only. A demo script that texts
   once and expects the agent to remember will fail, correctly. Either seed a profile beforehand or
