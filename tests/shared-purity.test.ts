@@ -3,6 +3,12 @@ import { join } from 'node:path';
 import { test, expect } from 'vitest';
 import { AGENT_PORT, WEB_PORT, LANGFUSE_HOST_PORT } from '../shared/ports.ts';
 import { TAC_WEBHOOK_PATHS, APP_API_PATHS } from '../shared/twilio-paths.ts';
+import {
+  CLIENT_IDENTITY,
+  VOICE_ACTION_PATH,
+  VOICE_TOKEN_PATH,
+  HANDOFF_CONTEXT_PATH,
+} from '../shared/handoff.ts';
 
 /**
  * shared/ is compiled by BOTH tsconfig projects — the node one and web's. That is a
@@ -95,5 +101,23 @@ test('every path prefix is rooted and has no trailing slash', () => {
   for (const p of [...TAC_WEBHOOK_PATHS, ...APP_API_PATHS]) {
     expect(p.startsWith('/'), `${p} must start with /`).toBe(true);
     expect(p.endsWith('/'), `${p} must not end with /`).toBe(false);
+  }
+});
+
+test('the Voice client identity stays inside the SDK-documented charset', () => {
+  // The Voice JS SDK documents the token identity as alphanumerics and underscores only. A hyphen is
+  // outside that set and the resulting behaviour is undocumented and untested — the orphan Studio flow
+  // on this account dials `client:browser-agent`, which is exactly the mistake this pins against.
+  // Reintroducing a hyphen would compile, typecheck and then fail at demo time, so assert it here.
+  expect(CLIENT_IDENTITY).toMatch(/^[a-zA-Z0-9_]+$/);
+});
+
+test('every handoff route sits under a prefix Traefik already routes to us', () => {
+  // Cross-checks shared/handoff.ts against shared/twilio-paths.ts rather than against a literal.
+  // Production splits one public host by path at Traefik, so a handoff path outside APP_API_PATHS
+  // never reaches this container: it is a 404 that reads as a Twilio fault mid-call.
+  for (const path of [VOICE_ACTION_PATH, VOICE_TOKEN_PATH, HANDOFF_CONTEXT_PATH]) {
+    const covered = APP_API_PATHS.some((prefix) => path.startsWith(prefix));
+    expect(covered, `${path} is under no APP_API_PATHS prefix`).toBe(true);
   }
 });

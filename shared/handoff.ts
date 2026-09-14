@@ -49,6 +49,15 @@ export const HANDOFF_CONTEXT_PATH = '/api/handoff/context';
  */
 export type HandoffMatch = 'exact' | 'caller' | 'recent' | 'none';
 
+/**
+ * NARROWER than `TurnMessage.role` in `server/agent/types.ts`, which is
+ * `'system' | 'user' | 'assistant'`. Deliberate, for two independent reasons:
+ *
+ *  - `shared/` may not import from `server/`, so this cannot be the same union by construction.
+ *  - A screen pop is read by a HUMAN agent mid-call. `'system'` turns are the compiled prompt, and
+ *    leaking prompt text onto an agent's screen is both a bad demo and a disclosure we never intended.
+ *    Narrowing the type makes the drain drop those turns rather than trusting it to remember.
+ */
 export interface HandoffTranscriptTurn {
   readonly role: 'user' | 'assistant';
   readonly text: string;
