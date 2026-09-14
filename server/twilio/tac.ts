@@ -47,8 +47,12 @@ import { AGENT_PORT } from '../../shared/ports.ts';
 import type { AppConfig, Capabilities } from '../config.ts';
 import { childLogger, tacLogger } from '../logging.ts';
 import { createConversationRegistry, type ConversationRegistry } from '../obs/conversations.ts';
+import { createToolCatalog, SHIPPED_TOOLS } from '../agent/tools/catalog.ts';
+import { resolve } from '../agent/tools/resolve.ts';
 import type { TurnDeps } from '../agent/types.ts';
 import type { App } from '../http/types.ts';
+import { adaptBuiltInTools } from './builtin-tools.ts';
+import { createTacMemoryPort } from './memory-compose.ts';
 import { handleInboundMessage } from './messaging.ts';
 import {
   handleVoiceDisconnect,
@@ -165,6 +169,62 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
   const tac = await TAC.create({ config: tacConfig, logger: tacLogger() });
 
   /**
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   * THE TAC-FLAVOURED DEPENDENCIES. ONE OBJECT, SHARED BY BOTH CHANNELS.
+   *
+   * `createTurnDeps` built the caller's `turn` with `passthroughMemory` and the three shipped tools,
+   * and that object is what `/bench` keeps using. Here we derive a second one that also knows about
+   * TAC. Four properties this shape buys, each of which an alternative loses:
+   *
+   *  1. No TAC import escapes `server/twilio/`. `tests/architecture.test.ts` needs no new rule.
+   *  2. No mutation of the module-level `toolCatalog`. It stays exactly what the bench and every test
+   *     see, and `createToolCatalog`'s duplicate-name throw keeps its meaning — a SECOND catalog is
+   *     built and the first is untouched.
+   *  3. **The bench keeps the passthrough port and the three shipped tools BY CONSTRUCTION**, with no
+   *     `if (channel === 'bench')` anywhere. T11's TAC-free property survives as a consequence of the
+   *     wiring rather than as a rule someone has to remember.
+   *  4. It is a plain spread, so adding a genuinely per-channel difference later is one line.
+   *
+   * ONE object rather than one per channel, which CORRECTS the T14 design (§4). That section argued
+   * per-channel deps were forced because voice has to plumb `profileId` — but `profileId` rides on
+   * `TurnInput`, which is per-TURN, while `TurnDeps` is per-PROCESS. `composeMemory` already receives
+   * `channel` on every call, so anything channel-specific belongs inside the port.
+   *
+   * Rejected: a settable holder in `server/agent/` that this function fills in. It makes
+   * `composeMemory` time-dependent — a turn racing boot silently gets the passthrough — and puts a
+   * mutable global on the seam whose whole purpose is injection.
+   * ══════════════════════════════════════════════════════════════════════════════════════════════
+   */
+  // `knowledgeBaseId` is passed EXPLICITLY because it is not reachable through `tac`: `TAC.create`
+  // reads exactly one field off the fetched Conversation Orchestrator configuration —
+  // `memoryStoreId` — and never a knowledge base. Discovered while building the adapters.
+  const builtInTools = adaptBuiltInTools({ tac, knowledgeBaseId: config.knowledgeBaseId });
+  const catalog = createToolCatalog([...SHIPPED_TOOLS, ...builtInTools]);
+  const turnDeps: TurnDeps = {
+    ...turn,
+    // T8's resolver, re-bound to the AUGMENTED catalog. `caps` rather than a fresh
+    // `capabilities(config)` call, and `turn.obs` rather than the module-level bus, so this stays the
+    // same partial application `server/agent/deps.ts` does — just over more tools.
+    tools: (names, turnCtx) =>
+      resolve(names, {
+        capabilities: caps,
+        catalog,
+        bus: turn.obs,
+        conversationId: turnCtx.conversationId,
+        channel: turnCtx.channel,
+      }),
+    composeMemory: createTacMemoryPort(tac, { bus: turn.obs }),
+  };
+  log.info(
+    {
+      shippedTools: SHIPPED_TOOLS.map((t) => t.name),
+      builtInTools: builtInTools.map((t) => t.name),
+      catalog: catalog.names,
+    },
+    `tac: tool catalog augmented with ${builtInTools.length} TAC built-in(s)`,
+  );
+
+  /**
    * OURS, FIRST, AND AWAITED. See `TAC_SHUTDOWN_TIMEOUT_MS` for the 10-s-vs-30-s arithmetic this
    * exists to fix.
    *
@@ -188,17 +248,29 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
 
   if (caps.sms) {
     /**
-     * `memoryMode: 'never'` — deliberately NOT the plan's `'always'`.
+     * `memoryMode: 'always'` since T14 — a Recall per inbound message.
      *
-     * With `'always'`, TAC calls Recall scoped to the CURRENT conversation and folds the result into
-     * a `## Recent Message History` block of `User:`/`Assistant:` lines. `server/agent/history.ts`
-     * already puts that same exchange into the model's messages, so the model would see this
-     * conversation twice, in two formats — actively worse answers, not merely wasted work.
+     * ⚠ THE REASON RECORDED HERE AT T12 FOR CHOOSING `'never'` WAS FACTUALLY WRONG, and it is worth
+     * stating rather than deleting, because it was specific enough to be believed. It said that with
+     * `'always'` TAC "folds the result into a `## Recent Message History` block" that duplicates
+     * `server/agent/history.ts`. **TAC folds nothing.** `MemoryPromptBuilder` has ZERO callers
+     * anywhere inside TAC (grep it and `.compose(` across `packages/` at 2.2.0). `memoryMode` decides
+     * exactly one thing: whether, and how often, Recall is called. The `TACMemoryResponse` is handed
+     * to our callback and what reaches the model is entirely `composeMemory`'s decision.
      *
-     * T14 turns memory on properly, using `MemoryPromptBuilder` and excluding the current
-     * conversation from communications.
+     * So the duplication was never going to happen on its own. It would happen only if our port
+     * passed the communications through, and `./memory-compose.ts` makes that structurally
+     * impossible — its input schema has no `communications` key, so zod strips them, and the response
+     * it hands the renderer is constructed with `communications: []`. That also covers the case a
+     * config value cannot: on a Recall failure TAC falls back to `listCommunications(conversationId)`
+     * with no limit, and renders THIS conversation.
+     *
+     * `'always'` over `'once'` on this channel because it passes the caller's utterance as a semantic
+     * QUERY, so observations come back ranked by relevance to what was just asked; `'once'` Recalls
+     * with no query and returns them unranked. The cost is one Recall per message, and SMS latency is
+     * not perceptual — the same trade that makes `'once'` right for voice, inverted.
      */
-    const smsChannel = new SMSChannel(tac, { memoryMode: 'never' });
+    const smsChannel = new SMSChannel(tac, { memoryMode: 'always' });
     tac.registerChannel(smsChannel); // BEFORE new TACServer — see the header.
 
     const conversations = createConversationRegistry({
@@ -218,7 +290,7 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
     tac.onMessageReady(async ({ conversationId, message, author, profileId, memory, session }) =>
       handleInboundMessage(
         { conversationId, message, author, profileId, memory, session },
-        { turn, conversations, logger: log },
+        { turn: turnDeps, conversations, logger: log },
       ),
     );
 
@@ -245,19 +317,32 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
     registries.push(conversations);
 
     /**
-     * `memoryMode: 'never'`, which DEVIATES from the plan's `'once'` — a decision, not an oversight.
+     * `memoryMode: 'once'` since T14 — one Recall per conversation, cached on the session, with TAC
+     * handling the re-fetch when Orchestrator marks the conversation INACTIVE.
      *
-     * `'once'` would Recall on turn 1 and cache it on the session. But `composeMemory` is still the
-     * passthrough (`server/agent/deps.ts`), so the response is fetched and then discarded: the only
-     * effect available today is a Conversation Orchestrator round-trip sitting in front of the first
-     * spoken word, which is the single most latency-sensitive moment on the whole channel. T14 owns
-     * turning memory on together with a real compose port, and should revisit `'once'` then.
+     * T13 chose `'never'` for a reason that was correct AT THE TIME and no longer applies:
+     * `composeMemory` was still `passthroughMemory`, so a Recall was fetched and then discarded, and
+     * the only observable effect was a Conversation Orchestrator round-trip in front of the first
+     * spoken word. Now that `./memory-compose.ts` exists the response is actually used, so the
+     * round-trip buys something.
+     *
+     * `'once'` rather than SMS's `'always'`, and the asymmetry is the point: this cost lands on turn
+     * 1 only, where the caller is still hearing the welcome greeting, instead of in front of every
+     * answer. What it gives up is ranking — `'once'` Recalls with no query, so observations come back
+     * unranked, where `'always'` would pass the utterance as a semantic query. On a channel whose
+     * every failure mode is silence, predictable latency beats better ordering.
+     *
+     * ⚠ UNMEASURED as of this commit. T13 measured a cold first turn at 2405 ms with no Recall in
+     * front of it; the Recall is awaited inside TAC BEFORE our handler is called
+     * (`packages/core/src/channels/voice.ts`), so no span of ours can see it and only a real call can
+     * price it. If turn 1 becomes unacceptable, the escape hatch is `'never'` plus recalling inside
+     * our own port, where it would at least be visible.
      *
      * `defaultTwimlOptions` is the static TwiML layer. See `VOICE_TWIML_OPTIONS` — the one key in it
      * is the difference between a caller being able to interrupt us and the agent going deaf.
      */
     voiceChannel = new VoiceChannel(tac, {
-      memoryMode: 'never',
+      memoryMode: 'once',
       defaultTwimlOptions: VOICE_TWIML_OPTIONS,
     });
 
@@ -265,7 +350,7 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
     // precisely because we never registered; TAC's own forwarders would have taken `prompt` and
     // `interrupt` on registration, silently.
     voiceChannel.on('setup', (data) => {
-      handleVoiceSetup(data, { turn });
+      handleVoiceSetup(data, { turn: turnDeps });
     });
     voiceChannel.on('prompt', async (data) =>
       handleVoicePrompt(
@@ -279,14 +364,14 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
           // and `session.profileId` is what Conversation Memory and the memory-retrieval tool need.
           session: data.session,
         },
-        { turn, conversations, sender: voiceChannel as VoiceChannel, logger: log },
+        { turn: turnDeps, conversations, sender: voiceChannel as VoiceChannel, logger: log },
       ),
     );
     voiceChannel.on('interrupt', (data) => {
-      handleVoiceInterrupt(data, { turn });
+      handleVoiceInterrupt(data, { turn: turnDeps });
     });
     voiceChannel.on('webSocketDisconnected', (data) => {
-      handleVoiceDisconnect(data, { turn, conversations });
+      handleVoiceDisconnect(data, { turn: turnDeps, conversations });
     });
   }
 
@@ -318,7 +403,9 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
           sms: caps.sms,
           voice: caps.voice,
           voicePublicDomain: config.voice?.publicDomain ?? null,
-          memoryMode: 'never',
+          memoryMode: { sms: caps.sms ? 'always' : null, voice: caps.voice ? 'once' : null },
+          knowledge: caps.knowledge,
+          tools: catalog.names,
           shutdownTimeoutMs: TAC_SHUTDOWN_TIMEOUT_MS,
         },
         `tac: listening (${[caps.sms && 'sms', caps.voice && 'voice'].filter(Boolean).join(' + ')})`,

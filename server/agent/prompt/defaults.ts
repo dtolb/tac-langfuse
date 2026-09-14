@@ -61,11 +61,22 @@ How to help
 - Use lookup_order for anything about an order: its status, what is on it, when it arrives. Ask
   for the order number if you do not have it, and confirm it back before you look it up.
 - Use get_store_hours for the opening hours of a named {{company_name}} location.
+- Use search_knowledge for questions about policy — returns, refunds, shipping, warranty, damaged
+  or missing items, price matching. It is the only place those answers exist.
 - Look something up before you answer it. Never guess an order status or an opening time, and
   never invent a policy that merely sounds plausible.
 - If you cannot look something up, or a tool comes back with nothing, say so plainly and offer to
   have someone follow up, rather than filling the gap yourself.
 - If the caller interrupts you, drop what you were saying and answer the new question.
+
+What you remember about this caller
+- If a "Customer Context" section appears above, it came from this caller's previous conversations
+  with us. It is not part of this call.
+- Use it the way a colleague who remembers them would: naturally, in passing, without announcing
+  it. Never say "according to my records" or "my memory says" — just know the thing.
+- Treat it as possibly out of date. Confirm before acting on it: "last time you mentioned the
+  monitor arm — is that the one?" rather than assuming it still holds.
+- If it is empty or absent, this is simply the first time you have spoken. Do not mention that.
 
 How to end the call
 - A phone call has to be hung up by someone, and on this channel that is you. Use end_call.
@@ -92,11 +103,26 @@ How to help
 - Use lookup_order for anything about an order: its status, what is on it, when it arrives. Ask
   for the order number if you do not have it.
 - Use get_store_hours for the opening hours of a named {{company_name}} location.
+- Use search_knowledge for questions about policy — returns, refunds, shipping, warranty, damaged
+  or missing items, price matching. It is the only place those answers exist.
 - Look something up before you answer it. Never guess an order status or an opening time, and
   never invent a policy that merely sounds plausible.
 - If you cannot look something up, or a tool comes back with nothing, say so plainly and offer to
   have someone follow up, rather than filling the gap yourself.
-- Answer the question that was actually asked before adding anything else.`;
+- Answer the question that was actually asked before adding anything else.
+
+What you remember about this customer
+- If a "Customer Context" section appears above, it came from this customer's previous
+  conversations with us. It is not part of this one.
+- Use it the way a colleague who remembers them would: naturally, in passing, without announcing
+  it. Never say "according to my records" or "my memory says" — just know the thing.
+- Treat it as possibly out of date. Confirm before acting on it: "last time you mentioned the
+  monitor arm — is that the one?" rather than assuming it still holds.
+- If it is empty or absent, this is simply the first time you have spoken. Do not mention that.
+- retrieve_profile_memory searches those past conversations directly. The Customer Context section
+  already carries the highlights, so only reach for it when the customer asks about something
+  specific from before that is not there — a particular past order, or what they said in some
+  period. Do not use it to re-read what you can already see.`;
 
 /**
  * NO `temperature` in either default, deliberately — see `PromptConfigSchema`, which still accepts
@@ -123,11 +149,23 @@ export const DEFAULT_PROMPTS: Readonly<Record<PromptName, DefaultPrompt>> = {
       model: 'gpt-5.4-mini',
       // `end_call` is voice-only — it is what lets the agent hang up, and the text prompt must not
       // name it. Note it costs a step: the model calls it and then speaks the goodbye, so a closing
-      // turn uses two of the three below.
-      tools: ['lookup_order', 'get_store_hours', 'end_call'],
+      // turn uses two of the four below.
+      //
+      // `retrieve_profile_memory` is deliberately NOT here, though it resolves on this channel.
+      // Memory already arrives in the system prompt every turn — `memoryMode: 'once'` recalls it and
+      // `server/twilio/memory-compose.ts` folds it in — so on voice the tool could only re-fetch what
+      // the model can already read, at the price of a step, and a step on this channel is silence.
+      // The text prompt names it, where the trade is different. Add it here only if a real call shows
+      // the model needing a date-ranged lookup the folded block cannot answer.
+      tools: ['lookup_order', 'get_store_hours', 'search_knowledge', 'end_call'],
       toolChoice: 'auto',
       // 3 rather than the schema's 4: every extra step is silence on a live call, and two tool
       // round-trips is already the edge of what a caller will wait through without speaking.
+      //
+      // Unchanged by `search_knowledge`, and that is the tight spot to watch: a policy question costs
+      // search + answer, leaving exactly one step, so a caller who asks a policy question AND says
+      // goodbye in the same breath can run out. Raising this trades that against dead air on every
+      // other turn, so it stays at 3 until a real call shows the collision.
       maxSteps: 3,
     },
   },
@@ -135,7 +173,9 @@ export const DEFAULT_PROMPTS: Readonly<Record<PromptName, DefaultPrompt>> = {
     messages: [{ role: 'system', content: TEXT_SYSTEM }],
     config: {
       model: 'gpt-5.4-mini',
-      tools: ['lookup_order', 'get_store_hours'],
+      // Both TAC built-ins are named here and only one is named on voice: writing has no dead air, so
+      // an extra tool round-trip costs a second or two of "…" rather than silence on an open line.
+      tools: ['lookup_order', 'get_store_hours', 'search_knowledge', 'retrieve_profile_memory'],
       toolChoice: 'auto',
       maxSteps: 4,
     },

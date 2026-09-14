@@ -24,6 +24,7 @@ import { DEFAULT_PROMPTS, PROMPT_NAMES } from '../server/agent/prompt/defaults.t
 import type { Capabilities } from '../server/config.ts';
 import { createObsBus, type ObsBus } from '../server/obs/bus.ts';
 import type { ObsEvent } from '../shared/events.ts';
+import { TAC_TOOL_NAMES } from '../shared/tac-tool-names.ts';
 
 // ------------------------------------------------------------------ fakes, injected not mocked
 
@@ -264,36 +265,68 @@ test('resolve uses the shipped catalog when none is injected', () => {
 
 // ------------------------------------------------------------------ the compiled defaults
 
-test('every tool name in every compiled default exists in the catalog', () => {
+test('every tool name in every compiled default is one this codebase can build', () => {
   // What stops a checked-in prompt from shipping a name nothing answers to.
+  //
+  // The union, not just the process-wide catalog, and T14 is why. Two of the tools a default names —
+  // `search_knowledge` and `retrieve_profile_memory` — are adapted out of a live TAC handle in
+  // `server/twilio/builtin-tools.ts`, so they are absent from `toolCatalog` by construction and
+  // present only in the augmented catalog `bootTac` builds. Asserting against `toolCatalog` alone
+  // would force the compiled prompts to pretend those tools do not exist.
+  const buildable = new Set<string>([...toolCatalog.names, ...TAC_TOOL_NAMES]);
   for (const prompt of PROMPT_NAMES) {
     for (const name of DEFAULT_PROMPTS[prompt].config.tools) {
-      expect(toolCatalog.names, `${prompt} names ${name}`).toContain(name);
+      expect([...buildable], `${prompt} names ${name}`).toContain(name);
     }
   }
 });
 
-test('the boot preflight has nothing to say about the shipped defaults', () => {
+test('the TAC-provided names are disjoint from the credential-free catalog', () => {
+  // The two lists must not overlap, or `createToolCatalog` would throw on a duplicate name the moment
+  // `bootTac` concatenated them — a boot crash rather than the degradation this design is built on.
+  for (const name of TAC_TOOL_NAMES) {
+    expect(toolCatalog.names, `${name} must not also be a shipped tool`).not.toContain(name);
+  }
+});
+
+test('the boot preflight reports NO PROBLEM for the shipped defaults, and says why at debug', () => {
   const logger = collecting();
+
+  // No problems: nothing a checked-in prompt names is a typo. That is the assertion that matters, and
+  // it is what `server/index.ts` acts on.
   expect(preflightDefaultPromptTools({ logger })).toEqual([]);
-  expect(logger.lines).toEqual([]);
+
+  // But it is no longer SILENT, and the difference is the point. Two names in the compiled defaults —
+  // the TAC-provided ones — are legitimately absent from the process-wide catalog, so the preflight
+  // says so once, at DEBUG. Asserting the level explicitly is what stops this ever becoming an ERROR:
+  // a bare-laptop run and every test in this file would emit it, which trains a reader to skip the
+  // line that does mean something.
+  expect(logger.lines.map((l) => l.level)).toEqual(['debug']);
+  for (const name of TAC_TOOL_NAMES) expect(logger.lines[0]?.msg).toContain(name);
 });
 
 test('the preflight logs one ERROR per offending name, naming the prompt and the tool', () => {
   const logger = collecting();
   const problems = preflightDefaultPromptTools({ catalog: createToolCatalog([]), logger });
 
-  // An empty catalog answers to nothing, so every name in every default is an offender. Derived
-  // from DEFAULT_PROMPTS rather than hard-coded, so editing a default cannot make this vacuous.
+  // An empty catalog answers to nothing, so every name in every default is an offender — EXCEPT the
+  // TAC-provided ones, which the preflight recognises as buildable-elsewhere and reports at debug
+  // instead. Derived from DEFAULT_PROMPTS rather than hard-coded, so editing a default cannot make
+  // this vacuous, and filtered by the same predicate the preflight uses rather than a second copy.
   const named = PROMPT_NAMES.flatMap((p) =>
-    DEFAULT_PROMPTS[p].config.tools.map((name) => ({ prompt: p, name })),
+    DEFAULT_PROMPTS[p].config.tools
+      .filter((name) => !(TAC_TOOL_NAMES as readonly string[]).includes(name))
+      .map((name) => ({ prompt: p, name })),
   );
   expect(named.length).toBeGreaterThan(0);
   expect(problems).toEqual(named);
-  // One line per name, at ERROR — the loud half of "fail loud at boot, degrade quiet at runtime".
-  expect(logger.lines.map((l) => l.level)).toEqual(named.map(() => 'error'));
-  expect(logger.lines[0]?.fields.prompt).toBe(named[0]?.prompt);
-  expect(logger.lines[0]?.msg).toContain(named[0]?.name);
+  // One line per offending name, at ERROR — the loud half of "fail loud at boot, degrade quiet at
+  // runtime". Filtered to errors because the TAC-provided names also produce one debug line, and
+  // mixing the two counts here would make this test fail for the wrong reason on any default edit.
+  const errors = logger.lines.filter((l) => l.level === 'error');
+  expect(errors.map((l) => l.level)).toEqual(named.map(() => 'error'));
+  expect(errors[0]?.fields.prompt).toBe(named[0]?.prompt);
+  expect(errors[0]?.msg).toContain(named[0]?.name);
 });
 
 // ------------------------------------------------------------------ lookup_order

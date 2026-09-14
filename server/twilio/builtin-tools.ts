@@ -62,6 +62,7 @@ import {
   type MemoryClient,
 } from 'twilio-agent-connect';
 import { z } from 'zod';
+import { TAC_TOOL_NAMES } from '../../shared/tac-tool-names.ts';
 import type { ToolDef, ToolLogger } from '../agent/tools/registry.ts';
 
 /**
@@ -122,7 +123,7 @@ const errorMessage = (err: unknown): string => (err instanceof Error ? err.messa
  * silently rename this tool, and every prompt naming it would drop into `resolve()`'s `unknown`
  * bucket with one warning per turn and an agent that is quietly worse.
  */
-const RETRIEVE_PROFILE_MEMORY_NAME = 'retrieve_profile_memory';
+const RETRIEVE_PROFILE_MEMORY_NAME = TAC_TOOL_NAMES[0];
 
 /**
  * Ours to write. TAC's default — "Retrieve user memories including observations, summaries, and
@@ -351,7 +352,7 @@ const retrieveProfileMemoryTool = (tac: TacToolHost): ToolDef<typeof RetrievePro
  * documents wrong at once; and the differentiating work belongs in the description regardless — see
  * below for why no other mechanism is available.
  */
-const SEARCH_KNOWLEDGE_NAME = 'search_knowledge';
+const SEARCH_KNOWLEDGE_NAME = TAC_TOOL_NAMES[1];
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════

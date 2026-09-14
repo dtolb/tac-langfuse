@@ -15,6 +15,7 @@
  * sides would put the same step in the Langfuse waterfall twice, which reads as broken tracing.
  */
 import type { ObsChannel } from '../../../shared/events.ts';
+import { isTacToolName } from '../../../shared/tac-tool-names.ts';
 import type { Capabilities } from '../../config.ts';
 import { childLogger } from '../../logging.ts';
 import { obsBus, type ObsBus } from '../../obs/bus.ts';
@@ -73,7 +74,23 @@ export function resolve(names: readonly string[], deps: ResolveDeps): ToolResolu
 
     const def = catalog.get(name);
     if (def === undefined) {
-      unknown.push(name);
+      /**
+       * A TAC-provided name that is not in THIS catalog is `unavailable`, not `unknown`, and the
+       * distinction is the difference between one debug line and one warning per turn.
+       *
+       * `demo-agent-text` serves both SMS and the bench. It names `search_knowledge` and
+       * `retrieve_profile_memory` because SMS can offer them — but the bench runs on the
+       * credential-free catalog by construction (see `bootTac`), so on that channel the lookup misses
+       * every single turn. Calling that `unknown` would warn *"not in the catalog — a typo, or a tool
+       * that was removed"* on every bench turn, about tools that are neither.
+       *
+       * `unavailable` already means "the codebase has this tool, this process cannot offer it", which
+       * is exactly the situation; the only widening is that the reason is a missing TAC handle rather
+       * than an unsatisfied `requires`. The console's "n of m resolved" badge stays accurate either
+       * way, and a genuine typo still reaches `unknown` and still warns.
+       */
+      if (isTacToolName(name)) unavailable.push(name);
+      else unknown.push(name);
       continue;
     }
     if (def.requires !== undefined && !deps.capabilities[def.requires]) {
@@ -152,10 +169,29 @@ export function preflightDefaultPromptTools(
   const logger = deps.logger ?? log;
 
   const problems: UnknownPromptTool[] = [];
+  /** Named by a compiled default, absent from THIS catalog, but a tool the codebase can build. */
+  const tacProvided: UnknownPromptTool[] = [];
   for (const prompt of PROMPT_NAMES) {
     for (const name of DEFAULT_PROMPTS[prompt].config.tools) {
-      if (!catalog.has(name)) problems.push({ prompt, name });
+      if (catalog.has(name)) continue;
+      // The distinction this preflight has to draw since T14, and it did not exist before then because
+      // every tool was credential-free. `search_knowledge` and `retrieve_profile_memory` are built
+      // from a live TAC handle in `server/twilio/builtin-tools.ts`, so they are absent from the
+      // process-wide catalog BY CONSTRUCTION and present in the augmented one `bootTac` builds.
+      // Reporting them as ERRORs would cry wolf on every bare-laptop run and on every test, which
+      // trains the reader to ignore the line that does matter — a genuine typo in a checked-in prompt.
+      (isTacToolName(name) ? tacProvided : problems).push({ prompt, name });
     }
+  }
+
+  if (tacProvided.length > 0) {
+    const names = [...new Set(tacProvided.map((p) => p.name))];
+    // Debug, mirroring `resolve()`'s own level split above: absent-because-unconfigured is the
+    // expected state of a half-configured demo, and `config.missing` already said so loudly at boot.
+    logger.debug(
+      { tools: names, catalog: catalog.names },
+      `tool preflight: ${names.join(', ')} named by a compiled default and built from TAC — resolvable once Twilio credentials do, absent from this catalog`,
+    );
   }
 
   for (const p of problems) {
