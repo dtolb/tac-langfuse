@@ -1,13 +1,17 @@
 # Handoff — demo scaffold
 
-Updated 2026-09-11. Read this first, then `~/.claude/plans/i-want-to-build-reactive-muffin.md`
+Updated 2026-09-14. Read this first, then `~/.claude/plans/i-want-to-build-reactive-muffin.md`
 for the full plan and the footgun list.
 
-**The plan is wrong in twelve places now.** Three concern telemetry and prompt linking — corrected in
-"Corrections to the plan" below and in the plan's own footgun table (#30–#32); all three fail
-*silently*. The other nine were found while building T12 and are listed under "T12, TAC boot for SMS".
+**The plan is wrong in twenty-three places now, and so was this file.** Three concern telemetry and
+prompt linking (plan footguns #30–#32); nine were found building T12; **eleven more were found building
+T14, and two of those correct statements in THIS file** — that TAC ships no tests, and the stated reason
+for `memoryMode: 'never'`. Both were specific enough to be believed for two whole tasks.
+
 Read whichever section matches what you are about to touch. Do not re-derive them; each was verified by
-executing it, not by reasoning about it.
+executing it, not by reasoning about it. **Where a claim here and a claim in the design or plan docs
+disagree, this file wins** — the T14 spec and plan under `docs/superpowers/` were written before the
+work and are wrong in the places their own "corrections" sections now list.
 
 **Account-specific values are deliberately NOT in this file.** SIDs, phone numbers, Conversation
 Orchestrator ids and Studio flow SIDs live in `.env` (gitignored) and in this project's session memory
@@ -37,12 +41,29 @@ POCs don't:
 All three land in **self-hosted Langfuse**. Its prompt `config` JSON is versioned with the prompt and
 is Langfuse's own documented home for `tools`/`tool_choice`/model params.
 
-## Status: T1–T13 done, all four spikes closed — SMS *and* VOICE both verified live
+## Status: T1–T14 done, all four spikes closed — SMS *and* VOICE verified live, WITH MEMORY
 
 ```
 pnpm typecheck   → 0          (TS 7.0.2, node project + web project)
-pnpm test        → 239 passed, 14 files
+pnpm test        → 291 passed, 16 files
 ```
+
+**T14 IS DONE AND PROVEN ACROSS TWO CONVERSATIONS.** Conversation Memory is on, TAC's built-in tools
+are adapted, and there is a real Knowledge Base with Northwind content. The assertion that matters:
+
+```
+conv 1 (SMS)  "always leave my deliveries with the building doorman"     15:58:17Z
+              closes 16:03:53Z (5m36s from CREATION, per statusTimeouts.closed: 5)
+              observation written 16:03:55Z — extraction latency ~2 SECONDS
+conv 2 (SMS)  NEW conversationId  "where should you leave my deliveries?"
+              → "I should leave them with the building doorman, not at your door."
+              1 step, 0 TOOL CALLS, memory.recall = 1 observation + 1 summary + 1 trait group → 696 chars
+```
+
+**A new `conversationId` means `history.ts` was empty, and 0 tool calls means no tool supplied it** —
+`retrieve_profile_memory` was offered and not used. So the fact reached the model through Conversation
+Memory and nothing else could have carried it. That is strictly stronger than T12's turn-2 proof,
+which stayed inside one conversation.
 
 **T12 IS DONE AND PROVEN AGAINST REAL SMS.** Two live turns on `+15805630929`, measured:
 
@@ -90,8 +111,9 @@ conversation.sms                    5m 00s   $0.001388   is_app_root = true
 | **T11 bench** | done — `/bench` streams a real turn in a browser with zero Twilio credentials, and the whole thing was re-run with TAC made *unresolvable* |
 | **T12 TAC/SMS** | done — a real text to `+15805630929` is answered, turn 2 recalled the order number with **0 tool calls**, and the `conversation.sms` trace tree is confirmed in the Langfuse UI |
 | **T13 TAC/voice** | **done, proven on two real calls.** One `conversation.voice` trace held all five `turn.voice` spans; turn 2 recalled an order number with **0 tool calls**; barge-in works on real audio; and the agent hangs up by itself via `end_call` |
+| **T14 memory + tools** | **done, proven across two conversations.** Extraction on, a real Knowledge Base, `search_knowledge` + `retrieve_profile_memory` adapted with Zod mirrors and drift tests, and conversation 2 recalled a fact from conversation 1 with **0 tool calls on a fresh `conversationId`** |
 
-**Not started:** T14 built-in tools + memory, T15–T17 Docker/Traefik, T18–T20 UI + docs.
+**Not started:** T14b handoff + browser softphone, T15–T17 Docker/Traefik, T18–T20 UI + docs.
 
 **A human can talk to the agent three ways now**, and all three have been done for real —
 `pnpm dev:all` then <http://localhost:3000/bench>, **text the number**, or **call it** and hang up by
@@ -109,7 +131,13 @@ pnpm typecheck && pnpm test
 pnpm seed:prompts                    # push BOTH compiled defaults as a new version + `production`
 pnpm seed:prompts demo-agent-voice   # just one — every run relabels what it touches, so prefer this
 
-# the four live diagnostics — each answers a question you cannot answer by reading code
+# the seven live diagnostics — each answers a question you cannot answer by reading code
+node --env-file-if-exists=.env scripts/verify-memory.ts        # is memory ACTUALLY on; store baseline
+node --env-file-if-exists=.env scripts/verify-knowledge.ts     # does the KB answer real questions
+pnpm seed:knowledge                                            # push the Northwind articles (idempotent)
+node --env-file-if-exists=.env scripts/repoint-public-host.ts <host>          # dry run
+node --env-file-if-exists=.env scripts/repoint-public-host.ts <host> --write  # all 3 places at once
+
 node --env-file-if-exists=.env scripts/verify-model.mjs        # is the key good, do tools fire
 node --env-file-if-exists=.env scripts/verify-prompts.ts       # live version, and the fallback path
 node --env-file-if-exists=.env scripts/verify-tools.ts         # catalog, resolver, live prompt names
@@ -170,14 +198,24 @@ its driver is running forever. Verify the pid is not lima's before moving the fi
 `.env` has a real `OPENAI_API_KEY`, local Langfuse config, and — since T12 — real Twilio credentials
 including `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` and `TWILIO_CONVERSATION_CONFIGURATION_ID`, so
 **SMS works**. Since T13 `TWILIO_VOICE_PUBLIC_DOMAIN` is set to the ngrok host as well, so
-`capabilities().voice` is true and voice boots — it was the only variable SMS did not need. Only
-`TWILIO_STUDIO_HANDOFF_FLOW_SID` remains unset, and leaving it that way is currently *helpful*: with
-it set, TAC repoints the ConversationRelay `action` at Studio and `/conversation-relay-callback` is
-never hit. Note the shell also exports real `TWILIO_ACCOUNT_SID` / `TWILIO_API_KEY` /
-`TWILIO_API_SECRET` from the user profile, so those three read as present whatever `.env` says — a clone
-on another machine behaves differently.
+`capabilities().voice` is true and voice boots — it was the only variable SMS did not need. Since T14
+`TWILIO_KNOWLEDGE_BASE_ID` is set too, so `capabilities().knowledge` is true and `search_knowledge` is
+a real tool. Only `TWILIO_STUDIO_HANDOFF_FLOW_SID` remains unset, and leaving it that way is currently
+*helpful*: with it set, TAC repoints the ConversationRelay `action` at Studio and
+`/conversation-relay-callback` is never hit. **T14b's plan for that is to pin `actionUrl` in
+`VOICE_TWIML_OPTIONS`, which beats Studio because `resolveActionUrl` is a five-layer precedence and
+Studio is only layer 4** — so the two can coexist. Note the shell also exports real
+`TWILIO_ACCOUNT_SID` / `TWILIO_API_KEY` / `TWILIO_API_SECRET` from the user profile, so those three read
+as present whatever `.env` says — a clone on another machine behaves differently.
 
-**Inbound SMS needs a public URL.** There is no Docker/Traefik yet (T15), so the loop is an ngrok
+**Inbound SMS needs a public URL, and since T14 there is one command for it.**
+`scripts/repoint-public-host.ts <host> --write` updates all three places that must agree —
+`TWILIO_VOICE_PUBLIC_DOMAIN`, the number's `voice_url`, and the CO `statusCallbacks[0].url` — backing
+the configuration up and re-reading the backup BEFORE the full-replace PUT, then diffing afterwards to
+prove nothing else moved. **Reserve a static ngrok domain** (the free plan includes one) and this chore
+disappears until T15; without one, every tunnel restart is a new host and another repoint.
+
+There is no Docker/Traefik yet (T15), so the loop is an ngrok
 tunnel to `:8910` with the CO configuration's `statusCallbacks[0].url` pointed at
 `https://<host>/webhook`. That URL is baked into the configuration, so it must be repointed whenever
 ngrok restarts — and updating it is a **full-replace PUT** where every omitted field is deleted.
@@ -302,7 +340,7 @@ server/
     run-turn.ts     THE core. Channel-agnostic. Read its header before editing.
     spans.ts        the production TurnSpans adapter over obs/spans.ts
     deps.ts         createTurnDeps — the live ports, shared by the bench AND SMS
-    memory.ts       passthrough MemoryComposePort (TAC's real one lands at T14)
+    memory.ts       passthroughMemory — what the BENCH uses. TAC's real port is in twilio/
     history.ts      bounded per-conversation transcript. Caps + eviction policy in its header.
     prompt/         port.ts · langfuse.ts · defaults.ts · slots.ts
     tools/          registry.ts · catalog.ts · resolve.ts
@@ -318,6 +356,11 @@ server/
                     Voice: passed to TACServer and NEVER registered, or our prompt slot is replaced.
                     Also owns the fastify-graceful-shutdown registration — read that constant.
     messaging.ts    one inbound SMS → runTurn → the reply string. Never throws, never returns ''.
+    memory-compose.ts  THE TAC memory port. Makes the communications section structurally
+                    unreachable — read its header before touching it. Imports TAC STATICALLY, so it
+                    must be reached only from tac.ts.
+    builtin-tools.ts   TAC's built-ins as ToolDefs, Zod mirrors + drift tests, constructed LAZILY
+                    inside execute. Closes over `tac`, which is why ToolCtx needs no TAC handle.
     voice.ts        one ConversationRelay turn → runTurn → tokens spoken as they arrive. Owns the
                     end-session frame, which is how the agent hangs up. Read its
                     header: every failure mode on this channel is silence.
@@ -330,9 +373,13 @@ server/
     conversations.ts    per-conversation trace roots, swept + capped. Bench and SMS share it, and for
                         SMS it is the traceparent carrier IN PREFERENCE to TAC's session.metadata.
 shared/               types + pure constants ONLY. Compiled by BOTH tsconfigs.
+                      tac-tool-names.ts — the ONE source of truth for the TAC-provided tool
+                      names, because builtin-tools.ts imports TAC and agent/ may not.
 web/                  Next 16 + Strix. Own package.json, own lockfile, own .npmrc.
 tests/                vitest. No mocking library, no snapshots — injection instead.
-scripts/              status · dev · seed-prompts · verify-{model,prompts,tools,turn,telemetry}
+scripts/              status · dev · seed-prompts · seed-knowledge · knowledge-articles
+                      repoint-public-host (all 3 host places at once, with a verified backup)
+                      verify-{model,prompts,tools,turn,telemetry,memory,knowledge}
 ```
 
 ### Who owns the turn span — the thing most likely to be got wrong
@@ -540,14 +587,26 @@ Nine corrections to the approved plan, each verified by executing it against the
    delivered, so sending the partial would text the customer a sentence that stops mid-word. An
    aborted SMS turn therefore sends the fallback and publishes an `error` — on SMS, `aborted` can only
    mean our own timeout.
-9. **`memoryMode: 'never'`, NOT the plan's `'always'`.** With `'always'` TAC folds a
-   `## Recent Message History` block of `User:`/`Assistant:` lines built from Recall scoped to the
-   *current* conversation — which `server/agent/history.ts` already puts into the model's messages. The
-   model would see every conversation **twice, in two formats**. Note the round-trip is *not* the
-   reason to avoid it: TAC Recalls before invoking our callback either way, so discarding costs the
-   same. **T14 owns turning memory on properly**, with `MemoryPromptBuilder.build` (which also supplies
-   the profile-traits section a hand-rolled `buildMemoryPrompts().join()` drops) and the current
-   conversation excluded from communications.
+9. **`memoryMode: 'never'` at T12 — and ⚠ THE REASON GIVEN HERE WAS FACTUALLY WRONG.** Corrected at
+   T14, and worth reading rather than skipping, because the wrong version was specific enough to be
+   believed for two whole tasks.
+
+   This said that with `'always'` TAC "folds a `## Recent Message History` block" that duplicates
+   `server/agent/history.ts`. **TAC folds nothing.** `MemoryPromptBuilder` has ZERO callers anywhere
+   inside TAC — grep it and `.compose(` across `packages/` at 2.2.0. `memoryMode` decides exactly one
+   thing: whether, and how often, Recall is called. The `TACMemoryResponse` is handed to our callback
+   and what reaches the model is **entirely our compose port's decision**.
+
+   So the duplication could never have happened on its own; it needed us to pass the communications
+   through. `'never'` was still a defensible T12 choice — `composeMemory` was the passthrough, so a
+   Recall was fetched and discarded — but for that reason, not this one.
+
+   Since T14: **SMS runs `'always'`, voice runs `'once'`**, and
+   `server/twilio/memory-compose.ts` makes the communications section structurally unreachable — its
+   input schema has no `communications` key so zod strips them, and the response it hands the renderer
+   is constructed with `communications: []`. That covers a case no config value can: on a Recall
+   failure TAC falls back to `listCommunications(conversationId)` with **no limit** and would render
+   this very conversation.
 
 Also worth knowing: **`onMessageReady` lives on `TAC`, not on the channel** — single-slot and global
 across channels, so T13 must branch on `channel` rather than registering a second one. Returning `''`
@@ -798,7 +857,13 @@ already needed.
 > `/Users/dtolbert/code/demo-building-tools/twilio-agent-connect-typescript`, clean at tag **`v2.2.0`
 > (`a7a58f2`)**, matching the installed version. Two path traps inside it: **`voice.ts` lives at
 > `packages/core/src/channels/voice.ts`** (1745 lines), *not* under `packages/server/`; and **TAC ships
-> no tests**, so a `tests/server.test.ts` citation is not test-backed evidence.
+> **31 test files** — ⚠ CORRECTED AT T14; this line previously said TAC ships none, and the plan's
+> footgun #35 said the same. Only `node_modules/twilio-agent-connect` is test-free, because it is
+> dist-only. The SIBLING CHECKOUT at v2.2.0 ships 31 test files, four of which cover the built-in
+> tools (`tests/handoff.test.ts`, `tests/tools.test.ts`, and two memory suites), plus
+> `tests/voice-channel.test.ts` and `tests/voice-channel-active-memory.test.ts`. **They are usable as
+> evidence**, and T14 used them: the five-layer `actionUrl` precedence and the fact that `session`
+> reaches the prompt callback under every `memoryMode` are both test-backed there, not inferred.
 >
 > For "what is actually executing", read **`dist/index.js`** — bundled but **not minified** (7021
 > lines, JSDoc intact), and it greps well. Class landmarks (2.2.0): `TACConfig` 1350, `TAC` 2698,
@@ -838,6 +903,216 @@ already needed.
   (`dist/index.js:4811`) and throws *"needs a WebSocket URL"* without it.
 - **`onMessageReady` is global across channels** (already noted above) — branch on `channel` there
   rather than registering a second handler.
+
+## T14, Conversation Memory + built-in tools — built, proven, and eleven corrections
+
+New: `server/twilio/{memory-compose,builtin-tools}.ts`, `shared/tac-tool-names.ts`,
+`scripts/{verify-memory,verify-knowledge,seed-knowledge,knowledge-articles,repoint-public-host}.ts`,
+`tests/{memory-compose,builtin-tools}.test.ts`. Changed: `server/twilio/{tac,voice}.ts`,
+`server/agent/{run-turn,types}.ts`, `server/agent/tools/{registry,resolve}.ts`,
+`server/agent/prompt/defaults.ts`.
+
+Design and plan: `docs/superpowers/specs/2026-09-11-t14-memory-and-builtin-tools-design.md` and
+`docs/superpowers/plans/2026-09-11-t14-memory-and-builtin-tools-plan.md`. **Both are now wrong in the
+places listed below** — this section wins.
+
+### The one thing to understand about Conversation Memory
+
+**Extraction is POST-conversation only. There is no mid-conversation extraction.** Recall works on
+every turn, but nothing is in the store until a PRIOR conversation has closed and been processed. So:
+
+- Memory makes the **next** conversation smart, not the current one. "It remembered what I said a
+  minute ago" is `server/agent/history.ts`. Memory is "it remembered me from last week."
+- **Any honest test needs two conversations with a close between them.** One conversation cannot
+  demonstrate memory no matter how long it runs.
+- Measured: **~2 seconds** from CLOSED to the observation appearing. The slow part is the *close*
+  (5m36s, `statusTimeouts.closed: 5`, timed from CREATION), not extraction.
+
+### What is wired, per channel
+
+| | `memoryMode` | tools offered |
+|---|---|---|
+| SMS / bench prompt (`demo-agent-text` v3) | `'always'` — Recall per message, utterance used as a semantic query so observations come back RANKED | `lookup_order`, `get_store_hours`, `search_knowledge`, `retrieve_profile_memory` |
+| voice (`demo-agent-voice` v5) | `'once'` — one Recall per conversation, cached on the session by TAC | `lookup_order`, `get_store_hours`, `search_knowledge`, `end_call` |
+
+`retrieve_profile_memory` is deliberately **not** on voice: memory already arrives in the system prompt
+every turn, so there it could only re-fetch what the model can already read, at the price of a step —
+and a step on voice is silence.
+
+### THE FLAG WAS ENOUGH — the biggest open risk, closed
+
+`memoryExtractionEnabled: true` on the CO configuration is **sufficient**. `intelligenceConfigurationIds`
+can stay `[]`.
+
+This was the plan's single largest risk, because the one configuration on this account with real
+observations (`Flight-sandbox-conversations`) has extraction on **and** a populated
+`intelligenceConfigurationIds`, and every one of its observations carries an
+`intelligence_operatorresult_*` source — which reads as causal. It is not. Our observation also carries
+an `intelligence_operatorresult_*` source with an EMPTY array on the configuration: extraction uses an
+operator internally without you attaching one. Do not attach one, and above all **do not add voice
+capture rules** (see below) while chasing this.
+
+Also confirmed harmless: `SMS.statusTimeouts.inactive` is `null`. Only the CLOSED transition triggers
+extraction here, and CLOSED alone is enough.
+
+### The bug T14 nearly shipped — read this before trusting a green check
+
+With the wiring complete, **every instrument reported success**: `pnpm typecheck` 0, 286 tests green,
+the boot log listing a 5-tool catalog, `/health` reporting `knowledge: true`, and `verify-tools.ts`
+printing *"all checks passed"*. **Both new tools were dead.**
+
+A tool being in the catalog is not a tool being offered. **A PROMPT has to name it**, and neither
+compiled default did. Nothing in the repo could notice, because every check verified the catalog rather
+than the offer. The question that found it was *"what does the live prompt actually name?"*
+
+Two consequences worth keeping:
+
+- `verify-tools.ts` reports `catalog (3 tools)` and structurally CANNOT see the built-ins — it imports
+  the module-level `toolCatalog`, while the augmented catalog exists only inside `bootTac`. That is
+  correct behaviour and a permanent blind spot of that script.
+- `resolve()` now classifies a TAC-provided name absent from the catalog as **`unavailable`, not
+  `unknown`**. `demo-agent-text` serves both SMS and the bench, so `unknown` would have warned once per
+  bench turn about tools that are neither typos nor removed. `shared/tac-tool-names.ts` is the one
+  source of truth both sides import, because `builtin-tools.ts` imports TAC and `server/agent/` may not.
+
+### Eleven corrections to the design, the plan, and this file
+
+Each was found by executing something, not by rereading it.
+
+1. **TAC ships 31 test files.** See the corrected block above. Both this file and plan footgun #35 said
+   none.
+2. **TAC never composes a prompt** — see the rewritten correction #9 above. This undercut the stated
+   reason for `memoryMode: 'never'` for two tasks.
+3. **`communicationsLimit` is already `0`** (`config.ts:19`, `.default(0)`, asserted in TAC's own
+   `tests/config.test.ts:485`) and is **not a channel option** — `BaseChannelOptions` has exactly
+   `memoryMode` and `dedupCapacity`. `./tac.ts` omits `memoryConfig`, so the running app always had 0.
+   ⚠ TAC's own JSDoc at `types/memory.ts:169-170` claims the default is 10. It is stale.
+4. **`session` is on the voice prompt payload in EVERY memory mode.** The spread is
+   `...session !== undefined && { session }` — gated on its own existence, not on `memoryMode`. It had
+   been reachable since T13 and was simply discarded, `profileId` with it.
+5. **Memory is an APPENDED system part, not a slot** (`run-turn.ts:110`). `slots.ts` and the compiled
+   prompt text needed no change. Adding a `{{memory}}` placeholder would ship a visible
+   `[[UNKNOWN SLOT: memory]]` into a live prompt.
+6. **ONE augmented `TurnDeps`, not one per channel.** The design argued per-channel was forced by
+   voice's `profileId`; but `profileId` rides `TurnInput` (per-turn) while `TurnDeps` is per-process.
+7. **`memoryChars` did not need building** — `memory.recall`'s timed step already reports `chars`.
+8. **`createKnowledgeSearchTool` is SYNCHRONOUS and makes no network call.** Only the `…Async` variant
+   does. Lazy construction is still right, but for the other two reasons.
+9. **`tac.fetchProfile` already never throws** (catches, returns `undefined`), while
+   **`new TACMemoryResponse(data)` CAN throw from its constructor** — it parses each communication.
+   With `communications: []` there is nothing to parse.
+10. **`TWILIO_MEMORY_PROFILE_TRAIT_GROUPS` does not exist in this repo.** It is a TAC `fromEnv()`
+    variable and we deliberately never call `fromEnv()`. So the design's "two filters must agree"
+    warning is moot: neither is set. Also `buildProfilePrompt` is not exported, so
+    `MemoryPromptBuilder.build` is the only route to `## Customer Profile`.
+11. **The Knowledge control plane is `knowledge.twilio.com/v2/ControlPlane/KnowledgeBases`**, not
+    `conversations.twilio.com` (that host owns CO configurations). A knowledge-base create returns
+    202 + `statusUrl`; a SOURCE create returns 201 with `status: QUEUED` and is not searchable until
+    COMPLETED. Five further doc contradictions are recorded in `scripts/seed-knowledge.ts`.
+
+### `search_knowledge`: its description is load-bearing, because score cannot gate
+
+**`score` from the Search API is not comparable across queries** — the top hit is normalised per query.
+Measured against the real base:
+
+```
+in scope   "What is your return window?"              1.0   / 0.54  / 0.53
+OUT        "What time does the Downtown store close?" 0.8   / 0.736 / 0.732
+OUT        "Where is my order A4721?"                 0.816 / 0.468 / 0.38
+```
+
+An out-of-scope order query scores **0.816 — higher than the in-scope query's own second hit**. So no
+threshold can distinguish "the library covers this" from "it does not". The only two mechanisms keeping
+`search_knowledge` out of `lookup_order`'s and `get_store_hours`'s territory are **content curation**
+(the five articles deliberately exclude order status and store hours) and **the tool's description**,
+which is ours to write because TAC's factory takes `name` and `description` as required arguments.
+Do not treat that prose as decorative.
+
+### Two traps that cost real time today
+
+- **`lsof -ti :8910` MATCHES NGROK, and killing it takes the tunnel down.** That list includes
+  processes holding a *connection* to the port, not just the listener — and ngrok, while forwarding,
+  is one. Three "the tunnel keeps dropping" incidents were self-inflicted. Use
+  **`lsof -ti :8910 -sTCP:LISTEN`**.
+- **`twil webhook invoke` against `localhost` returns a FALSE 403.** It signs
+  `http://localhost:8910/…` while TAC rebuilds the URL defaulting to **https** when
+  `X-Forwarded-Proto` is absent, and `twil` has no header flag. Sign the `https://` form and POST to
+  `http://` — there is a worked example in the T14 session. Through a real tunnel it is fine, because
+  ngrok sets the header.
+- **Do NOT test inbound SMS from a second number on the same account.** The message is captured twice
+  (once as outbound from the sender, once as inbound to the agent) — both match
+  `{from:'*', to:NUMBER}` — so two turns run and the sender gets two different replies. Not a
+  production bug; a real customer's handset is not on the account.
+
+### The voice call, and the bug only a call could find
+
+Four turns, `search_knowledge` twice, `end_call` fired, `/conversation-relay-callback → 200`.
+
+**The profile fetch was uncached and ran on every turn**: `profileMs` 76 / 623 / 113 / 134 ms across
+four turns of one call, each in front of the first spoken word. Voice runs `'once'` precisely so a
+round-trip does not sit there per turn, and an uncached `fetchProfile` bolted on top partly undid it.
+Now cached per conversation, **negative results included** — a profile that times out would otherwise
+pay full latency on every remaining turn. Bounded at 200, no lifecycle hook (conversation ids are
+unique, so a stale entry can never be re-read).
+
+**Memory is not what makes voice TTFT slow.** Measured `first token in 2666ms (2587ms of it inside the
+model call)` — our whole preamble is **~79ms**. Every turn made a tool call (2 steps); T13's fast
+463–509ms turns were single-step, no-tool turns. The cost is the tool round-trip.
+
+**Still open:** the first turn answered with **455 characters** against a prompt asking for one or two
+sentences, and the caller barged in at 459ms and 346ms — i.e. cut it off. `demo-agent-voice` v5 adds
+"say only the part that answers what they asked, then offer the rest". **Unverified — needs one more
+call.**
+
+## T14b, NOT STARTED — Studio handoff + browser softphone, and what is already known
+
+Split out of T14 at the `web/` boundary. Everything below was researched during T14 and verified
+against 2.2.0 or the live account; none of it is guesswork, and it is the reason this is its own task.
+
+**The landmine, confirmed.** TAC's Studio handoff tool sets `session.pendingHandoffData` (one write
+site, `packages/tools/src/built-in/handoff.ts:211`, voice branch only) and that frame is drained **only
+inside `sendResponse` — never inside `sendStreamingResponse`**. We stream. So a TAC-built handoff frame
+would never be sent at all and the caller simply would not be transferred. **We must write the
+`{"type":"end","handoffData":"<json string>"}` frame ourselves**, which `endSession` in
+`server/twilio/voice.ts` already does for `end_call` — `handoffData` is the one field to add, and it is
+double-encoded (a JSON *string* inside the frame).
+
+⚠ And TAC's own docblock is a trap here: it says *"the voice channel will send the WS end message with
+your payload"*. True of `sendResponse`, false on our path.
+
+**Worse than not transferring:** before parking the frame, the tool fires
+`coClient.updateConversation(..., 'INACTIVE')` and `clearStatusCallbacks(...)`, both warn-only on
+failure and **not reverted**. So a silently-unsent frame leaves the conversation in a broken state, not
+merely an untransferred one.
+
+**The `actionUrl` problem has a clean answer.** `resolveActionUrl` (`packages/core/src/channels/voice.ts:1067`)
+is a FIVE-layer precedence: `onInboundCallTwiml` → `defaultTwimlOptions` → host per-call → **Studio** →
+derived default. Studio is only layer 4, and this repo already passes `defaultTwimlOptions`, so pinning
+`actionUrl` there beats it — a one-key addition, and all five branches are covered by TAC's own
+`tests/voice-channel.test.ts:384-497`. Then our own route inspects the callback and redirects to Studio
+when handoff data is present. TAC's source endorses exactly this (`handoff.ts:104-112`).
+
+**The Studio side, and the prerequisite nobody had noticed.** One published flow on the account,
+`FW3ffc6d00f903d291b16cbd134cc474f5` "TAC Payment Reminder Handoff", `incomingCall → ring_browser_agent`.
+It will accept the returning call, so the transfer mechanically works — but it contains **no
+`HandoffData` reference at all**, so every bit of TAC context is dropped. The fix is one `set-variables`
+widget using `{{trigger.call.HandoffData}}` typed **`json_object`** (that type is what un-double-encodes
+it), after which `flow.variables.handoffData.*` works. Note the digital path is different and NOT
+interchangeable: `{{trigger.request.parameters.HandoffData}}`, already a Map.
+
+**And `ring_browser_agent` dials `client:browser-agent`, which nothing is registered as** — so without a
+browser softphone the transfer rings nothing for 30 s and times out. That is why the softphone is in
+scope: Voice JS SDK client, a token route with a `VoiceGrant`, a TwiML App SID, and a page to host it.
+
+**Other decided-but-unbuilt points:** two handoff tools rather than one (SMS completes synchronously
+inside `execute`; voice must park intent and let the channel send the frame after streaming), and a
+policy for `end_call` versus handoff, which both terminate in a `{"type":"end"}` frame on the same
+socket and are undefined behaviour together.
+
+**Free pre-flight before spending a call on it:** the documented `<Connect action>` callback delivers
+handoff data as the POST parameter **`HandoffData`** with `SessionStatus: ended` and the call still
+`in-progress`. Note TAC's own callback schema has no `HandoffData` field and would strip it, which is
+precisely why TAC repoints the action at Studio instead of parsing it.
 
 ## Gaps and honest limits
 
@@ -880,11 +1155,22 @@ already needed.
   this is no longer trivially true and re-running it is the one outstanding check that costs nothing.**
   Two cases, and the second is the real one: credentials ABSENT (the dynamic import in `index.ts` never
   evaluates) and credentials PRESENT (the import rejects, the try/catch degrades, `/bench` still serves).
-- **BOTH channels are now verified live.** Four SMS turns and two calls (11 voice turns total) have
-  round-tripped, including memory across turns, barge-in on real audio, the not-found tool branch, and
-  an agent-initiated hangup. What remains unexercised: the 45 s shutdown timeout (needs a SIGTERM
-  during a call), a `/ws` signature rejection, and Studio handoff. Don't run a demo end-to-end without
-  asking; calls and messages are billed.
+- **BOTH channels are verified live, now including memory ACROSS conversations.** Eight SMS turns and
+  three calls (15 voice turns total) have round-tripped, including memory across a conversation
+  boundary with 0 tool calls, barge-in on real audio, the not-found tool branch, an agent-initiated
+  hangup, and `search_knowledge` against a real Knowledge Base on both channels.
+  What remains unexercised: the **45 s shutdown timeout** (needs a SIGTERM *during* a call), a **`/ws`
+  signature rejection** (invisible by construction), **Studio handoff** (T14b), and the **voice
+  verbosity fix** in `demo-agent-voice` v5, which needs one more call.
+- **The demo's memory story needs TWO conversations and a five-minute gap, and that is a product fact,
+  not a limitation to engineer around.** Extraction is post-conversation only. A demo script that texts
+  once and expects the agent to remember will fail, correctly. Either seed a profile beforehand or
+  build the pause into the narrative — the pause is also where you explain what Orchestrator is doing.
+- **PII now reaches the memory store as well as Langfuse.** The profile's traits are a phone number,
+  and extracted observations are prose derived from the transcript. `obs/pii.ts` scrubs our log lines
+  and obs payloads — it does **not** scrub tool results or the memory store. `builtin-tools.ts`
+  projects communications down and drops `recipients` so an address cannot reach the model through a
+  tool result, and a test asserts it; the store itself is Twilio-side and out of our control.
 - `docker-compose.yml` for the app does not exist yet (T15). The Langfuse compose does.
 - Carried Minor review findings, for the final whole-branch review: a duplicated prose block across
   the two default prompts; `log.warn` outside the never-rejects guard in `prompt/langfuse.ts`;
