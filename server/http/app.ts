@@ -16,6 +16,7 @@ import { rootLogger } from '../logging.ts';
 import { obsBus } from '../obs/bus.ts';
 import { registerObsRoutes, type ObsRoutes } from './routes-obs.ts';
 import { registerBenchRoutes, type BenchRoutes } from './routes-bench.ts';
+import { registerVoiceActionRoutes } from './routes-voice-action.ts';
 import { APP_API_PATHS, BENCH_TURN_PATH, TAC_WEBHOOK_PATHS } from '../../shared/twilio-paths.ts';
 import type { TurnDeps } from '../agent/types.ts';
 import type { App } from './types.ts';
@@ -159,8 +160,9 @@ export function buildApp(deps: AppDeps): { app: App; obs: ObsRoutes; bench: Benc
     emit('tool.selection', '2 of 3 tools resolved', {
       payload: {
         // The real catalog (`server/agent/tools/catalog.ts`), so this fixture teaches the tools a
-        // reader will actually find. `handoff` is a stand-in for one of T14's TAC built-ins, NOT a
-        // catalog tool: it is here so the console's `unavailable` rendering has something to render.
+        // reader will actually find. `handoff` became a REAL tool at T14b; it is still the right
+        // fixture for the `unavailable` bucket because it is the one tool that genuinely lands there
+        // on a process with no Studio flow SID configured.
         // Same four keys `resolve()` publishes, in the same shape — T19 builds the console against
         // this endpoint, so a fixture missing half the payload teaches half a contract.
         considered: ['lookup_order', 'get_store_hours', 'handoff'],
@@ -192,6 +194,10 @@ export function buildApp(deps: AppDeps): { app: App; obs: ObsRoutes; bench: Benc
     bus: obsBus,
     ...(deps.turn !== undefined && { turn: deps.turn }),
   });
+
+  // Registered unconditionally and with no capability gate — Twilio is mid-call by the time it POSTs
+  // here, so a 404 or a 503 is a dropped call. See the route's own header.
+  registerVoiceActionRoutes(app, { config, caps, bus: obsBus });
 
   return { app, obs, bench };
 }

@@ -33,6 +33,7 @@
  * why this returns a handle whose `start()` is the thing that binds the port.
  */
 import type { FastifyInstance } from 'fastify';
+import formbody from '@fastify/formbody';
 import gracefulShutdown from 'fastify-graceful-shutdown';
 import type { z } from 'zod';
 import {
@@ -282,6 +283,21 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
    * plugin installs its own listeners (warning loudly if it finds any already there).
    */
   await app.register(gracefulShutdown, { timeout: TAC_SHUTDOWN_TIMEOUT_MS });
+
+  /**
+   * OURS, FIRST, AND AWAITED — the same three requirements as `gracefulShutdown` above, for a related
+   * reason. TAC registers this itself inside `start()` behind
+   * `if (!this.fastify.hasContentTypeParser('application/x-www-form-urlencoded'))`. Registering
+   * WITHOUT awaiting would leave the parser still queued when that check runs, TAC would register its
+   * own copy, and the second registration throws `FST_ERR_CTP_ALREADY_PRESENT`.
+   *
+   * Needed because `POST /api/voice/relay-action` is ours, not TAC's, and Twilio posts form-encoded
+   * bodies. Declared as a direct dependency rather than relied on as TAC's transitive one — an
+   * undeclared import is the trap `docs/HANDOFF.md` records for the `twilio` package.
+   */
+  if (!app.hasContentTypeParser('application/x-www-form-urlencoded')) {
+    await app.register(formbody);
+  }
 
   if (caps.sms) {
     /**
