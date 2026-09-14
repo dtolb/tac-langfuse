@@ -14,7 +14,8 @@
     "langfuse": "docker compose -f docker-compose.langfuse.yml up -d",
     "langfuse:down": "docker compose -f docker-compose.langfuse.yml down",
     "seed:prompts": "node --env-file-if-exists=.env scripts/seed-prompts.ts",
-    "verify:turn": "node --import ./server/obs/instrumentation.ts --env-file-if-exists=.env scripts/verify-turn.ts"
+    "verify:turn": "node --import ./server/obs/instrumentation.ts --env-file-if-exists=.env scripts/verify-turn.ts",
+    "seed:knowledge": "node --env-file-if-exists=.env scripts/seed-knowledge.ts"
   },
   "license": "UNLICENSED",
   "type": "module",
