@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@gtmi/strix-react": "^0.9.0",
+    "@twilio/voice-sdk": "2.18.4",
     "next": "16.3.4",
     "react": "19.2.8",
     "react-dom": "19.2.8"
