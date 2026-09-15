@@ -1,5 +1,5 @@
 {
-  "name": "demo-scaffold",
+  "name": "tac-langfuse",
   "version": "0.0.0",
   "description": "Twilio demo scaffold: TAC voice+SMS, AI SDK agent, Langfuse prompts/tools/telemetry, Strix UI",
   "scripts": {

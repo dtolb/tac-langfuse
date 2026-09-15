@@ -25,6 +25,19 @@
 # In addition, we recommend to restrict inbound traffic on the host to langfuse-web (port 3000) and minio (port 9090) only.
 # All other components are bound to localhost (127.0.0.1) to only accept connections from the local machine.
 # External connections from other machines will not be able to reach these services directly.
+
+# PINNED, and this is the load-bearing kind of pin. Compose derives an unset project
+# name from the DIRECTORY, and the project name prefixes every volume — so renaming or
+# moving the checkout points the stack at volumes that do not exist yet, Langfuse boots
+# empty, and headless init makes that look like a healthy first run. What is actually
+# gone is every versioned prompt and the whole trace history, and the agent degrades to
+# compiled-in prompts without erroring. `langfuse` also names it for what it IS rather
+# than for whichever demo is cloned around it: this stack is shared local tooling, it is
+# `restart: always`, and it outlives any one APP_NAME. docker-compose.yml pins
+# `${APP_NAME}` instead, which is what keeps the two stacks from claiming each other's
+# containers as orphans.
+name: langfuse
+
 services:
   langfuse-worker:
     image: docker.io/langfuse/langfuse-worker:4
@@ -164,8 +177,8 @@ services:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse} # CHANGEME
     volumes:
-      - langfuse_clickhouse_data:/var/lib/clickhouse
-      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
     ports:
       - 127.0.0.1:8123:8123
       - 127.0.0.1:9000:9000
@@ -189,7 +202,7 @@ services:
       - 9090:9000
       - 127.0.0.1:9091:9001
     volumes:
-      - langfuse_minio_data:/data
+      - minio_data:/data
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 1s
@@ -207,7 +220,7 @@ services:
     ports:
       - 127.0.0.1:6379:6379
     volumes:
-      - langfuse_redis_data:/data
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 3s
@@ -231,16 +244,16 @@ services:
     ports:
       - 127.0.0.1:5432:5432
     volumes:
-      - langfuse_postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
 
 volumes:
-  langfuse_postgres_data:
+  postgres_data:
     driver: local
-  langfuse_clickhouse_data:
+  clickhouse_data:
     driver: local
-  langfuse_clickhouse_logs:
+  clickhouse_logs:
     driver: local
-  langfuse_minio_data:
+  minio_data:
     driver: local
-  langfuse_redis_data:
+  redis_data:
     driver: local

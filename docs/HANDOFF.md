@@ -20,7 +20,7 @@ work and are wrong in the places their own "corrections" sections now list.
 
 **Account-specific values are deliberately NOT in this file.** SIDs, phone numbers, Conversation
 Orchestrator ids and Studio flow SIDs live in `.env` (gitignored) and in this project's session memory
-at `~/.claude/projects/-Users-dtolbert-code-demo-building-tools-scaffold/memory/`. This repo is
+at `~/.claude/projects/-Users-dtolbert-code-tac-langfuse/memory/`. This repo is
 *cloned* per demo, so a committed doc carrying one account's ids hands every future clone stale values
 that look authoritative. What is here instead is the **method** for discovering them — see
 "Twilio credentials" below.
@@ -1528,7 +1528,7 @@ stale host survives and you get the silent failure above.
 | Traefik runs `--entrypoints.web.address=:80` with **no TLS entrypoint**; TLS terminates in a Caddy **not on this machine**. A Host-header curl to `localhost` and the public URL return **byte-identical bodies** (re-verified at T15: matching SHAs). | The box genuinely provides a public HTTPS host. ngrok can go. |
 | `X-Forwarded-Proto: https` **arrives correctly**, because `forwardedheaders.trustedips=172.16.0.0/12` covers Caddy's source. And TAC's `getForwardedProto` defaults to `https` when absent. | The proto middleware is defence in depth, **not** the 403-preventer this doc claimed. Corrected in three places. |
 | `TAC_SHUTDOWN_TIMEOUT_MS = 45_000` vs Docker's default `stop_grace_period` of **10 s**. | Compose sets `stop_grace_period: 60s`, or SIGKILL lands 35 s before the only telemetry flush — and Docker reports it as a crash. |
-| `host.docker.internal:3100` **answers 200** from a container on `edge`; `langfuse-web` is **ENOTFOUND** there (it is on `scaffold_default`). | Compose overrides `LANGFUSE_BASE_URL`. The plan listed "does it *answer*" as unmeasured; it is now measured. |
+| `host.docker.internal:3100` **answers 200** from a container on `edge`; `langfuse-web` is **ENOTFOUND** there (it is on `langfuse_default`). | Compose overrides `LANGFUSE_BASE_URL`. The plan listed "does it *answer*" as unmeasured; it is now measured. |
 
 ### Six container traps that are absent from the dockerizing skill
 
@@ -1547,10 +1547,15 @@ stale host survives and you get the silent failure above.
    skill's "build it from its own directory" note. Both `.npmrc` files and both `pnpm-workspace.yaml`
    files must still be copied: pnpm does not walk up for registry config, and an undecided `allowBuilds`
    makes pnpm 11 **fail** the install with `ERR_PNPM_IGNORED_BUILDS`.
-5. **Two compose files in one directory share a project name.** `docker-compose.langfuse.yml` has no
-   `name:`, so its project is the directory name (`scaffold`). Ours sets `name: ${APP_NAME}`. This was
-   observed live: before `APP_NAME` was changed, `docker compose ps` listed *Langfuse's* six containers
-   as ours.
+5. **An unset compose project name is the DIRECTORY name, and it prefixes every volume.** Two files in
+   one directory therefore share a project: observed live, before `APP_NAME` was changed
+   `docker compose ps` listed *Langfuse's* six containers as ours. The worse failure is a renamed or
+   moved checkout, which points the stack at volumes that do not exist — Langfuse boots empty, headless
+   init makes that look like a healthy first run, and what is actually gone is every versioned prompt
+   and the whole trace history, with the agent degrading to compiled-in prompts without erroring. **Both
+   files now pin a name:** `langfuse` and `${APP_NAME}`. Recovering the data after the rename was
+   `docker compose create` to let Compose own the new volumes' labels, then per volume
+   `docker run --rm -v old:/from:ro -v new:/to alpine cp -a /from/. /to/` with the stack down.
 6. **`environment: FOO: "${FOO:-}"` always sets the key**, to `""` when unset — and `environment:` beats
    `env_file:`. So the substitution form lets a forgotten `export` **shadow a good `.env` value with an
    empty string**. The bare-name list form (`- FOO`) passes a variable through only if set. That is why
@@ -1698,7 +1703,7 @@ is dropped). `prompt.fetch`, `prompt.compose`, `memory.recall`, `tools.resolve`,
 > The legacy `traces` / `observations` ClickHouse tables are **empty by design** — the data is in
 > **`events_core` / `events_full`**:
 > ```bash
-> docker exec scaffold-clickhouse-1 clickhouse-client --user clickhouse --password clickhouse \
+> docker exec langfuse-clickhouse-1 clickhouse-client --user clickhouse --password clickhouse \
 >   --query "SELECT trace_id, name, count() FROM default.events_core
 >            WHERE start_time > now() - INTERVAL 30 MINUTE GROUP BY trace_id, name"
 > ```
@@ -1724,7 +1729,7 @@ grown **88% in one day** — a cause that did not exist at T9.
 The AI SDK writes a **native time-to-first-chunk attribute on every `GENERATION`, in SECONDS**:
 
 ```bash
-docker exec scaffold-clickhouse-1 clickhouse-client --user clickhouse --password clickhouse \
+docker exec langfuse-clickhouse-1 clickhouse-client --user clickhouse --password clickhouse \
   --query "SELECT formatDateTime(start_time,'%H:%i:%S') AS at,
              dateDiff('millisecond',start_time,end_time) AS span_ms,
              arrayElement(metadata_values, indexOf(metadata_names,
@@ -1869,7 +1874,7 @@ Wiring `providerOptions` would be needed to find out, and that is a code change 
 `memory-compose.ts` onto its own `memory.recall` obs event, so it needs no code change to read:
 
 ```bash
-docker exec scaffold-clickhouse-1 clickhouse-client --user clickhouse --password clickhouse \
+docker exec langfuse-clickhouse-1 clickhouse-client --user clickhouse --password clickhouse \
   --query "SELECT substring(trace_id,1,8) AS trace, formatDateTime(min(start_time),'%H:%i:%S') AS at,
              any(output) AS memory_chars
            FROM default.events_full WHERE name='memory.recall'
@@ -1881,7 +1886,7 @@ docker exec scaffold-clickhouse-1 clickhouse-client --user clickhouse --password
 conversation. This is what produced the 33 / 35 / 32 % table:
 
 ```bash
-docker exec scaffold-clickhouse-1 clickhouse-client --user clickhouse --password clickhouse \
+docker exec langfuse-clickhouse-1 clickhouse-client --user clickhouse --password clickhouse \
   --query "SELECT input FROM default.events_full WHERE span_id='<span_id>' FORMAT TSVRaw" > /tmp/gen1.json
 python3 -c "
 import json; d=json.load(open('/tmp/gen1.json'))
@@ -1902,7 +1907,7 @@ above (`ef371f7fbd13` served both a fast and a slow call), and it is the fastest
 trace came from the stack or from a host process you forgot was running:
 
 ```bash
-docker exec scaffold-clickhouse-1 clickhouse-client --user clickhouse --password clickhouse \
+docker exec langfuse-clickhouse-1 clickhouse-client --user clickhouse --password clickhouse \
   --query "SELECT DISTINCT arrayElement(metadata_values,
              indexOf(metadata_names,'resourceAttributes.host.name')) AS host
            FROM default.events_full WHERE start_time > now() - INTERVAL 24 HOUR"

@@ -28,7 +28,7 @@ import { AGENT_DEV_ORIGIN } from '../shared/ports.ts';
  * The repo root, one level up from `web/`.
  *
  * Derived rather than written as a literal because it differs by environment — `/app` in the
- * container, `~/code/demo-building-tools/scaffold` on the host — and `outputFileTracingRoot`
+ * container, wherever the checkout happens to sit on the host — and `outputFileTracingRoot`
  * takes an absolute path. `import.meta.dirname` rather than `process.cwd()` because the answer
  * must depend on where this FILE is, not on which directory `next build` was invoked from.
  */

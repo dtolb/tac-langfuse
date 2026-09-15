@@ -20,10 +20,12 @@
 #   every call connects to the old host.
 # ==============================================================================
 
-# Distinct project name, because docker-compose.langfuse.yml in this same
-# directory declares no `name:` and therefore claims the directory name
-# (`scaffold`). Two files sharing a project makes each stack's containers look
-# like the other's orphans, and `docker compose down` offers to remove them.
+# Distinct project name from docker-compose.langfuse.yml beside it, which pins
+# `langfuse`. Two files sharing a project makes each stack's containers look like
+# the other's orphans, and `docker compose down` offers to remove them — observed
+# live before APP_NAME was set. Both files pin a name rather than inheriting the
+# DIRECTORY name, which is what Compose uses otherwise: the project prefixes every
+# volume, so a renamed checkout silently starts against volumes that do not exist.
 #
 # `:?` rather than a default: an unset APP_NAME must stop here with a message, not
 # silently produce routers named `-agent` that collide with the next clone's.
@@ -102,7 +104,7 @@ services:
       # .env says localhost:3100, which inside a container is the container
       # itself. MEASURED 2026-09-15 from a container on `edge`:
       # host.docker.internal:3100/api/public/health answers 200, while
-      # langfuse-web is ENOTFOUND (it sits on scaffold_default, not edge).
+      # langfuse-web is ENOTFOUND (it sits on langfuse_default, not edge).
       #
       # Getting this wrong is SILENT. config.ts validates the URL's shape only, so
       # an unreachable-but-well-formed value still yields caps.prompts = true;
