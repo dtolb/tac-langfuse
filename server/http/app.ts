@@ -46,8 +46,15 @@ export function buildApp(deps: AppDeps): {
 
   const app = Fastify({
     // trustProxy so request.ip and the X-Forwarded-* headers reflect Traefik rather than the
-    // bridge network. Note TAC rebuilds the signed webhook URL from X-Forwarded-Proto, which is
-    // why compose forces that header to `https` — see docker-compose.yml.
+    // bridge network.
+    //
+    // TAC rebuilds the signed webhook URL from X-Forwarded-Proto, and docker-compose.yml pins that
+    // header to `https` — but CORRECTED AT T15, because the older phrasing here overstated it: that
+    // label is defence in depth, not what stands between us and a 403. Measured 2026-09-15, this
+    // Traefik preserves the real `X-Forwarded-Proto: https` (its forwardedheaders.trustedips covers
+    // the Caddy that terminates TLS off-box), and TAC's own getForwardedProto defaults to https when
+    // the header is absent regardless. The label matters for the day Traefik is recreated without
+    // trustedips — which is live, not hypothetical: its config directory is gone from disk.
     trustProxy: true,
     loggerInstance: rootLogger,
     /**
@@ -57,7 +64,13 @@ export function buildApp(deps: AppDeps): {
      * watchdog `process.exit(1)`s the process — and our `preClose` cleanup (which ends spans and
      * flushes OpenTelemetry) would never run. Two things reliably hold `close()` open past 10s: an
      * attached `/events/stream` SSE client, and `keepAliveTimeout` (72s by default) on any idle
-     * socket, which Next's dev-mode rewrite proxy creates on every `/bench` visit.
+     * socket.
+     *
+     * The idle socket has TWO sources, and T15 added the one that outlives development: in dev it is
+     * Next's rewrite proxy, created on every `/bench` visit; in the container it is TRAEFIK'S
+     * KEEP-ALIVE POOL, which is permanent and present whether or not a browser is open. Same hazard,
+     * but no longer something that disappears in production — so `forceCloseConnections` is now
+     * load-bearing for every `docker compose stop`, not just for a developer's tab.
      *
      * Note the `'idle'` default does NOT help: fastify only wires up `closeIdleConnections` when a
      * `serverFactory` is supplied, which we do not do.

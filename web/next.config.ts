@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import type { NextConfig } from 'next';
 import { AGENT_DEV_ORIGIN } from '../shared/ports.ts';
 
@@ -23,7 +24,41 @@ import { AGENT_DEV_ORIGIN } from '../shared/ports.ts';
  * whole response before forwarding would make every bench turn arrive as one lump at the end with
  * the tokens still correct — indistinguishable from a slow model, and only visible by watching.
  */
+/**
+ * The repo root, one level up from `web/`.
+ *
+ * Derived rather than written as a literal because it differs by environment — `/app` in the
+ * container, `~/code/demo-building-tools/scaffold` on the host — and `outputFileTracingRoot`
+ * takes an absolute path. `import.meta.dirname` rather than `process.cwd()` because the answer
+ * must depend on where this FILE is, not on which directory `next build` was invoked from.
+ */
+const REPO_ROOT = join(import.meta.dirname, '..');
+
 const nextConfig: NextConfig = {
+  /**
+   * Required for the container, and required BECAUSE of the out-of-root imports above, not
+   * despite them.
+   *
+   * `next start` loads this config file at RUNTIME. This file imports `../shared/ports.ts`,
+   * which lives outside `web/` and is therefore not in the deployed subtree — so a `next start`
+   * image dies at boot on ERR_MODULE_NOT_FOUND. Standalone resolves the config at BUILD time and
+   * emits a self-contained `server.js`, so the runtime never reads this file at all.
+   *
+   * Two consequences that are near-silent if you skip them, both handled in Dockerfile.web:
+   *   1. with the tracing root above the project, the entry is `.next/standalone/web/server.js`,
+   *      NOT `.next/standalone/server.js` (next/dist/build/utils.js — `path.relative()`);
+   *   2. standalone does NOT copy `public/` or `.next/static/`, so without a hand-copy the HTML
+   *      renders looking roughly right while every JS/CSS chunk 404s and React never hydrates —
+   *      the bench and softphone become dead buttons with no server-side error.
+   */
+  output: 'standalone',
+
+  /**
+   * Without this, tracing roots at `web/` and the `../shared/*.ts` imports fall outside it, so
+   * they are silently omitted from the standalone bundle.
+   */
+  outputFileTracingRoot: REPO_ROOT,
+
   async rewrites() {
     // Guarded so a production build can never quietly point at a developer's laptop.
     if (process.env.NODE_ENV === 'production') return [];

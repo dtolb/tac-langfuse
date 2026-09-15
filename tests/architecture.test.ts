@@ -164,7 +164,11 @@ test('every TAC path prefix appears in the Traefik router labels', async () => {
   // forgetting its PathPrefix() produces a 404 that looks like a Twilio problem — so the
   // compose file is asserted against shared/twilio-paths.ts rather than trusted.
   const compose = join(ROOT, 'docker-compose.yml');
-  if (!existsSync(compose)) return; // lands at T15
+  // Asserted, NOT guarded. Up to T15 this read `if (!existsSync(compose)) return`, which made the
+  // whole test a vacuous pass — it was landed early on purpose, but the guard can now only ever
+  // hide the file being deleted or renamed. Compose v2 prefers `compose.yaml`, so the rename is a
+  // plausible tidy-up, and it would silently retire every assertion below.
+  expect(existsSync(compose), 'docker-compose.yml must exist and keep THIS name — see its header').toBe(true);
   const yaml = read(compose);
   const { TAC_WEBHOOK_PATHS, APP_API_PATHS } = await import('../shared/twilio-paths.ts');
 
@@ -173,12 +177,53 @@ test('every TAC path prefix appears in the Traefik router labels', async () => {
   );
   expect(missing, 'add these to the router rules in docker-compose.yml').toEqual([]);
 
-  // The X-Forwarded-Proto override is what stops TAC rebuilding the signed URL as http://
-  // and 403-ing every single webhook. Losing this label is a silent, total outage.
+  // The X-Forwarded-Proto override. Note this is defence in depth, not the outage-preventer it was
+  // long described as: measured 2026-09-15, this Traefik's forwardedheaders.trustedips covers the
+  // Caddy that terminates TLS, so the real header arrives intact — and TAC's own getForwardedProto
+  // defaults to https when the header is absent anyway. It earns its place because the Traefik
+  // container's config directory no longer exists on disk, so a recreated Traefik could lose
+  // trustedips. See docker-compose.yml's label comment for both measurements.
   expect(
     /customrequestheaders\.X-Forwarded-Proto\s*=\s*https/.test(yaml),
-    'the X-Forwarded-Proto=https middleware label is required or every webhook 403s',
+    'the X-Forwarded-Proto=https middleware label is required',
   ).toBe(true);
+
+  // A middleware that is DEFINED but never REFERENCED is silently inert — Traefik neither warns nor
+  // errors, and the assertion above passes on it happily. That is the gap this closes: the label
+  // pair only does anything if some router names it.
+  const middlewareName = yaml.match(
+    /traefik\.http\.middlewares\.(\S+?)\.headers\.customrequestheaders\.X-Forwarded-Proto\s*=\s*https/,
+  )?.[1];
+  expect(middlewareName, 'could not find the proto middleware definition to check references against').toBeTruthy();
+
+  const escaped = (middlewareName ?? '').replace(/[/\\^$*+?.()|[\]{}]/g, '\\$&');
+  expect(
+    new RegExp(`routers\\.\\S+\\.middlewares\\s*=\\s*[^\\n]*${escaped}`).test(yaml),
+    `middleware "${middlewareName}" is defined but no router references it, so it does nothing — ` +
+      'add it to the agent router\'s .middlewares= label',
+  ).toBe(true);
+});
+
+test('the Traefik service ports match the compile-time constants', async () => {
+  // AGENT_PORT and WEB_PORT are deliberately NOT env vars (see .env.example's "NOT set here on
+  // purpose" section): the browser, the server and this label must all agree, and a variable only
+  // some of them read is a silent 502. That decision leaves nothing else able to catch drift
+  // between shared/ports.ts and the compose labels, so it is caught here.
+  const compose = join(ROOT, 'docker-compose.yml');
+  expect(existsSync(compose), 'docker-compose.yml must exist').toBe(true);
+  const yaml = read(compose);
+  const { AGENT_PORT, WEB_PORT } = await import('../shared/ports.ts');
+
+  /** The router/service names are APP_NAME-prefixed, so match on the suffix. */
+  const portFor = (service: string): number | undefined => {
+    const m = yaml.match(
+      new RegExp(`traefik\\.http\\.services\\.\\S*${service}\\.loadbalancer\\.server\\.port\\s*=\\s*(\\d+)`),
+    );
+    return m?.[1] === undefined ? undefined : Number(m[1]);
+  };
+
+  expect(portFor('agent'), `the agent router must point at AGENT_PORT (${AGENT_PORT})`).toBe(AGENT_PORT);
+  expect(portFor('web'), `the web router must point at WEB_PORT (${WEB_PORT})`).toBe(WEB_PORT);
 });
 
 test('shared/ imports nothing outside shared/', () => {

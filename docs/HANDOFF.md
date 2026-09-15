@@ -46,11 +46,28 @@ POCs don't:
 All three land in **self-hosted Langfuse**. Its prompt `config` JSON is versioned with the prompt and
 is Langfuse's own documented home for `tools`/`tool_choice`/model params.
 
-## Status: T1–T14b done, all four spikes closed — SMS *and* VOICE verified live, WITH MEMORY, AND A CALLER HANDED TO A HUMAN
+## Status: T1–T15 done, all four spikes closed — SMS *and* VOICE verified live, WITH MEMORY, A CALLER HANDED TO A HUMAN, AND NOW CONTAINERISED BEHIND TRAEFIK
 
 ```
 pnpm typecheck   → 0          (TS 7.0.2, node project + web project)
-pnpm test        → 326 passed, 19 files
+pnpm test        → 327 passed, 19 files
+```
+
+**T15 IS DONE: ngrok is retired.** Both processes run as containers behind the Traefik dev box on one
+stable public host, split by path — `https://$APP_NAME.twilio.dtolb.com`, `APP_NAME=northwind`. A real
+SMS round-tripped through it; routing, TLS, signature validation, the corporate CA at runtime, Langfuse
+reachability from inside a container, a 184 s SSE hold and a clean SIGTERM shutdown are all measured.
+
+⚠ **Two things T15 did NOT prove, and they are the two you would demo:** no real **inbound call** has
+traversed the containerised stack (every component it depends on is proven individually, but `/ws` is
+invisible by construction), and **single-reply SMS needs an external handset** — testing from the
+account's own spare number doubles every reply for a reason that is not a bug. Both are written up at
+the end of the T15 section. Read that before demoing.
+
+```
+pnpm stack:up     preflight, then docker compose up -d --build   (NOT `pnpm up` — that is `pnpm update`)
+pnpm stack:down   docker compose down
+pnpm status       host processes, containers, capabilities, and the public URLs
 ```
 
 **T14 IS DONE AND PROVEN ACROSS TWO CONVERSATIONS.** Conversation Memory is on, TAC's built-in tools
@@ -70,7 +87,7 @@ conv 2 (SMS)  NEW conversationId  "where should you leave my deliveries?"
 Memory and nothing else could have carried it. That is strictly stronger than T12's turn-2 proof,
 which stayed inside one conversation.
 
-**T12 IS DONE AND PROVEN AGAINST REAL SMS.** Two live turns on `+15805630929`, measured:
+**T12 IS DONE AND PROVEN AGAINST REAL SMS.** Two live turns on `TWILIO_PHONE_NUMBER`, measured:
 
 ```
 turn 1  "Where is order a4721"                    ttft 1599ms  total 1979ms  2 steps  1 tool (lookup_order)  93 chars
@@ -114,19 +131,33 @@ conversation.sms                    5m 00s   $0.001388   is_app_root = true
 | **T9 `runTurn`** | done — the channel-agnostic core, verified against the real model AND in the Langfuse UI |
 | **T10 history** | done — bounded two ways, LRU on *use*; a real model repeated an order number from turn 1 and forgot it after `clear()` |
 | **T11 bench** | done — `/bench` streams a real turn in a browser with zero Twilio credentials, and the whole thing was re-run with TAC made *unresolvable* |
-| **T12 TAC/SMS** | done — a real text to `+15805630929` is answered, turn 2 recalled the order number with **0 tool calls**, and the `conversation.sms` trace tree is confirmed in the Langfuse UI |
+| **T12 TAC/SMS** | done — a real text to `TWILIO_PHONE_NUMBER` is answered, turn 2 recalled the order number with **0 tool calls**, and the `conversation.sms` trace tree is confirmed in the Langfuse UI |
 | **T13 TAC/voice** | **done, proven on two real calls.** One `conversation.voice` trace held all five `turn.voice` spans; turn 2 recalled an order number with **0 tool calls**; barge-in works on real audio; and the agent hangs up by itself via `end_call` |
 | **T14 memory + tools** | **done, proven across two conversations.** Extraction on, a real Knowledge Base, `search_knowledge` + `retrieve_profile_memory` adapted with Zod mirrors and drift tests, and conversation 2 recalled a fact from conversation 1 with **0 tool calls on a fresh `conversationId`** |
 | **T14b handoff + softphone** | **done, proven on one real call.** The caller asked for a person, the model called `handoff`, the farewell streamed, the real parked frame went out (`frameSent: true`, `hadPayload: true`), our action route redirected to Studio, the browser softphone rang, a human answered, and the screen pop rendered the transcript |
+| **T15 Docker + Traefik** | **done, routed, ngrok retired.** Two containers on one public host split by path; a real SMS round-tripped. Every layer measured — TLS chain byte-identical, `signedUrl` correct, runtime corp CA, Langfuse reachable from `edge`, 184 s SSE hold, clean SIGTERM. **Not proven: a real inbound call, and single-reply SMS from an external handset** — see the T15 section |
 
-**Not started:** T15–T17 Docker/Traefik, T18–T20 UI + docs.
+**Not started:** T16–T17 Traefik follow-ons, T18–T20 UI + docs.
 
-**A human can talk to the agent three ways now**, and all three have been done for real —
-`pnpm dev:all` then <http://localhost:3000/bench>, **text the number**, or **call it** and hang up by
-saying you're done. Since T14b there is a fourth page, <http://localhost:3000/softphone>, which is not
-a way to talk to the agent but the place a caller **lands when the agent gives them up** — open it
-before the call or the transfer rings nothing. Still absent: Docker for the app, and the home page is a
-placeholder.
+**A human can talk to the agent three ways now**, and all three have been done for real — the bench
+page, **text the number**, or **call it** and hang up by saying you're done. Since T14b there is a
+fourth page, `/softphone`, which is not a way to talk to the agent but the place a caller **lands when
+the agent gives them up** — open it before the call or the transfer rings nothing.
+
+Since T15 each of those pages has **two** URLs, and which one you use matters:
+
+| | host (`pnpm dev:all`) | container (`pnpm stack:up`) |
+|---|---|---|
+| pages | `http://localhost:3000/bench` | `https://northwind.twilio.dtolb.com/bench` |
+| agent | `http://localhost:8910/health` | `https://northwind.twilio.dtolb.com/health` |
+| how `/api` reaches the agent | Next's dev rewrite proxy | Traefik's path split |
+
+**They are mutually exclusive for Twilio traffic**: `TWILIO_VOICE_PUBLIC_DOMAIN` points at exactly one
+of them, so whichever is *not* repointed receives nothing. Running `pnpm dev:all` while the containers
+are up is fine for the bench (no published-port clash — the containers publish none), but calls and
+texts go to whichever host Twilio has been told about. `pnpm status` shows both and warns on a mismatch.
+
+Still absent: the home page is a placeholder.
 
 ## Running it
 
@@ -136,6 +167,16 @@ pnpm langfuse      # the 6-container Langfuse stack (~2.7 GB, ready in ~10s on w
                    # ⚠ if docker is dead, see "colima wedged" below BEFORE retrying — the retry
                    #   fails with an exit code of 0 and a fatal on stderr, which reads as success
 pnpm dev:all       # agent :8910 + web :3000, ctrl-c stops both cleanly
+                   # ⚠ the agent runs under --watch, so killing the :8910 LISTENER just respawns it.
+                   #   Kill scripts/dev.mjs, the supervisor. And use `lsof -ti :8910 -sTCP:LISTEN` —
+                   #   without -sTCP:LISTEN the list includes any tunnel and you take that down too.
+
+pnpm stack:up      # THE CONTAINERS: preflight, then docker compose up -d --build
+                   # NOT `pnpm up` — `up` is a built-in alias for `pnpm update` and a script cannot
+                   #   shadow a built-in, so it would rewrite the pinned lockfile instead.
+pnpm stack:down    # docker compose down
+pnpm preflight     # refuses the stack on a bad APP_NAME, missing `edge`, unresolvable CORP_CA_PATH
+
 pnpm typecheck && pnpm test
 pnpm seed:prompts                    # push BOTH compiled defaults as a new version + `production`
 pnpm seed:prompts demo-agent-voice   # just one — every run relabels what it touches, so prefer this
@@ -887,25 +928,48 @@ operator's UI edit. `demo-agent-text` was deliberately left at its v2 edit.
 
 ### Account changes made for voice — reversible, and record them
 
-`+15805630929` could not receive voice at all: it was the **only** number on SIP trunk
-`DtolbLabsTesting` (`TKb1f1254299f6f8b5985e5bad8c0a12fb`), the trunk had **zero origination URLs**, and
-a trunked number ignores its own `voice_url`. So:
+> **Account-specific values were scrubbed from this section at T15.** They were a phone number written
+> twice, two trunk SIDs and two `PN` SIDs, spelled out in full. A committed doc is the wrong place for
+> them: they are account identifiers, and they go stale silently. What follows is the *shape* of the
+> problem plus how to rediscover the values in about thirty seconds. Read the live account, not this
+> file. (Nothing enforces this — there is no test for it.)
+
+`TWILIO_PHONE_NUMBER` could not receive voice at all: it was the **only** number on a SIP trunk, that
+trunk had **zero origination URLs**, and **a trunked number ignores its own `voice_url`**. That is the
+entire failure, and it presents as "Twilio never calls my webhook" while the webhook is perfectly
+correct. So:
 
 | | Before | After |
 |---|---|---|
-| `trunk_sid` | `TKb1f1254299f6f8b5985e5bad8c0a12fb` | `null` (trunk now holds no numbers) |
-| `voice_url` | `null` | `https://<ngrok-host>/twiml`, POST |
+| `trunk_sid` | the trunk's `TK…` SID | `null` (the trunk now holds no numbers) |
+| `voice_url` | `null` | `https://$TWILIO_VOICE_PUBLIC_DOMAIN/twiml`, POST |
 | `sms_url` | `""` | `""` — untouched; SMS still arrives via the CO `statusCallbacks` |
 
-The number's real SID is **`PNf16baa0aba70fe744717166d10d8108c`**. ⚠ `PN1dbf1c0a094e37430258834f8372f2a2`
-is `+13465978739`, a different, unused number — do not confuse them. And a trap found the hard way:
-**`DELETE /Trunks/{TK}/PhoneNumbers/{PN}` returns 204 for a number that was never on the trunk**, so a
-204 is *not* evidence that anything was detached. Verify with
+**How to rediscover all of it.** `TWILIO_ACCOUNT_SID` / `TWILIO_API_KEY` / `TWILIO_API_SECRET` come
+from the shell profile, not `.env` — see the T15 section:
+
+```bash
+# the number's SID, its trunk, and both webhook URLs
+twil api core incoming-phone-numbers list --properties phoneNumber,sid,trunkSid,voiceUrl,smsUrl
+# trunks, and what is ACTUALLY attached to one
+twil api voice trunks list
+curl -s -u "$TWILIO_API_KEY:$TWILIO_API_SECRET" \
+  "https://trunking.twilio.com/v1/Trunks/<TK…>/PhoneNumbers"
+```
+
+⚠ **There are TWO numbers on this account, and confusing them wastes an afternoon.** One is
+`TWILIO_PHONE_NUMBER`, the demo's; the other is unused *by the app*. The command above tells them
+apart — the demo's is the one whose `voiceUrl` points at `TWILIO_VOICE_PUBLIC_DOMAIN`. T15 found a use
+for the spare one and a trap that comes with it: see **"Testing SMS from a number on the same account
+doubles every reply"** below.
+
+A trap found the hard way: **`DELETE /Trunks/{TK}/PhoneNumbers/{PN}` returns 204 for a number that was
+never on the trunk**, so a 204 is *not* evidence that anything was detached. Verify with
 `GET /Trunks/{TK}/PhoneNumbers` afterwards.
 
-`TWILIO_VOICE_PUBLIC_DOMAIN` is the ngrok host, so **two** things must be repointed when the tunnel
-restarts: this variable *and* the number's `voice_url` — on top of the CO `statusCallbacks` that SMS
-already needed.
+~~`TWILIO_VOICE_PUBLIC_DOMAIN` is the ngrok host, so two things must be repointed when the tunnel
+restarts.~~ **Superseded at T15: ngrok is retired.** The host is now the stable
+`$APP_NAME.twilio.dtolb.com`, and `scripts/repoint-public-host.ts` moves all three places at once.
 
 ### T13 prerequisites discovered while doing T12
 
@@ -1414,6 +1478,165 @@ Two things worth carrying forward from the same measurement:
   that the order and return-policy information be sent via text"*. So a handed-off call feeds the
   profile exactly as a completed one does.
 
+## T15, Dockerfiles + compose + Traefik — built, routed, and what real traffic did and did not prove
+
+Both processes now run as containers behind the Traefik dev box on **one public host, split by path**.
+`ngrok is retired.` The public host is `https://$APP_NAME.twilio.dtolb.com` and it survives restarts,
+which removes the three-places-to-repoint tax that T13 and T14 paid on every tunnel restart.
+
+New files: `.dockerignore`, `Dockerfile.agent`, `Dockerfile.web`, `docker-compose.yml`,
+`scripts/preflight.mjs`. Modified: `web/next.config.ts` (standalone), `package.json`, `.env.example`,
+`scripts/status.mjs`, `server/http/app.ts` (two comments that had become wrong),
+`tests/architecture.test.ts` (two new assertions).
+
+`APP_NAME=northwind`, matching the Northwind Traders knowledge-base content.
+
+### The plan's own highest-risk item, and it is an ORDERING risk, not a code risk
+
+**Repoint `TWILIO_VOICE_PUBLIC_DOMAIN` BEFORE `docker compose up`, never after.** That one value builds
+*both* `wss://<host>/ws` and the `<Connect action>` URL. Get it backwards and everything looks correct
+— container healthy, `/health` reporting `voice: ready`, Traefik routing perfectly — while every
+inbound call connects to the dead old host and sits in **silence with nothing in the container logs**,
+because the WebSocket never arrives. There is no error to find; that is what makes it dangerous.
+
+`scripts/preflight.mjs` now warns (not fails — an ngrok host is a legitimate choice) when
+`TWILIO_VOICE_PUBLIC_DOMAIN` disagrees with `$APP_NAME.twilio.dtolb.com`, and `pnpm status` surfaces
+the same mismatch. Related: after **any** `.env` change use `docker compose up -d --force-recreate`,
+never `restart` — `restart` re-runs the existing container with its **original env block**, so the
+stale host survives and you get the silent failure above.
+
+### Four measured facts that changed the design — none of these were inferred
+
+| Fact | Consequence |
+|---|---|
+| Traefik runs `--entrypoints.web.address=:80` with **no TLS entrypoint**; TLS terminates in a Caddy **not on this machine**. A Host-header curl to `localhost` and the public URL return **byte-identical bodies** (re-verified at T15: matching SHAs). | The box genuinely provides a public HTTPS host. ngrok can go. |
+| `X-Forwarded-Proto: https` **arrives correctly**, because `forwardedheaders.trustedips=172.16.0.0/12` covers Caddy's source. And TAC's `getForwardedProto` defaults to `https` when absent. | The proto middleware is defence in depth, **not** the 403-preventer this doc claimed. Corrected in three places. |
+| `TAC_SHUTDOWN_TIMEOUT_MS = 45_000` vs Docker's default `stop_grace_period` of **10 s**. | Compose sets `stop_grace_period: 60s`, or SIGKILL lands 35 s before the only telemetry flush — and Docker reports it as a crash. |
+| `host.docker.internal:3100` **answers 200** from a container on `edge`; `langfuse-web` is **ENOTFOUND** there (it is on `scaffold_default`). | Compose overrides `LANGFUSE_BASE_URL`. The plan listed "does it *answer*" as unmeasured; it is now measured. |
+
+### Six container traps that are absent from the dockerizing skill
+
+1. **`stop_grace_period` must exceed the app's own shutdown deadline.** Docker's default is 10 s.
+2. **Shell-form `CMD` silently defeats every graceful-shutdown design** — `/bin/sh` becomes PID 1 and
+   does not forward SIGTERM. Interacts nastily with (1): a longer grace period makes the symptom
+   *slower and quieter*, never louder. Both Dockerfiles use exec form, and T15 proved SIGTERM arrives.
+3. **Next `output: 'standalone'` has two near-silent traps.** With `outputFileTracingRoot` at the repo
+   root and the project in `web/`, the entry is `.next/standalone/**web**/server.js`, not
+   `standalone/server.js` (the official docs show the un-nested path). And standalone **does not copy
+   `public/` or `.next/static/`** — skip the hand-copy and the HTML renders looking roughly right while
+   every JS/CSS chunk 404s and **React never hydrates**, so `/bench` and `/softphone` become dead
+   buttons with nothing in the server log. Verified the opposite: every asset on all three pages 200s.
+4. **A subdirectory app that imports above itself cannot use that subdirectory as its build context.**
+   `web/` imports `../shared/*.ts`, so the web build context is the **repo root** — directly against the
+   skill's "build it from its own directory" note. Both `.npmrc` files and both `pnpm-workspace.yaml`
+   files must still be copied: pnpm does not walk up for registry config, and an undecided `allowBuilds`
+   makes pnpm 11 **fail** the install with `ERR_PNPM_IGNORED_BUILDS`.
+5. **Two compose files in one directory share a project name.** `docker-compose.langfuse.yml` has no
+   `name:`, so its project is the directory name (`scaffold`). Ours sets `name: ${APP_NAME}`. This was
+   observed live: before `APP_NAME` was changed, `docker compose ps` listed *Langfuse's* six containers
+   as ours.
+6. **`environment: FOO: "${FOO:-}"` always sets the key**, to `""` when unset — and `environment:` beats
+   `env_file:`. So the substitution form lets a forgotten `export` **shadow a good `.env` value with an
+   empty string**. The bare-name list form (`- FOO`) passes a variable through only if set. That is why
+   `TWILIO_ACCOUNT_SID` / `TWILIO_API_KEY` / `TWILIO_API_SECRET` are listed by bare name: **they live in
+   the shell profile on this machine, not in `.env`**, so a container gets none of them otherwise.
+
+Repo-specific and easy to lose: **the compose file must be named `docker-compose.yml`**, not the
+`compose.yaml` Compose v2 prefers. `tests/architecture.test.ts` hardcodes the name, and the wrong one
+leaves its assertions inert.
+
+### `pnpm up` is a trap — the scripts are `stack:up` / `stack:down`
+
+Nearly shipped as `pnpm up`. **`up` is a built-in alias for `pnpm update`, and a package.json script
+cannot shadow a built-in** — so `pnpm up` would have updated every dependency and rewritten the pinned
+lockfile (with `minimum-release-age=10080` in play) instead of starting anything. Renamed to
+`pnpm stack:up` / `pnpm stack:down`, which also matches the repo's existing colon convention.
+
+### Two test gaps closed, and the vacuous-pass guard removed
+
+`tests/architecture.test.ts` proved the proto middleware was **defined**. A middleware that is defined
+but never **referenced** is silently inert, and Traefik neither warns nor errors — so that assertion
+passed on a broken config. Now added: the agent router must actually reference it, and
+`loadbalancer.server.port` must equal `AGENT_PORT` / `WEB_PORT` from `shared/ports.ts` (deliberately
+compile-time constants, so nothing else could catch drift).
+
+The `if (!existsSync(compose)) return` guard is **gone**, replaced by an assertion. It was correct
+while the file did not exist; now it could only ever hide a rename.
+
+**All four assertions were verified falsifiable**, not just green — each was deliberately broken and
+observed to fail, then restored (the file was diffed byte-identical afterwards): removing the
+`middlewares=` reference, drifting the port to 9999, spelling it `customRequestHeaders` (which works
+in Traefik and must fail here), and dropping one `PathPrefix`.
+
+### Verified — at the layer where each failure lives
+
+- **Boot logs read, not assumed.** `restart: unless-stopped` masks a boot throw as a crash loop with
+  empty logs, and `preflightDefaultPromptTools()` deliberately throws on a bad tool name.
+- **The image carries no secrets.** `.env` is absent from `/app`; the CMD's `--env-file-if-exists` is a
+  deliberate no-op inside the image.
+- **CA at runtime, not just at build.** A build-only secret fixes `pnpm install` and leaves runtime
+  `fetch()` broken — and a green build hides it. Probed against `api.elevenlabs.io`, which is genuinely
+  intercepted: TLS succeeds. `api.twilio.com` passes *without* the CA and would have given a false
+  all-clear.
+- **Routing, both ways.** `/health` → agent, `/` `/bench` `/softphone` → Next, all 200 on the
+  Host-header curl and through the public edge. `GET /api/bench/turn` returns Fastify's **JSON** 404
+  while `/nope` returns Next's **HTML** 404 — that contrast is the proof the split is real and not a
+  coincidence. `POST /api/bench/turn` → 200, and `POST /api/voice/token` mints a real AccessToken.
+- **SSE held 184.7 s with 15 s heartbeats and no drop.** This Traefik sets no
+  `respondingTimeouts.*`, and a total-duration read deadline would be immune to the heartbeat and would
+  kill a live call mid-sentence. It ended only because we stopped the agent, and the number was not
+  round.
+- **`signedUrl` off `/events/stream` is the ground truth, and it is right:**
+  `https://northwind.twilio.dtolb.com/twiml` with `hasSignature=true` and 200. That single string proves
+  *both* halves — the proto and the `X-Forwarded-Host` half, which **nothing in the Traefik labels
+  pins**.
+- **A signed webhook pre-flight, free, before spending anything:**
+  `twil webhook invoke --type voice --auth-token … https://…/twiml` → 200 + TwiML naming the **new**
+  host in both `wss://…/ws` and `action=…/api/voice/relay-action`, with `Via: 1.1 Caddy` confirming it
+  came through the real public edge. This is the highest-value pre-call check in the repo: it validates
+  the signature path end to end for zero cost.
+- **A real SMS round-tripped** through the containerised stack: webhook 200, signature valid, Langfuse
+  prompt `demo-agent-text v3` (**not** `fallback`, so the Langfuse override works), memory recall of 6
+  observations / 3 summaries, `get_store_hours` executed, reply delivered.
+
+### ⚠ Testing SMS from a number on the same account DOUBLES every reply — and it is not a bug
+
+This cost an hour and would cost the next person the same, so it is worth the space.
+
+Testing with the account's spare number produced **two** agent turns and **two differently-worded
+replies** for one inbound text. It looks exactly like a duplicate-delivery bug. It is not:
+
+| day | sender | replies per inbound |
+|---|---|---|
+| 11 Sep (T12) | external handset | **1.00** ✓ |
+| 14 Sep (T14b) | the spare **on-account** number | 2.00 |
+| 15 Sep (T15) | the spare **on-account** number | 2.00 |
+
+**Mechanism**, pinned by reading `eventType` off `/events/stream`: CO emits **two
+`COMMUNICATION_CREATED` events** ~300 ms apart, and TAC runs a turn for each. An on-account send creates
+two communication records — the `outbound-api` leg and the `inbound` leg — and **both carry identical
+`from`/`to`**, so the capture rule `{from: "*", to: "$TWILIO_PHONE_NUMBER"}` matches both. An external
+handset creates only the inbound leg, which is why 11 Sep is clean.
+
+Consequences worth stating plainly:
+- **T14b's "ten SMS turns" figure is inflated**; roughly half were the same message answered twice.
+- The doubling is a **test-method artefact**, not a regression in T14b or T15. Do not "fix" it.
+- **It also means T15 has NOT proven single-reply behaviour under containers** — that needs one text
+  from an external handset. The analysis says it will be clean; the analysis is not a measurement.
+
+### Not proven by T15 — read this before demoing
+
+- **A real inbound CALL.** Everything the call depends on is proven *individually* — the TwiML names the
+  new `wss://` host, the signature validates through the public edge, the WebSocket path is routed, the
+  agent reports `voice: ready` — but no audio has traversed the containerised stack. The one failure
+  this would catch that nothing above does is a `/ws` upgrade problem, and `/ws` is invisible by
+  construction: `@fastify/websocket` hijacks the reply, so the `onResponse` diagnostic never fires for
+  it and silence from `/ws` is **not** evidence of health.
+- **The handoff to the browser softphone**, which needs a person to answer.
+- **The 45 s shutdown path** (see the shutdown bullet in honest limits — the signal path is proven, the
+  45 s drain is not).
+- **Single-reply SMS from an external handset** (above).
+
 ## Gaps and honest limits
 
 - **Latency is deferred by decision, not oversight.** Measured at T9: `turn.ttft_ms` **3124 ms**,
@@ -1460,9 +1683,20 @@ Two things worth carrying forward from the same measurement:
   across a conversation boundary with 0 tool calls, barge-in on real audio, the not-found tool branch,
   an agent-initiated hangup, `search_knowledge` against a real Knowledge Base on both channels, and — at
   T14b — a caller transferred to a browser softphone that a person answered, with the screen pop
-  rendered. What remains unexercised: the **45 s shutdown timeout** (needs a SIGTERM *during* a call) and
-  a **`/ws` signature rejection** (invisible by construction). **Studio handoff is no longer on that
-  list**, and it was right up to T14b. T14b's one open measurement is now closed too: extraction **does**
+  rendered. What remains unexercised: the **45 s shutdown timeout** (needs a SIGTERM *during a call*)
+  and a **`/ws` signature rejection** (invisible by construction).
+
+  **T15 closed the cheaper half of the shutdown question and left the expensive half open — the
+  distinction matters, so do not read it as done.** Proven at T15: `docker compose stop agent` with an
+  SSE client attached logs `Received shutdown signal`, drains TAC, shuts the SSE hub, force-closes a
+  request that had been held open 184.7 s, and exits **0** in **under a second** against a 60 s
+  `stop_grace_period`. That proves three things at once — the exec-form `CMD` really does forward
+  SIGTERM (a shell-form `CMD` would have swallowed it and eaten the whole 60 s), `forceCloseConnections`
+  really does defeat a held-open SSE connection, and `preClose` runs rather than a watchdog `exit(1)`.
+  Still **not** proven: the 45 s path itself, which only engages when TAC has a live WebSocket to drain.
+  That needs a SIGTERM mid-call, and a fast clean exit with no call in flight tells you nothing about it.
+
+  **Studio handoff is no longer on that list**, and it was right up to T14b. T14b's one open measurement is now closed too: extraction **does**
   still fire for a handed-off conversation — it reached CLOSED in 32 s and wrote 3 observations 3 s later,
   even with its status callbacks cleared. See the end of the T14b section for why the inference that it
   would not was wrong.
@@ -1475,26 +1709,55 @@ Two things worth carrying forward from the same measurement:
   and obs payloads — it does **not** scrub tool results or the memory store. `builtin-tools.ts`
   projects communications down and drops `recipients` so an address cannot reach the model through a
   tool result, and a test asserts it; the store itself is Twilio-side and out of our control.
-- `docker-compose.yml` for the app does not exist yet (T15). The Langfuse compose does.
+- ~~`docker-compose.yml` for the app does not exist yet (T15).~~ **Done at T15.** Both containers run
+  behind Traefik on one public host. The dormant test this bullet used to warn about is now **live and
+  proven falsifiable** — see the T15 section.
 
-  ⚠ **T15 WILL ACTIVATE A DORMANT TEST, and it will fail on the first commit if you do not know.**
-  `tests/architecture.test.ts`'s *"every TAC path prefix appears in the Traefik router labels"* opens
-  with `if (!existsSync(compose)) return;` — so it is currently a **vacuous pass**. The moment T15
-  creates `docker-compose.yml` it goes live and demands two things:
+  The warning is kept below because its *second half was wrong*, and the wrong version is the more
+  memorable one:
 
-  1. A literal `` PathPrefix(`…`) `` for **every** entry in `TAC_WEBHOOK_PATHS` *and* `APP_API_PATHS`
-     from `shared/twilio-paths.ts` — currently eight: `/webhook`, `/twiml`, `/ws`,
-     `/conversation-relay-callback`, `/twilio/call-events`, `/api`, `/events`, `/health`. It matches the
-     backtick form as a substring, so the router rule must be written that way.
-  2. A `customrequestheaders.X-Forwarded-Proto = https` middleware label. This is not style: TAC
-     rebuilds the URL it validates the Twilio signature against from that header, so without it **every
-     webhook 403s** — a silent, total outage that looks like a Twilio problem. T14b hit the same
-     mechanism from the other side (see the `twil webhook invoke` note in the T14b section).
+  1. ✅ Still exactly right: a literal `` PathPrefix(`…`) `` is required for **every** entry in
+     `TAC_WEBHOOK_PATHS` *and* `APP_API_PATHS` — eight of them. Substring-matched, so the rule must be
+     written in the backtick form, on one physical line.
+  2. ❌ **CORRECTED AT T15 BY MEASUREMENT.** This bullet claimed that without the
+     `customrequestheaders.X-Forwarded-Proto = https` label **"every webhook 403s — a silent, total
+     outage"**. That is false on this box, for two independent reasons:
+     - this Traefik runs `forwardedheaders.trustedips=172.16.0.0/12`, and the Caddy that terminates TLS
+       arrives from inside that range, so Traefik **preserves** the genuine `X-Forwarded-Proto: https`
+       rather than overwriting it (verified through the public ingress);
+     - TAC's own `getForwardedProto` is `raw?.split(',')[0]?.trim() || "https"` — it **defaults to
+       https when the header is absent** anyway.
 
-  T14b added three routes and all three are under `/api`, so they are already covered by the existing
-  `APP_API_PATHS` entry — no new prefix is needed for them. But `/softphone` is a **Next** page, so it
-  belongs to the web container, while the token and screen-pop endpoints it fetches are on the **agent**;
-  the split-by-path routing has to send `/api/*` to the agent or the softphone silently cannot register.
+     Keep the label: it is real defence in depth, because the Traefik container's compose project
+     points at `~/code/twilio-laptop-setup`, which **is no longer on disk**. A recreated Traefik could
+     come back without `trustedips`, and that is the day this label earns its place. But do not go
+     hunting for a 403 outage that this label prevents — it does not prevent one today.
+
+  T14b added three routes, all under `/api`, so they need no new prefix. `/softphone` is a **Next**
+  page on the web container while the token and screen-pop endpoints it fetches are on the **agent** —
+  the `/api` prefix is what makes that straddle work, and T15 confirmed it live: `GET
+  /api/bench/turn` returns Fastify's JSON 404 (the agent) while `/nope` returns Next's HTML 404.
+- ⚠ **NAMED DEBT, INTRODUCED BY T15: four unauthenticated endpoints are now permanently addressable on
+  a stable, guessable public host.** Nothing about them changed — what changed is their reachability.
+  The ngrok URL was ephemeral *and* obscure; `northwind.twilio.dtolb.com` is neither, and it stays up.
+
+  | endpoint | what it gives away |
+  |---|---|
+  | `POST /api/voice/token` | mints a **real Twilio Voice AccessToken** for `CLIENT_IDENTITY`. Capability-gated, **not** auth-gated — verified live at T15, it returns a valid JWT to an anonymous caller |
+  | `POST /api/bench/turn` | spends the `OPENAI_API_KEY`, unmetered |
+  | `POST /api/dev/emit-turn` | fabricates observability events, so the console can be spoofed |
+  | `GET /health` | lists the **names** of unset variables (not values) |
+
+  **Why basicauth is not the bolt-on it looks like**, recorded so the next attempt does not rediscover
+  it: Traefik answers `401 WWW-Authenticate: Basic`, which browsers honour **only for top-level
+  navigations**. `fetch()` receives a bare 401 with no dialog, and `EventSource` **cannot send an
+  `Authorization` header at all** — so guarding `/api/*` and `/events` while leaving the pages open
+  silently kills the softphone, the bench and the obs console. Making it work means guarding the **web
+  router too**, which puts a password box in front of T18's customer-facing demo page.
+
+  It was proposed at T15 planning and **deliberately withdrawn by the owner** — get it live and testable
+  first, then protect it. This is the record of that decision, not an oversight. **Mitigation until
+  then: bring the stack down between demos** (`pnpm stack:down`); it is two containers and one command.
 - Carried Minor review findings, for a final whole-branch review: a duplicated prose block across
   the two default prompts; `log.warn` outside the never-rejects guard in `prompt/langfuse.ts`;
   `telemetryLink: unknown | null` collapsing to `unknown`; `verify-tools.ts` no longer reproducing

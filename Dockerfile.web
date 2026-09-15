@@ -1,0 +1,90 @@
+# ==============================================================================
+# The Next front end: /bench, /softphone, /console, on 3000.
+#
+# BUILD CONTEXT IS THE REPO ROOT, NOT ./web — directly against the dockerizing
+# skill's "build it from its own directory" note for a standalone pnpm project.
+# It has to be: web/ imports `../shared/*.ts` (web/src/app/page.tsx,
+# web/next.config.ts and two more), and a context rooted at web/ cannot see them.
+# So the layout below mirrors the repo — /app/web beside /app/shared — which is
+# also what makes `outputFileTracingRoot` resolve to the same place it does on the
+# host.
+#
+# web/ keeps its OWN lockfile and node_modules (it is not in the root
+# pnpm-workspace.yaml), so this installs separately from Dockerfile.agent.
+# ==============================================================================
+
+# ----------------------------------------------------------------- build stage
+FROM node:24-bookworm-slim AS build
+WORKDIR /app
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+
+# Dependency-deciding files only, so this layer caches independently of source.
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml web/.npmrc ./web/
+
+# NOT --prod: `next build` needs tailwindcss, @tailwindcss/postcss and typescript,
+# all devDependencies. They stay in this stage — the runtime image below copies
+# only the standalone output, which carries its own pruned node_modules.
+#
+# CA per the dockerizing skill's Node row, exported so corepack's own pnpm
+# download is covered too. See Dockerfile.agent for the full reasoning.
+RUN --mount=type=secret,id=corp_ca \
+    export NODE_EXTRA_CA_CERTS=/run/secrets/corp_ca && \
+    corepack enable && \
+    cd web && pnpm install --frozen-lockfile
+
+# shared/ first and separately: it changes far less often than web/src, so this
+# ordering keeps the install layer cached when only page code moves.
+COPY shared ./shared
+COPY web ./web
+
+# Secret mounted here as well because a build can reach the network (font
+# subsetting, remote image probes), and a TLS failure mid-build reads as a broken
+# page rather than a proxy problem.
+#
+# NO `tsc --noEmit` HERE, deliberately. web/next-env.d.ts imports
+# ./.next/dev/types/*, which only exist after `next dev` has run and are
+# gitignored — so a typecheck in this image fails on a file the image is about to
+# regenerate. `next build` does its own type checking, and `pnpm typecheck` on the
+# host covers the rest.
+RUN --mount=type=secret,id=corp_ca \
+    export NODE_EXTRA_CA_CERTS=/run/secrets/corp_ca && \
+    cd web && pnpm build
+
+# --------------------------------------------------------------- runtime stage
+FROM node:24-bookworm-slim AS runtime
+WORKDIR /app
+
+# Next's standalone server needs this; `next build` also bakes it in. Unlike the
+# agent (see Dockerfile.agent's note) it is genuinely required here.
+ENV NODE_ENV=production
+
+# THE PATH IS NESTED, AND THE OFFICIAL DOCS SHOW THE UN-NESTED ONE.
+# With outputFileTracingRoot at the repo root and the project at /app/web, Next
+# lays the tree out by `path.relative(tracingRoot, projectDir)` — so the entry is
+# standalone/web/server.js, not standalone/server.js. Copying the tree to ./ here
+# reproduces /app/web/server.js, matching the CMD below.
+COPY --from=build /app/web/.next/standalone ./
+
+# STANDALONE DOES NOT COPY THESE TWO. Next's own output docs say so, and skipping
+# the hand-copy fails in the most misleading way available: the HTML renders and
+# looks roughly right, while every JS and CSS chunk 404s and React never
+# hydrates. /bench and /softphone become dead buttons with nothing in the server
+# log to explain it, because a 404 for a static asset is not an application error.
+COPY --from=build /app/web/.next/static ./web/.next/static
+COPY --from=build /app/web/public ./web/public
+
+# Docker sets HOSTNAME to the container ID, and Next's generated server.js binds
+# `process.env.HOSTNAME || '0.0.0.0'`. So WITHOUT this line it binds to the
+# container-ID hostname instead of every interface — which happens to work today
+# because that name resolves to the container's own IP, and would break the moment
+# anything about that resolution changed. Pin it.
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+
+EXPOSE 3000
+
+# Exec form, same reason as Dockerfile.agent: sh as PID 1 swallows SIGTERM. Next
+# has less to flush than the agent does, but a container that ignores `docker
+# compose stop` and dies on the 10s SIGKILL is still a container that lies about
+# why it stopped.
+CMD ["node", "web/server.js"]

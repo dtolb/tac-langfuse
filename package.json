@@ -16,7 +16,10 @@
     "seed:prompts": "node --env-file-if-exists=.env scripts/seed-prompts.ts",
     "verify:turn": "node --import ./server/obs/instrumentation.ts --env-file-if-exists=.env scripts/verify-turn.ts",
     "seed:knowledge": "node --env-file-if-exists=.env scripts/seed-knowledge.ts",
-    "seed:studio": "node --env-file-if-exists=.env scripts/seed-studio-flow.ts"
+    "seed:studio": "node --env-file-if-exists=.env scripts/seed-studio-flow.ts",
+    "preflight": "node --env-file-if-exists=.env scripts/preflight.mjs",
+    "stack:up": "export CORP_CA_PATH=\"${CORP_CA_PATH:-$HOME/.config/zscaler-root.crt}\" && pnpm preflight && docker compose up -d --build",
+    "stack:down": "docker compose down"
   },
   "license": "UNLICENSED",
   "type": "module",

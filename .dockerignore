@@ -1,0 +1,57 @@
+# ==============================================================================
+# Build-context exclusions for BOTH images.
+#
+# One file, because both builds use the repo root as their context: `web/` imports
+# `../shared/*.ts` (web/src/app/page.tsx, web/next.config.ts and two more), so it
+# cannot be built from `./web` — see Dockerfile.web's header.
+#
+# THIS FILE IS A SECURITY CONTROL, NOT HYGIENE. `.env` holds a live OPENAI_API_KEY
+# and the real TWILIO_AUTH_TOKEN, and it sits in the context. Without the first rule
+# below, `COPY server ./server` is fine but any `COPY . .` bakes both into an image
+# layer, where they survive deletion in a later layer and are readable by anyone who
+# can `docker save` the image. The container gets its secrets from compose at RUN
+# time instead, which is why `--env-file-if-exists=.env` in the CMD is a deliberate
+# no-op inside the image.
+# ==============================================================================
+
+# --- secrets ---
+.env
+.env.*
+
+# --- host build artifacts that would shadow the ones the image builds ---
+# node_modules is the dangerous one: these are macOS/arm64 installs, and copying them
+# over a linux stage's own install produces a container that boots and then fails on
+# the first native call. `**/` because plain `node_modules` matches only the root and
+# web/ has its own install tree.
+**/node_modules
+**/.next
+dist/
+coverage/
+
+# --- not needed to build or run ---
+.git
+.gitignore
+docs
+tests
+vitest.config.ts
+.playwright-mcp
+.superpowers
+langfuse-data
+docker-compose.langfuse.yml
+*.log
+.DS_Store
+
+# ==============================================================================
+# DO NOT ADD, however tempting — each of these breaks the build in a way whose
+# error message does not name the file:
+#
+#   .npmrc, web/.npmrc          pnpm does NOT walk up for registry config (.npmrc:8),
+#                               so web/ needs its own copy. Drop either and pnpm
+#                               resolves against whatever registry the machine's user
+#                               config names, producing an unreproducible install.
+#   pnpm-workspace.yaml,        carries the `allowBuilds` decision. pnpm 11 FAILS the
+#   web/pnpm-workspace.yaml     install with ERR_PNPM_IGNORED_BUILDS when it is
+#                               undecided — so an absent file is not a default, it is
+#                               a hard stop.
+#   pnpm-lock.yaml              --frozen-lockfile has nothing to freeze against.
+# ==============================================================================

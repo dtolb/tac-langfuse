@@ -1,0 +1,207 @@
+# ==============================================================================
+# The app stack: agent (8910) + web (3000), behind the Traefik dev box on one
+# public host, split by path.
+#
+# ⚠ THE FILENAME IS LOAD-BEARING. tests/architecture.test.ts hardcodes
+# `join(ROOT, 'docker-compose.yml')` and opens with `if (!existsSync(compose))
+# return`. Renaming this to the `compose.yaml` that Compose v2 prefers does not
+# break anything visibly — it turns that guard into a vacuous pass forever, and
+# the guard's whole job is to catch a missing PathPrefix, which presents as a 404
+# that looks like a Twilio problem.
+#
+# Bring it up with:  pnpm stack:up  (runs preflight first — see scripts/preflight.mjs)
+#   NOT `pnpm up`, which is a built-in alias for `pnpm update` and cannot be
+#   shadowed by a script — it would rewrite the pinned lockfile, not start this.
+# After ANY .env change:  docker compose up -d --force-recreate
+#   NOT `restart`. `restart` re-runs the existing container with its ORIGINAL env
+#   block, so a repointed TWILIO_VOICE_PUBLIC_DOMAIN silently does not take, and
+#   every call connects to the old host.
+# ==============================================================================
+
+# Distinct project name, because docker-compose.langfuse.yml in this same
+# directory declares no `name:` and therefore claims the directory name
+# (`scaffold`). Two files sharing a project makes each stack's containers look
+# like the other's orphans, and `docker compose down` offers to remove them.
+#
+# `:?` rather than a default: an unset APP_NAME must stop here with a message, not
+# silently produce routers named `-agent` that collide with the next clone's.
+name: ${APP_NAME:?APP_NAME is unset — set it in .env, then run `pnpm preflight`}
+
+services:
+  # ---------------------------------------------------------------------- agent
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+      secrets: [corp_ca]
+    container_name: ${APP_NAME}-agent
+    restart: unless-stopped
+
+    # ⚠ `restart: unless-stopped` MASKS A REAL FAILURE MODE, so read the logs on
+    # first boot rather than trusting a running container:
+    # preflightDefaultPromptTools() (server/index.ts) deliberately THROWS on a bad
+    # tool name, and a throw on the boot path under this policy presents as a
+    # crash loop with empty logs — which reads like a Docker problem.
+    #   docker compose logs agent
+
+    # Secrets and overrides layer on top of .env, which supplies most of it.
+    env_file: [.env]
+    environment:
+      # BARE NAMES, NOT `${VAR:-}`. These three live in the shell profile on this
+      # machine, not in .env, so they must be passed through — but the bare-name
+      # form passes a variable ONLY IF SET, whereas `${VAR:-}` always sets the
+      # key, to "" when unset. Since `environment:` beats `env_file:`, the
+      # substitution form would let a forgotten `export` shadow a perfectly good
+      # .env value with an empty string, and config.ts would report the variable
+      # as missing while it is plainly there.
+      - TWILIO_ACCOUNT_SID
+      - TWILIO_API_KEY
+      - TWILIO_API_SECRET
+
+      # .env says localhost:3100, which inside a container is the container
+      # itself. MEASURED 2026-09-15 from a container on `edge`:
+      # host.docker.internal:3100/api/public/health answers 200, while
+      # langfuse-web is ENOTFOUND (it sits on scaffold_default, not edge).
+      #
+      # Getting this wrong is SILENT. config.ts validates the URL's shape only, so
+      # an unreachable-but-well-formed value still yields caps.prompts = true;
+      # prompts then quietly fall back to version 'fallback' and every span is
+      # dropped. The demo looks fine and the observability story is gone.
+      - LANGFUSE_BASE_URL=http://host.docker.internal:3100
+
+      # The RUNTIME half of the corporate CA. The build secret below fixes
+      # `pnpm install` only — and a green build actively hides that outbound
+      # fetch() from the running agent is still failing TLS. Both halves or
+      # neither.
+      - NODE_EXTRA_CA_CERTS=/run/secrets/corp_ca
+    secrets: [corp_ca]
+
+    # TAC_SHUTDOWN_TIMEOUT_MS is 45_000 (server/twilio/tac.ts), sized for TAC's
+    # 30s WebSocket drain plus flush headroom. Docker's DEFAULT GRACE IS 10s, so
+    # without this line SIGKILL lands 35 seconds before the only telemetry flush,
+    # and Docker reports the killed process as a crash.
+    stop_grace_period: 60s
+
+    # node -e, not curl: the slim base has no curl, and a healthcheck that always
+    # fails is worse than none because `docker compose ps` then reads unhealthy
+    # forever and you stop believing it.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8910/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # TAC's boot GETs the Conversation Orchestrator configuration over the
+      # network, so first-boot readiness is not instant.
+      start_period: 30s
+
+    # NO `ports:`. Only Traefik binds host ports on this box; publishing 8910
+    # would also guarantee EADDRINUSE the next time anyone runs `pnpm dev`.
+    labels:
+      # exposedByDefault=false on this Traefik, so WITHOUT this line every label
+      # below is ignored and you get Traefik's plain-text "404 page not found",
+      # which looks nothing like a routing misconfiguration.
+      - traefik.enable=true
+
+      # Router, service and middleware names are ALL prefixed with APP_NAME
+      # because they are GLOBAL on the dev box — the same collision .env.example
+      # warns about for the hostname, one level down. Two clones both left at
+      # `scaffold` would define the same router names and one demo would silently
+      # steal the other's webhooks.
+      #
+      # ⚠ THE RULE MUST STAY ON ONE PHYSICAL LINE. tests/architecture.test.ts
+      # substring-matches each PathPrefix(`…`) against this file as raw text, so a
+      # YAML folded scalar breaking inside a backtick pair defeats the test while
+      # leaving the rule working — the exact combination that lets a real gap
+      # through later.
+      #
+      # All eight prefixes come from shared/twilio-paths.ts and the test asserts
+      # this list against it. Traefik v3 removed multi-argument matchers, so the
+      # `||` chain is required rather than stylistic.
+      #
+      # `/api` covers T14b's three handoff routes (tests/shared-purity.test.ts
+      # already proves they sit under it), which is what lets the softphone page
+      # live on `web` while its token and screen-pop calls reach `agent`.
+      - traefik.http.routers.${APP_NAME}-agent.rule=Host(`${APP_NAME}.twilio.dtolb.com`) && (PathPrefix(`/webhook`) || PathPrefix(`/twiml`) || PathPrefix(`/ws`) || PathPrefix(`/conversation-relay-callback`) || PathPrefix(`/twilio/call-events`) || PathPrefix(`/api`) || PathPrefix(`/events`) || PathPrefix(`/health`))
+
+      # Explicit priority, so the agent's path rule always beats web's catch-all
+      # Host() below. Traefik's default is rule length, which happens to give the
+      # same answer here and is not something to depend on.
+      - traefik.http.routers.${APP_NAME}-agent.priority=100
+      - traefik.http.routers.${APP_NAME}-agent.middlewares=${APP_NAME}-proto
+      - traefik.http.services.${APP_NAME}-agent.loadbalancer.server.port=8910
+
+      # X-Forwarded-Proto. WHAT THIS IS AND IS NOT:
+      #
+      # It is NOT what stands between you and a 403 on every webhook, despite how
+      # it is often described. Two independent measurements on 2026-09-15:
+      #   1. this Traefik runs forwardedheaders.trustedips=172.16.0.0/12, and the
+      #      Caddy that terminates TLS arrives from 172.18.0.1 — inside that
+      #      range — so Traefik PRESERVES the real `X-Forwarded-Proto: https`
+      #      rather than overwriting it. Verified through the public ingress.
+      #   2. TAC's own getForwardedProto is `raw?.split(',')[0]?.trim() ||
+      #      "https"`, i.e. it DEFAULTS to https when the header is absent.
+      #
+      # It is worth keeping as defence in depth, and that is not hypothetical: the
+      # Traefik container's compose project points at ~/code/twilio-laptop-setup,
+      # which is NO LONGER ON DISK. If Traefik is ever recreated, `trustedips`
+      # goes with it — and this label is what keeps signature validation working
+      # on that day.
+      #
+      # Spelling is not free: `customrequestheaders` MUST be lowercase here.
+      # Traefik parses labels case-insensitively, so the `customRequestHeaders`
+      # form every Traefik doc uses works at runtime and fails the test.
+      - traefik.http.middlewares.${APP_NAME}-proto.headers.customrequestheaders.X-Forwarded-Proto=https
+
+      # Pins the network Traefik reads the container IP from. Redundant TODAY
+      # (this Traefik sets --providers.docker.network=edge globally) and kept for
+      # the same reason as the middleware above: that flag lives in a compose file
+      # whose directory no longer exists.
+      - traefik.docker.network=edge
+    networks: [edge]
+
+  # ------------------------------------------------------------------------ web
+  web:
+    build:
+      # Repo root, NOT ./web — web/ imports ../shared/*.ts. See Dockerfile.web.
+      context: .
+      dockerfile: Dockerfile.web
+      secrets: [corp_ca]
+    container_name: ${APP_NAME}-web
+    restart: unless-stopped
+
+    # No env_file and no runtime CA: nothing in the Next server makes an outbound
+    # call. All browser traffic goes to relative paths, which Traefik splits — so
+    # the page code needs no origin and this container needs no credentials. If a
+    # server component ever fetches anything, it needs the corp_ca treatment the
+    # agent has above.
+
+    # No healthcheck: /health belongs to the agent. Next has no equivalent
+    # endpoint, and pointing this at `/` would make a healthcheck out of a page
+    # render.
+    labels:
+      - traefik.enable=true
+      # Catch-all for the same host: everything the agent's rule did not claim.
+      - traefik.http.routers.${APP_NAME}-web.rule=Host(`${APP_NAME}.twilio.dtolb.com`)
+      - traefik.http.routers.${APP_NAME}-web.priority=1
+      - traefik.http.services.${APP_NAME}-web.loadbalancer.server.port=3000
+      - traefik.docker.network=edge
+    networks: [edge]
+
+networks:
+  # `external: true` is what makes this the dev box's existing network. WITHOUT
+  # it Compose helpfully creates `${APP_NAME}_edge` instead, Traefik finds no
+  # container IP on `edge`, and drops the service with no error on either side.
+  edge:
+    external: true
+
+secrets:
+  # Must be declared here or Compose errors `undefined secret`.
+  #
+  # Default is /dev/null, not `~/.config/zscaler-root.crt`: Compose does NOT
+  # expand `~`, so that literal resolves relative to this file, does not exist,
+  # and is FATAL at container create (`invalid mount config`) — a confusing
+  # failure for someone who is simply off the VPN. /dev/null mounts as an empty
+  # file, Node prints one non-fatal "Ignoring extra certs", and the stack comes
+  # up. `pnpm up` passes the real path; scripts/preflight.mjs checks it resolves.
+  corp_ca:
+    file: ${CORP_CA_PATH:-/dev/null}

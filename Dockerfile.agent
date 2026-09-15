@@ -1,0 +1,88 @@
+# ==============================================================================
+# The agent process: TAC's Fastify server plus our API and SSE routes, on 8910.
+#
+# NO BUILD STEP. Node 24 runs the TypeScript directly — which is not a shortcut,
+# it is how `pnpm start` already works (`package.json` "start" has no tsc in front
+# of it), so the container runs the same entry command the host does. `typescript`
+# stays a devDependency and never enters this image.
+#
+# Build context is the repo root, shared with Dockerfile.web. See .dockerignore.
+# ==============================================================================
+
+# ------------------------------------------------------------------ deps stage
+# Separated from runtime so a source-only edit does not re-run pnpm install. slim
+# rather than alpine per the dockerizing skill's native-deps note: glibc prebuilds
+# are far more common than musl, and Node 24 is new enough that a source build
+# would need a toolchain slim does not carry.
+FROM node:24-bookworm-slim AS deps
+WORKDIR /app
+
+# corepack would otherwise stop and ask before fetching the pnpm version pinned in
+# packageManager, which in a non-interactive build reads as a hang.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+
+# Only the files that decide the dependency tree, so this layer caches on their
+# content and not on source churn. All four are load-bearing; .dockerignore's
+# footer says what each one costs when missing.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+
+# The corporate CA (Zscaler) re-signs outbound HTTPS, so registry.npmjs.org fails
+# certificate validation without it. Per the dockerizing skill's NODE ROW: point
+# Node straight at the mounted secret — no ca-certificates package, no copy, no
+# update-ca-certificates. Those are the Debian recipe and fail on a Node base.
+#
+# `export` rather than a per-command prefix because COREPACK also fetches over
+# HTTPS: it downloads the pinned pnpm before pnpm ever runs, so a CA scoped to
+# just `pnpm install` fails one command earlier than the one it was written for.
+#
+# --prod omits devDependencies. Nothing under server/ needs typescript, vitest or
+# playwright at runtime; type stripping is built into the Node binary.
+#
+# Absent secret degrades rather than fails: Node prints a non-fatal
+# "Ignoring extra certs" and falls back to the system bundle, which is correct off
+# the VPN.
+RUN --mount=type=secret,id=corp_ca \
+    export NODE_EXTRA_CA_CERTS=/run/secrets/corp_ca && \
+    corepack enable && \
+    pnpm install --frozen-lockfile --prod
+
+# --------------------------------------------------------------- runtime stage
+FROM node:24-bookworm-slim AS runtime
+WORKDIR /app
+
+# NODE_ENV IS DELIBERATELY NOT SET TO production, and this is not an oversight.
+# Nothing in server/ changes behaviour on it except `promptCacheTtlMs`
+# (server/agent/prompt/port.ts:91), which lengthens the Langfuse prompt cache from
+# 20s to 60s. The short TTL exists because the demo loop is "edit the prompt in
+# Langfuse, place another call", and a 60s wait breaks that rhythm — see that
+# file's comment. The prompt LABEL fetched is the constant 'production' either
+# way, so setting this would buy nothing and cost the demo loop.
+COPY --from=deps /app/node_modules ./node_modules
+
+# package.json for "type": "module" — without it Node treats the .ts files as
+# CommonJS and every `import` in server/ is a syntax error at load.
+COPY package.json ./
+
+# ALL of server/ and shared/, not a trimmed subset. server/index.ts resolves
+# `./twilio/tac.ts` and `./twilio/voice-token.ts` through DYNAMIC import() at
+# lines 97 and 114, off disk, on the boot path. A trimmed COPY therefore builds
+# clean, boots clean, answers /health 200 — and fails on the first inbound call,
+# which is the worst place to find out.
+COPY server ./server
+COPY shared ./shared
+
+# Single EXPOSE so Traefik could auto-detect the port; the compose file states it
+# explicitly anyway, because tests/architecture.test.ts asserts that label equals
+# AGENT_PORT from shared/ports.ts and cannot read an EXPOSE.
+EXPOSE 8910
+
+# EXEC FORM, NON-NEGOTIABLE. The string form runs under `/bin/sh -c`, making sh
+# PID 1 — and sh does not forward SIGTERM. Node would never see the signal, so
+# `preClose` (which ends spans and flushes OpenTelemetry) never runs and the
+# container is SIGKILLed at the end of stop_grace_period. The failure gets SLOWER
+# and quieter as you raise the grace period, never louder.
+#
+# Identical to `pnpm start`, including --env-file-if-exists: .env is excluded from
+# the image on purpose, so the flag no-ops here and the container's env comes from
+# compose. Keeping it means one command to reason about rather than two.
+CMD ["node", "--import", "./server/obs/instrumentation.ts", "--env-file-if-exists=.env", "server/index.ts"]
