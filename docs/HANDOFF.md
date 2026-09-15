@@ -1476,6 +1476,25 @@ Two things worth carrying forward from the same measurement:
   projects communications down and drops `recipients` so an address cannot reach the model through a
   tool result, and a test asserts it; the store itself is Twilio-side and out of our control.
 - `docker-compose.yml` for the app does not exist yet (T15). The Langfuse compose does.
+
+  ⚠ **T15 WILL ACTIVATE A DORMANT TEST, and it will fail on the first commit if you do not know.**
+  `tests/architecture.test.ts`'s *"every TAC path prefix appears in the Traefik router labels"* opens
+  with `if (!existsSync(compose)) return;` — so it is currently a **vacuous pass**. The moment T15
+  creates `docker-compose.yml` it goes live and demands two things:
+
+  1. A literal `` PathPrefix(`…`) `` for **every** entry in `TAC_WEBHOOK_PATHS` *and* `APP_API_PATHS`
+     from `shared/twilio-paths.ts` — currently eight: `/webhook`, `/twiml`, `/ws`,
+     `/conversation-relay-callback`, `/twilio/call-events`, `/api`, `/events`, `/health`. It matches the
+     backtick form as a substring, so the router rule must be written that way.
+  2. A `customrequestheaders.X-Forwarded-Proto = https` middleware label. This is not style: TAC
+     rebuilds the URL it validates the Twilio signature against from that header, so without it **every
+     webhook 403s** — a silent, total outage that looks like a Twilio problem. T14b hit the same
+     mechanism from the other side (see the `twil webhook invoke` note in the T14b section).
+
+  T14b added three routes and all three are under `/api`, so they are already covered by the existing
+  `APP_API_PATHS` entry — no new prefix is needed for them. But `/softphone` is a **Next** page, so it
+  belongs to the web container, while the token and screen-pop endpoints it fetches are on the **agent**;
+  the split-by-path routing has to send `/api/*` to the agent or the softphone silently cannot register.
 - Carried Minor review findings, for a final whole-branch review: a duplicated prose block across
   the two default prompts; `log.warn` outside the never-rejects guard in `prompt/langfuse.ts`;
   `telemetryLink: unknown | null` collapsing to `unknown`; `verify-tools.ts` no longer reproducing
