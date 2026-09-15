@@ -7,8 +7,10 @@
  *
  * 1. It calls listen() UNCONDITIONALLY and binds 0.0.0.0. No `if (argv[1].endsWith(...))`
  *    run-guard — that guard is false in a container, so the process would load its modules,
- *    run nothing, and exit 0, which `restart: unless-stopped` then masks as a silent crash
- *    loop with empty logs.
+ *    run nothing, and exit 0 — which any restarting policy masks as a silent crash loop with
+ *    empty logs. (Compose now sets `restart: "no"`, for an unrelated exposure reason, so today
+ *    that failure would present as a container which merely exits. The run-guard is still the
+ *    thing to avoid: exit-0-with-no-output is undiagnosable either way.)
  * 2. It boots with nothing configured. Missing credentials produce loud, itemised warnings and
  *    a 503 naming the variable — never a crash. The page stays inspectable and /health keeps
  *    answering, which is what makes a half-configured demo debuggable instead of dead.

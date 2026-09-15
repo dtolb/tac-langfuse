@@ -1579,8 +1579,9 @@ in Traefik and must fail here), and dropping one `PathPrefix`.
 
 ### Verified — at the layer where each failure lives
 
-- **Boot logs read, not assumed.** `restart: unless-stopped` turns a boot throw into a crash loop, so a
-  running container is not evidence. `docker compose logs agent`.
+- **Boot logs read, not assumed.** A restart policy turns a boot throw into a crash loop, so a running
+  container is not evidence. `docker compose logs agent`. (The stack now runs `restart: "no"` — see the
+  reboot-behaviour entry below — which removes the crash-loop masking as a side effect.)
 
   ⚠ **Corrected after the T15 review, because the first version of this bullet was wrong twice and sat
   under a heading that says "Verified".** It claimed `preflightDefaultPromptTools()` "deliberately
@@ -1824,6 +1825,17 @@ is dropped). `prompt.fetch`, `prompt.compose`, `memory.recall`, `tools.resolve`,
   It was proposed at T15 planning and **deliberately withdrawn by the owner** — get it live and testable
   first, then protect it. This is the record of that decision, not an oversight. **Mitigation until
   then: bring the stack down between demos** (`pnpm stack:down`); it is two containers and one command.
+
+  **Partly automated 2026-09-15.** The stack now runs `restart: "no"`, so **it does not come back by
+  itself after a reboot** — the tooling does (Langfuse is `always`) but the public surface requires an
+  explicit `pnpm stack:up`. Measured over two full Colima cycles, and `on-failure` was tried first and
+  is NOT safe here: it also restarts a container that exited non-zero, and on a VM stop the agent exits
+  **0** (its graceful shutdown works) while Next exits **143**, so `on-failure` left the agent down and
+  brought `web` back. A policy whose reboot behaviour depends on each process's SIGTERM handling is not
+  a policy. Note `restart: no` unquoted is a YAML boolean — it must be `"no"`.
+
+  This reduces the exposure window to "while you are demoing" without touching the auth question, which
+  is still deferred.
 - Carried Minor review findings, for a final whole-branch review: a duplicated prose block across
   the two default prompts; `log.warn` outside the never-rejects guard in `prompt/langfuse.ts`;
   `telemetryLink: unknown | null` collapsing to `unknown`; `verify-tools.ts` no longer reproducing

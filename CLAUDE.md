@@ -63,6 +63,12 @@ debugging session. Langfuse *prompt* edits do land live (~20s TTL); code does no
 **Containers: after any `.env` change use `docker compose up -d --force-recreate`, never `restart`** —
 `restart` re-runs the container with its original env block, so the change silently does not take.
 
+**The stack runs `restart: "no"` on purpose — it must NOT come back after a reboot,** because it
+publishes unauthenticated endpoints on a stable public host. Langfuse is `always` and does return, so
+tooling survives a restart while the demo surface needs an explicit `pnpm stack:up`. Do not "fix" this
+to `unless-stopped`. `on-failure` is also wrong: it restarts a non-zero exit, and on a VM stop the agent
+exits 0 while Next exits 143, so it resurrects half the stack.
+
 ## How to write code here
 
 - **Comments explain WHY, at length, and cite what was measured.** This repo is a teaching artifact.

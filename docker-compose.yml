@@ -37,10 +37,35 @@ services:
       dockerfile: Dockerfile.agent
       secrets: [corp_ca]
     container_name: ${APP_NAME}-agent
-    restart: unless-stopped
 
-    # ⚠ `restart: unless-stopped` MASKS TWO REAL FAILURE MODES, so read the logs on
-    # first boot rather than trusting a running container:
+    # DELIBERATELY NOT `unless-stopped` — this stack must NOT come back by itself.
+    #
+    # It publishes four unauthenticated endpoints on a stable public host, one of
+    # which mints a real Twilio Voice AccessToken, so an autostarting demo is
+    # exposed after every reboot with nobody watching. Langfuse stays `always`
+    # (it is local-only tooling); the public surface requires an explicit
+    # `pnpm stack:up`. That is the cheap half of the exposure problem — see
+    # docs/HANDOFF.md's named-debt entry for the other half.
+    #
+    # MEASURED 2026-09-15, and `on-failure` was tried first and IS NOT SAFE HERE:
+    # only `always`/`unless-stopped` restart on DAEMON start, but `on-failure` also
+    # restarts a container that exited non-zero — and on a Colima stop the agent
+    # exits 0 (its graceful shutdown works) while Next does not, so a full VM cycle
+    # left the agent down and brought `web` BACK. A policy whose reboot behaviour
+    # depends on each process's SIGTERM handling is not a policy. `"no"` never
+    # restarts, for any reason, which is the only version of this that is
+    # predictable.
+    #
+    # QUOTES REQUIRED: unquoted `no` is a YAML 1.1 BOOLEAN, so `restart: no`
+    # becomes `restart: false` and Compose rejects it.
+    #
+    # The cost, accepted: a crash mid-demo is not auto-recovered. That is arguably
+    # right anyway — the note below explains that a restart policy turns a boot
+    # failure into an empty-looking crash loop, which is worse than stopping.
+    restart: "no"
+
+    # ⚠ ANY restart policy masks two real boot failures, so read the logs rather
+    # than trusting a running container:
     #   docker compose logs agent
     #
     # 1. A DUPLICATE OR ILL-FORMED TOOL NAME throws while the catalog is built at
@@ -183,7 +208,10 @@ services:
       dockerfile: Dockerfile.web
       secrets: [corp_ca]
     container_name: ${APP_NAME}-web
-    restart: unless-stopped
+    # `"no"` for the same reason as the agent — and web is the one that PROVED it
+    # was necessary: under `on-failure` it came back after a VM cycle while the
+    # agent stayed down, leaving pages up whose /api calls had nowhere to land.
+    restart: "no"
 
     # No env_file and no runtime CA: nothing in the Next server makes an outbound
     # call. All browser traffic goes to relative paths, which Traefik splits — so

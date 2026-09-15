@@ -108,6 +108,10 @@ pnpm stack:up     # preflight, then docker compose up -d --build
 pnpm stack:down
 ```
 
+**The stack does not come back by itself after a reboot**, by design: it runs `restart: "no"`, so
+starting the public surface is always an explicit act. The Langfuse stack *is* `always` and does return
+on its own, so your tooling survives a restart while the demo does not sit exposed unattended.
+
 ⚠ **Not `pnpm up`** — `up` is a built-in alias for `pnpm update`, and a package.json script cannot
 shadow a built-in, so it would rewrite the pinned lockfile and start nothing.
 
