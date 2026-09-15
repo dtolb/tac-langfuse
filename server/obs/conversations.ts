@@ -62,6 +62,20 @@ export interface ConversationRegistryOptions {
   readonly logger?: RegistryLogger;
   /** Injected by tests that need to count or fake root spans. */
   readonly start?: (conversationId: string) => ConversationSpan;
+  /**
+   * Last-look metadata for the root span, merged into the same `update` as `closedBecause`.
+   *
+   * THE POINT IS THAT THERE ARE FOUR CLOSE PATHS, not one. `end()` is the ordinary one, but a root
+   * also closes on the TTL sweep, on eviction at the cap, and on `shutdown()` — and a channel that
+   * wrote its call-level statistics at its own `end()` call site would silently lose them on the
+   * other three. Voice is the only channel that passes this, so `conversation.sms` and
+   * `conversation.bench` traces are byte-for-byte what they were.
+   *
+   * Returning `undefined` adds nothing. A throw is caught and logged: it must not cost the root
+   * span its `end()`, because an unended span does not reach Langfuse AT ALL (see this file's
+   * header), which would turn a bad statistic into a missing trace.
+   */
+  readonly onClose?: (conversationId: string) => Record<string, unknown> | undefined;
 }
 
 /** Bench default. A browser tab minting ids is the only source, and a demo tab is short-lived. */
@@ -88,7 +102,13 @@ export function createConversationRegistry(
   const entries = new Map<string, Entry>();
 
   const close = (conversationId: string, entry: Entry, why: string): void => {
-    entry.span.update({ metadata: { closedBecause: why } });
+    let extra: Record<string, unknown> | undefined;
+    try {
+      extra = opts.onClose?.(conversationId);
+    } catch (err) {
+      log.warn({ err, conversationId, spanName }, `${spanName}: onClose threw — closing without its metadata`);
+    }
+    entry.span.update({ metadata: { closedBecause: why, ...extra } });
     entry.span.end();
     entries.delete(conversationId);
   };

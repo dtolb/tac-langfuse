@@ -49,6 +49,7 @@ import { AGENT_PORT } from '../../shared/ports.ts';
 import type { AppConfig, Capabilities } from '../config.ts';
 import { childLogger, tacLogger } from '../logging.ts';
 import { createConversationRegistry, type ConversationRegistry } from '../obs/conversations.ts';
+import { createVoiceTimeline } from '../obs/voice-timeline.ts';
 import { createToolCatalog, SHIPPED_TOOLS } from '../agent/tools/catalog.ts';
 import { resolve } from '../agent/tools/resolve.ts';
 import type { TurnDeps } from '../agent/types.ts';
@@ -367,11 +368,33 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
     // attribute with no error anywhere. `capabilities()` already requires `config.voice !== null`.
     if (config.voice === null) throw new Error('caps.voice without config.voice');
 
+    /**
+     * The per-call timeline, declared BEFORE the registry because the registry's `onClose` closes over
+     * it. Voice is the only channel that has one, which is what keeps `conversation.sms` and
+     * `conversation.bench` traces byte-for-byte what they were.
+     */
+    const timeline = createVoiceTimeline({ maxConversations: VOICE_MAX_CONVERSATIONS, logger: log });
+
     const conversations = createConversationRegistry({
       spanName: 'conversation.voice',
       ttlMs: VOICE_CONVERSATION_TTL_MS,
       maxConversations: VOICE_MAX_CONVERSATIONS,
       logger: log,
+      /**
+       * The call-level statistics, and the ONE place they can be written from.
+       *
+       * A root span closes on four paths — `end()` from `handleVoiceDisconnect`, the TTL sweep,
+       * eviction at the cap, and `shutdown()` — and only the first is a hangup. Writing these at the
+       * disconnect call site would lose them on the other three, which are exactly the calls whose
+       * traces are already odd enough to be worth reading.
+       *
+       * `forget` both reads and cleans up, which is one call rather than two ON PURPOSE: it is what
+       * completes a turn still live at close time, so reading the statistics first reported
+       * `turns.count: 0` on a call that dropped mid-turn while a `turn.voice` child sat in the same
+       * trace. Every path that closes a root now drops the matching timeline entry, including the ones
+       * no handler of ours observes.
+       */
+      onClose: (conversationId) => timeline.forget(conversationId),
     });
     registries.push(conversations);
 
@@ -423,15 +446,30 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
           // `memoryMode`, so this has been available on every turn since T13 and was being dropped —
           // and `session.profileId` is what Conversation Memory and the memory-retrieval tool need.
           session: data.session,
+          /**
+           * UNDEFINED TODAY, ON PURPOSE. `PromptMessageSchema` parses `lang` and
+           * `handlePromptMessage` then spreads only `conversationId`, `transcript`, `abortSignal`,
+           * `userMemory` and `session` — so TAC 2.2.0 drops it. `BaseChannel.on` types `data` as
+           * `any`, so this compiles and yields undefined rather than failing; `asr.final` records the
+           * absence. Wired rather than omitted because the alternative is working around the vendor,
+           * and this starts carrying a value the day TAC widens that spread. See `VoicePrompt.lang`.
+           */
+          lang: data.lang,
         },
-        { turn: turnDeps, conversations, sender: voiceChannel as VoiceChannel, logger: log },
+        {
+          turn: turnDeps,
+          conversations,
+          sender: voiceChannel as VoiceChannel,
+          timeline,
+          logger: log,
+        },
       ),
     );
     voiceChannel.on('interrupt', (data) => {
-      handleVoiceInterrupt(data, { turn: turnDeps });
+      handleVoiceInterrupt(data, { turn: turnDeps, timeline });
     });
     voiceChannel.on('webSocketDisconnected', (data) => {
-      handleVoiceDisconnect(data, { turn: turnDeps, conversations });
+      handleVoiceDisconnect(data, { turn: turnDeps, conversations, timeline });
     });
   }
 

@@ -21,7 +21,7 @@
  * itself. Each turn rehydrates from it.
  */
 import { context, propagation, trace } from '@opentelemetry/api';
-import { startObservation, startActiveObservation } from '@langfuse/tracing';
+import { startObservation, startActiveObservation, type LangfuseSpan } from '@langfuse/tracing';
 import { childLogger } from '../logging.ts';
 import { scrubObject } from './pii.ts';
 
@@ -48,7 +48,45 @@ export const TRACEPARENT_KEY = 'traceparent';
 
 export interface SpanLike {
   update(fields: Record<string, unknown>): void;
-  end(): void;
+  /**
+   * @param endTimeMs epoch milliseconds. Omitted means "now", which is what every caller outside
+   *   `server/twilio/voice.ts` wants.
+   *
+   * AN EXPLICIT END TIME IS SUPPORTED, and knowing that saves reinventing it. `@langfuse/tracing`'s
+   * `LangfuseBaseObservation.end` is declared `end(endTime?: TimeInput): void` (read in
+   * `node_modules/@langfuse/tracing/dist/index.d.ts`), and OpenTelemetry's `timeInputToHrTime`
+   * treats a bare number larger than `performance.timeOrigin` as epoch ms — so a `Date.now()` value
+   * passes straight through. That is why the voice timeline does NOT need to hold a span open until
+   * the instant it wants to record: it back-dates with `startTime` (below) and closes with this.
+   */
+  end(endTimeMs?: number): void;
+}
+
+/**
+ * A span that can also mint back-dated children.
+ *
+ * Needed because voice's timeline is reconstructed from instants that have already passed by the
+ * time we know what they mean — the `tts.send` window is only complete once the `last: true` marker
+ * has gone out, and `asr.final` is a point in time we recorded before the turn span existed.
+ *
+ * Both methods parent EXPLICITLY, by span context, rather than relying on the ambient
+ * OpenTelemetry context. That is the load-bearing part: TAC dispatches `interrupt` from its own
+ * WebSocket message handler, with no active context at all, so a bare `startObservation` there
+ * becomes the root of its OWN trace — a second trace per barge-in, which reads as the
+ * instrumentation half-working. `@langfuse/tracing`'s `StartObservationOptions.parentSpanContext`
+ * is what avoids it, and `createParentContext` in that bundle turns it into
+ * `trace.setSpanContext(context.active(), …)`, so the child lands under this span wherever it is
+ * created from.
+ */
+export interface TimelineSpan extends SpanLike {
+  /**
+   * A zero-duration child observation at `atMs`. `asType: 'event'` is what makes it zero-duration:
+   * `LangfuseEvent`'s constructor calls `this.otelSpan.end(params.timestamp)` with the same
+   * timestamp the span was started at, so start and end coincide by construction.
+   */
+  event(name: string, fields?: Record<string, unknown>, atMs?: number): void;
+  /** A child span starting at `startedAtMs`. The caller owns `end(endTimeMs)`. */
+  child(name: string, fields?: Record<string, unknown>, startedAtMs?: number): SpanLike;
 }
 
 /** A started-but-not-held conversation root. */
@@ -95,6 +133,88 @@ export function startConversationSpan(
 }
 
 /**
+ * The vendor-facing attribute bag, cast once so no call site has to.
+ *
+ * `createObservationAttributes` destructures a FIXED set of keys (input, output, metadata, level,
+ * statusMessage, version, environment, and the generation-only ones) and drops everything else
+ * silently — so `{ 'turn.ttfa_ms': 4 }` at the top level reaches nothing. Everything custom goes
+ * under `metadata`, which is flattened one level into `langfuse.observation.metadata.<key>`.
+ *
+ * ⚠ A `null` OR EMPTY-STRING METADATA VALUE IS DROPPED, not recorded as null. Read in the 5.11
+ * bundle: `_flattenAndSerializeMetadata` keeps a key only `if (serialized)`, and `_serialize(null)`
+ * returns undefined. `false` and `0` survive (they serialise to the truthy strings `"false"` /
+ * `"0"`). So an absent optional value shows up as a MISSING attribute — do not write an assertion
+ * that expects the literal null.
+ */
+const spanAttributes = (fields: Record<string, unknown> | undefined): Parameters<LangfuseSpan['update']>[0] =>
+  scrubFields(fields ?? {}) as Parameters<LangfuseSpan['update']>[0];
+
+/** Wrap a vendor observation in our narrow, PII-scrubbing handle. */
+function toTimelineSpan(observation: LangfuseSpan): TimelineSpan {
+  // Read ONCE, eagerly: `spanContext()` is a plain getter on the OTel span and stays valid after
+  // `end()`, which is what lets `completeTurn` create `tts.send` from an instant in the past.
+  const parentSpanContext = observation.otelSpan.spanContext();
+  return {
+    update: (fields) => void observation.update(spanAttributes(fields)),
+    end: (endTimeMs) => observation.end(endTimeMs),
+    event: (name, fields, atMs) => {
+      startObservation(name, spanAttributes(fields), {
+        asType: 'event',
+        parentSpanContext,
+        ...(atMs !== undefined && { startTime: new Date(atMs) }),
+      });
+    },
+    child: (name, fields, startedAtMs) => {
+      const child = startObservation(name, spanAttributes(fields), {
+        parentSpanContext,
+        ...(startedAtMs !== undefined && { startTime: new Date(startedAtMs) }),
+      });
+      return {
+        update: (updated) => void child.update(spanAttributes(updated)),
+        end: (endTimeMs) => child.end(endTimeMs),
+      };
+    },
+  };
+}
+
+export interface TurnSpanOptions {
+  /**
+   * Back-date the span's start to this epoch-ms instant. Supported natively:
+   * `StartObservationOptions.startTime?: Date` is threaded into
+   * `tracer.startActiveSpan(name, { startTime }, …)` by the 5.11 bundle.
+   */
+  readonly startTimeMs?: number;
+  /**
+   * `false` keeps the observation OPEN after the callback settles, so the caller can end it at an
+   * instant it owns. THE CALLER THEN OWNS `end()` ON EVERY EXIT PATH INCLUDING THE THROW PATH — an
+   * unended span does not reach Langfuse at all (see this module's header), so a missed path is a
+   * silently missing observation rather than a visibly broken one.
+   *
+   * ⚠ MEASURED, so nobody overstates this: with the default of `true` and a caller that ends the span
+   * itself, the recorded TIMES are IDENTICAL. `wrapPromise` in the 5.11 bundle calls `span.end()`
+   * after the callback, and OpenTelemetry's `Span.end` answers a second call with
+   * `diag.error('… You can only call end() on a span once.')` and returns — the first end time
+   * stands. A mutation run confirmed the whole telemetry suite still passes with this option removed.
+   *
+   * It is still the right flag to pass: it stops one `diag.error` per turn (silent today only because
+   * this app registers no diag logger), and it makes the end time ours by construction rather than by
+   * the SDK choosing to ignore a later call.
+   *
+   * ⚠ WHAT THAT MEASUREMENT DOES NOT COVER — THE ERROR STATUS. `wrapPromise`'s rejection path is
+   * `span.setStatus({code: ERROR, message})` and only THEN the conditional `end()`, and `setStatus`
+   * is also dropped once the span is ended. So a caller that ends the span in its own `finally` takes
+   * over the marking of a FAILED observation whether or not it passes this flag; measured, a rejecting
+   * callback under that shape exports `status {code: 0}` (UNSET) instead of `{code: 2, message}`.
+   * `server/twilio/voice.ts` writes `level: 'ERROR'` / `statusMessage` itself for exactly this reason.
+   * Any new caller of `endOnExit: false` owes the same.
+   *
+   * Omitted, the vendor default of `true` applies and behaviour is exactly what it was before this
+   * option existed — which is what keeps SMS, the bench and `scripts/verify-telemetry.ts` unchanged.
+   */
+  readonly endOnExit?: boolean;
+}
+
+/**
  * Run `fn` inside a turn span parented to the conversation, rehydrated from the stashed
  * traceparent.
  *
@@ -105,7 +225,8 @@ export function startConversationSpan(
 export async function withTurnSpan<T>(
   name: string,
   traceparent: string | undefined,
-  fn: (span: SpanLike) => Promise<T>,
+  fn: (span: TimelineSpan) => Promise<T>,
+  options?: TurnSpanOptions,
 ): Promise<T> {
   const parentCtx =
     traceparent === undefined
@@ -113,16 +234,53 @@ export async function withTurnSpan<T>(
       : propagation.extract(context.active(), { [TRACEPARENT_KEY]: traceparent });
 
   return context.with(parentCtx, () =>
-    startActiveObservation(name, async (observation) => {
-      const span: SpanLike = {
-        update: (fields) => observation.update(scrubFields(fields)),
-        end: () => observation.end(),
-      };
-      // startActiveObservation ends the observation itself when the callback settles, so `fn`
-      // must not call span.end() — the wrapper above exists for symmetry with startStep.
-      return fn(span);
-    }),
+    startActiveObservation(
+      name,
+      async (observation) =>
+        // Unless `endOnExit: false` was passed, startActiveObservation ends the observation itself
+        // when the callback settles, so `fn` must not call `span.end()`.
+        fn(toTimelineSpan(observation)),
+      {
+        ...(options?.endOnExit !== undefined && { endOnExit: options.endOnExit }),
+        ...(options?.startTimeMs !== undefined && { startTime: new Date(options.startTimeMs) }),
+      },
+    ),
   ) as Promise<T>;
+}
+
+/**
+ * A span parented to a SERIALISED parent — the conversation root — rather than to the ambient
+ * context, and optionally back-dated.
+ *
+ * This is what `caller.turn` needs. It is created from inside a turn handler (where the ambient
+ * context is the TURN span) but belongs beside the turns, under the root: the gap it describes ends
+ * where the turn begins, so nesting it inside that turn would draw a child longer than its parent.
+ *
+ * HONEST LIMIT: with `traceparent === undefined` there is nothing to parent to, so this falls back
+ * to `context.active()` — under the turn span when called from inside one, or a fresh root when
+ * called from a WebSocket handler. That case means tracing is off (no provider, so no traceparent
+ * was ever produced), which is the documented degradation for a missing Langfuse.
+ */
+export function startSpanUnder(
+  traceparent: string | undefined,
+  name: string,
+  fields?: Record<string, unknown>,
+  startTimeMs?: number,
+): SpanLike {
+  const parentCtx =
+    traceparent === undefined
+      ? context.active()
+      : propagation.extract(context.active(), { [TRACEPARENT_KEY]: traceparent });
+
+  const observation = context.with(parentCtx, () =>
+    startObservation(name, spanAttributes(fields), {
+      ...(startTimeMs !== undefined && { startTime: new Date(startTimeMs) }),
+    }),
+  );
+  return {
+    update: (updated) => void observation.update(spanAttributes(updated)),
+    end: (endTimeMs) => observation.end(endTimeMs),
+  };
 }
 
 /**
@@ -132,8 +290,10 @@ export async function withTurnSpan<T>(
 export function startStep(name: string, input?: Record<string, unknown>): SpanLike {
   const observation = startObservation(name, input === undefined ? {} : { input: scrubFields(input) });
   return {
-    update: (fields) => observation.update(scrubFields(fields)),
-    end: () => observation.end(),
+    update: (fields) => void observation.update(spanAttributes(fields)),
+    // Forwarded rather than dropped, so `SpanLike` means the same thing everywhere. Every current
+    // caller omits it.
+    end: (endTimeMs) => observation.end(endTimeMs),
   };
 }
 

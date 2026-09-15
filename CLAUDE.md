@@ -133,3 +133,19 @@ time-to-first-chunk. Two things follow, both of which will mislead you otherwise
 Full waterfall, the per-component prompt budget, and the four ranked levers are in `docs/HANDOFF.md`
 → "Latency, investigated 2026-09-15". Note `search_knowledge`'s long description is load-bearing (T14),
 so it is not free to trim.
+
+**A voice trace is now TILED, so read the timeline before asking where the time went.** `turn.voice`
+spans `prompt` receipt → `last: true` sent, `caller.turn` covers every instant between two turns, and the
+two alternate with **0 ms between them** on a real call (measured 2026-09-15: 42.7 s root fully covered,
+against 45.3 s of unexplained gap the day before). Three traps:
+
+- **`caller.turn` is a BLEND — bot playback + caller speech + ASR endpointing**, plus TAC's memory Recall
+  on turn 1. It was 65% of a real call. Never quote it as "how long the caller talked".
+- **`turn.ttfa_ms` is a server-side proxy and lands within 0–3 ms of `turn.ttft_ms`.** TAC `ws.send`s each
+  token synchronously, so it proves nothing queues between model and socket — and it cannot see TTS or
+  playback, which is the part a caller hears. Do not present it as time-to-first-audio.
+- **The interrupt handler PARKS the boundary; the prompt handler's `finally` closes the span.** Closing it
+  in the interrupt handler costs a barged-in turn its `output` / `tools.called` / `turn.total_model_ms`,
+  because `runTurn` writes those after `await done`. Do not "simplify" it.
+
+Details, the four review fixes and the honest limits: `docs/HANDOFF.md` → "Voice latency TIMELINE".

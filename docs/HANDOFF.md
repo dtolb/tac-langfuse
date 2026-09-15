@@ -1908,6 +1908,109 @@ docker exec scaffold-clickhouse-1 clickhouse-client --user clickhouse --password
            FROM default.events_full WHERE start_time > now() - INTERVAL 24 HOUR"
 ```
 
+## Voice latency TIMELINE — user-perceived instrumentation, proven on a real call 2026-09-15
+
+The latency section above answers *"how long did the model take"*. It could not answer **"what was
+happening for the other 79% of the call"**, and that is what this adds. Before: `turn.voice` started at
+the final transcript and ended when the LLM stopped streaming, so trace `d2e680b5…` (22:43 UTC, 6 turns,
+**57.5 s**) showed **12.2 s of spans and 45.3 s of gap** — with no way to tell "bot was talking" from
+"caller was talking" from "ASR was slow".
+
+After, trace `a046b1cd…` (23:04 UTC, 6 turns, **42.7 s**, 86 observations) the root is **tiled**:
+
+```
+conversation.voice  42675 ms
+├─ turn.voice   3181   asr.final ▪  tts.send 514   ttfa 2667  lookup_order + search_knowledge
+├─ caller.turn  4190
+├─ turn.voice   1288   asr.final ▪  tts.send 804   ttfa  484
+├─ caller.turn  2849
+├─ turn.voice   1594   asr.final ▪  tts.send 393   ttfa 1201  lookup_order
+├─ caller.turn  6824
+├─ turn.voice   2064   asr.final ▪  tts.send 409   ttfa 1655  lookup_order
+├─ caller.turn  6265
+├─ turn.voice    884   asr.final ▪  tts.send 337   ttfa  547
+├─ caller.turn  7494
+└─ turn.voice   3649   asr.final ▪  tts.send 150   ttfa 3499  handoff
+   root metadata: turns.count=6  turns.aborted=0  caller.turn_total_ms=27622
+                  turn.ttfa_p50_ms=1201  turn.ttfa_max_ms=3499  closedBecause=ended
+```
+
+**Measured coverage: the gap between every consecutive root child is 0 ms.** Two residuals, both
+explainable and neither a gap in the instrumentation:
+
+- **head −1 ms.** Turn 1 starts one millisecond BEFORE the root, because `promptAt` is captured as the
+  first statement of `handleVoicePrompt` while the root span is created lazily a moment later by
+  `conversations.traceparentFor`. Back-dating the turn is the point, so this is the correct sign.
+- **tail 2394 ms.** From the last `last: true` to the socket closing — the final reply still playing to
+  the caller, plus the hangup. Nothing we own can shorten or see inside it (see the honest limit below).
+
+### What the numbers actually say, including the one that disappoints
+
+**`caller.turn` is where the call lives: 27622 ms of 42675, i.e. 65%.** And `tts.send` is only
+**150–804 ms** per turn, so the overwhelming majority of each `caller.turn` is TTS playback, caller
+speech and ASR endpointing — *not* our token streaming. That is the whole reason the span is named
+`caller.turn` and documented as a blend rather than as "caller talking".
+
+⚠ **`turn.ttfa_ms` came back within 0–3 ms of `turn.ttft_ms` on all six turns** (2667/2664, 484/481,
+1201/1201, 1655/1654, 547/546, 3499/3498). This is a genuine result and not a bug: the anchor is the
+instant our generator yields the first non-empty delta, and TAC's `sendStreamingResponse` does
+`ws.send` **synchronously in the same `for await` iteration**. So ttfa proves nothing is queueing
+between the model and the socket — a useful negative — but **do not expect it to reveal TTS or
+playback cost, and do not present it to anyone as time-to-first-audio.** It is a server-side proxy and
+the residual it cannot see is the part a caller hears.
+
+### Four things that were wrong on the first pass, all found by review before commit
+
+1. **`spoken !== ''` is the WRONG guard for "the `last: true` marker went out".** TAC's
+   `sendStreamingResponse` accumulates `fullResponse += chunk` **before** `ws.send`, and both of its
+   `break`s (aborted signal, closed socket) fall through to `return fullResponse` — so a socket that
+   dies mid-stream returns a non-empty partial while no marker was ever sent. The guard now mirrors the
+   bundle's own: non-empty **and** not aborted **and** the socket still open. Such a turn records
+   `turn.ending: 'no-output'`.
+2. **Ending the turn span from inside `handleVoiceInterrupt` silently costs the barged-in turn its
+   attributes.** `runTurn` writes `output`, `tools.called` and `turn.total_model_ms` after `await done`,
+   which lands *after* the interrupt — on an already-ended span, where OTel drops it. The interrupt
+   handler therefore **parks the boundary instant** and the prompt handler's `finally` closes the span
+   *at* that instant. Do not "simplify" the interrupt handler into closing the span itself.
+3. **`forget()` finalises before it reports.** It completes a still-live turn and then returns the
+   statistics, so requirement 6's root metadata cannot be computed from a half-open call. There is no
+   `stats()` to call in the wrong order any more, deliberately.
+4. **`endOnExit: false` on `withTurnSpan` is cosmetic**, because the `finally` closes the span first and
+   OTel's second `end()` is a no-op that keeps the first end time. It is kept for intent, and the
+   docblock says so rather than overclaiming. Its real cost is that a post-`end` `setStatus` is dropped,
+   which is why the error path writes `level: 'ERROR'` **before** the `finally`.
+
+### Two vendor facts worth not rediscovering
+
+- **TAC 2.2.0 drops `lang`.** `PromptMessageSchema` parses `lang: z.string().optional()` and
+  `handlePromptMessage` then forwards only `{conversationId, transcript, abortSignal, userMemory?,
+  session?}`. The forwarding is wired here anyway so it lights up if TAC adds it; today `asr.final`
+  carries no `lang` attribute at all — Langfuse's `_serialize(null)` returns undefined, so a null
+  metadata key produces no attribute rather than an explicit null.
+- **No anchor we own can precede TAC's memory Recall.** `handlePromptMessage` awaits
+  `retrieveMemoryIfEnabled` *before* calling our handler, and voice runs `memoryMode: 'once'`, so on
+  turn 1 a Conversation Orchestrator round-trip sits inside `caller.turn` and not inside `turn.voice`.
+  That is recorded in the `caller.turn` code comment; it is also why `caller.turn` must not be read as
+  a pure human-speech measurement.
+
+### How to re-prove it
+
+```bash
+npx vitest run tests/voice-telemetry.test.ts   # 23 tests over real spans, in-memory exporter
+node --import ./server/obs/instrumentation.ts --env-file-if-exists=.env scripts/verify-telemetry.ts
+```
+
+The test harness needs an `AsyncLocalStorage` context manager and a local traceparent propagator:
+with a bare `BasicTracerProvider`, `context.with` is a **no-op** and the first run of this test
+reported **six trace ids for one call**. No new dependency — `@opentelemetry/context-async-hooks` is
+already transitive. The harness cannot exercise `LangfuseSpanProcessor`'s filters, which is why the
+live-stack run above is the real proof.
+
+⚠ **The interrupt path is NOT proven on real traffic.** Both calls above have `turns.aborted=0` and no
+`tts.interrupted`, so `durationUntilInterruptMs` on a live barge-in has only been seen from the test and
+the diagnostic. Talking over the agent on the next call is all it takes; until then treat that one branch
+as unverified.
+
 ## Gaps and honest limits
 
 - **Latency: no longer deferred, and now measured properly — see "Latency, investigated 2026-09-15"
@@ -1925,6 +2028,18 @@ docker exec scaffold-clickhouse-1 clickhouse-client --user clickhouse --password
 - **t0 is our first observation, not STT arrival.** Un-measurable upstream: WS frame parse,
   `startStreamTask`, and TAC's `promptQueues` serialisation (`voice.ts:630`). `turn.ttft_ms` is now
   turn-relative and `turn.ttft_model_ms` model-relative; neither includes the upstream gap.
+- **TTS first byte and playback end are NOT measurable from here, so `turn.ttfa_ms` is a proxy and
+  measures within 0–3 ms of `turn.ttft_ms`.** ConversationRelay exposes neither: `tokens-played` appears
+  in the attribute table and in no websocket-message reference, and TAC drops unrecognised inbound frames
+  before dispatch anyway. The residual shows up as the trailing 2394 ms between the last `last: true` and
+  the socket closing, and as the bulk of every `caller.turn`. Getting the real number means Voice Insights
+  or a switch to Media Streams `mark` events — both out of scope. See "Voice latency TIMELINE" above.
+- **`caller.turn` is a BLEND and must never be presented as caller speech.** Bot playback + caller
+  speech + ASR endpointing, plus TAC's memory Recall on turn 1 (it awaits `retrieveMemoryIfEnabled`
+  before calling our handler, so no anchor we own precedes it). Measured at 65% of a real call.
+- **The live barge-in path is unverified.** `tts.interrupted` and `turn.aborted: true` are proven by
+  `tests/voice-telemetry.test.ts` and `scripts/verify-telemetry.ts`; both real calls so far have
+  `turns.aborted=0`. One call where somebody talks over the agent closes this.
 - **Langfuse v4 `events_only` has no public read API for traces.** `/api/public/traces`,
   `/observations`, `/metrics/daily` all 404; `/events` and `/spans` are POST-only. Prompts read fine
   via `/api/public/v2/prompts`. Trace verification is a **UI check via Playwright MCP**, never an API
