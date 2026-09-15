@@ -10,8 +10,9 @@
 // to protect. The `.env` is on disk but its APP_NAME was never loaded check below exists to catch
 // that specific mistake rather than trusting the invocation.
 //
-// Promised at .env.example:30 since T1 and written at T15, when the Traefik router names it warns
-// about became real.
+// Promised in .env.example's APP_NAME block since T1 and written at T15, when the Traefik router
+// names it warns about became real. (Cited by section, not line — T15 itself inserted 22 lines above
+// that promise, which would have rotted a line number in the same commit that wrote it.)
 //
 // Read-only: starts nothing, changes nothing.
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -44,7 +45,10 @@ console.log('\n\x1b[1mPREFLIGHT\x1b[0m');
 // Ordered first because every check below is meaningless if the answer is no.
 const appName = process.env.APP_NAME;
 const envOnDisk = existsSync('.env');
-const envDeclaresAppName = envOnDisk && /^APP_NAME=/m.test(readFileSync('.env', 'utf8'));
+const envText = envOnDisk ? readFileSync('.env', 'utf8') : '';
+const envDeclaresAppName = /^APP_NAME=/m.test(envText);
+/** APP_NAME as written in the FILE, which is not necessarily what this process resolved. */
+const appNameInFile = envText.match(/^APP_NAME=(.*)$/m)?.[1]?.trim();
 
 if (envDeclaresAppName && appName === undefined) {
   fail(
@@ -78,6 +82,26 @@ if (appName === undefined || appName.trim() === '') {
   );
 } else {
   ok(`APP_NAME=${appName.trim()}`, `https://${appName.trim()}.twilio.dtolb.com`);
+}
+
+// A STRAY `export APP_NAME` SPLITS THE STACK IN TWO, and this is the only place that can see it.
+//
+// Node's --env-file yields to an already-exported variable (measured on v24.18.0), so everything
+// above validated the SHELL's value. Compose resolves the same way for interpolation, so the Traefik
+// labels get the shell value — but `env_file: [.env]` hands the CONTAINER the file's value. The
+// result is a router for one hostname in front of an app that reports another, and both halves look
+// individually fine: /health is 200, the labels are well-formed, and nothing errors.
+//
+// Comparing the two is cheap, so it is worth doing even though the case is rare — the symptom
+// (webhooks 404ing at a host the container has never heard of) is expensive to diagnose from either
+// side alone.
+if (appNameInFile !== undefined && appName !== undefined && appNameInFile !== appName.trim()) {
+  warn(
+    `APP_NAME disagrees: the shell says ${JSON.stringify(appName.trim())}, .env says ${JSON.stringify(appNameInFile)}`,
+    'Compose builds the Traefik labels from the SHELL value and gives the container the FILE value,\n' +
+      '      so the router and the app would answer for different hostnames. Run `unset APP_NAME`\n' +
+      '      and let .env be the single source.',
+  );
 }
 
 // ---------------------------------------------------------------------------- the edge network
@@ -123,20 +147,27 @@ if (dockerReachable) {
 // it fails after a successful image build with an error that names Docker rather than this variable.
 const caPath = process.env.CORP_CA_PATH;
 if (caPath === undefined || caPath.trim() === '') {
-  // docker-compose.yml defaults the secret to /dev/null precisely so this case works.
+  // docker-compose.yml defaults the secret to /dev/null, so unset is a working state rather than a
+  // broken one — `pnpm stack:up` reaches here only when ~/.config/zscaler-root.crt is absent.
   warn(
     'CORP_CA_PATH is unset — the corp CA secret falls back to /dev/null',
-    'correct off the VPN. On it, TLS fails during `pnpm install` in the build:\n' +
-      '      CORP_CA_PATH="$HOME/.config/zscaler-root.crt" docker compose up -d --build   (pnpm stack:up does this)',
+    'correct off the VPN, and the stack will come up. ON it, TLS fails during `pnpm install`\n' +
+      '      in the build, so point this at your CA:\n' +
+      '      CORP_CA_PATH="$HOME/.config/zscaler-root.crt" pnpm stack:up',
   );
 } else if (!existsSync(caPath)) {
+  // Reachable when the value was set EXPLICITLY — `pnpm stack:up` never fabricates a path that does
+  // not exist, precisely so this failure means "your value is wrong" and not "you are off the VPN".
   fail(
     `CORP_CA_PATH=${caPath} does not exist`,
-    'a missing path is fatal when the container is CREATED, after the build succeeds.\n' +
-      '      Off the VPN, set CORP_CA_PATH=/dev/null rather than leaving it pointing at nothing.',
+    'a missing path is fatal when the container is CREATED, after the build succeeds — so Docker\n' +
+      '      reports it, not this variable. Fix the path, or unset it to fall back to /dev/null.',
   );
 } else if (caPath !== '/dev/null' && statSync(caPath).size === 0) {
-  warn(`CORP_CA_PATH=${caPath} is empty`, 'Node will warn "Ignoring extra certs" and fall back to the system bundle');
+  // Deliberately does NOT promise a log line: measured on node:24-bookworm-slim, an EMPTY
+  // NODE_EXTRA_CA_CERTS file produces no warning at all. Node only complains when the path is
+  // missing, which the branch above already caught.
+  warn(`CORP_CA_PATH=${caPath} is empty`, 'Node will silently use the system bundle — no warning, so this is your only notice');
 } else {
   ok(`CORP_CA_PATH=${caPath}`);
 }

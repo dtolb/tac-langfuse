@@ -145,7 +145,9 @@ if (health === null && agentContainerUp) {
 
 if (health === null) {
   if (!agentHostUp && !agentContainerUp) {
-    console.log(`  ${D}agent not running — start it with  pnpm dev  (host) or  pnpm up  (container)${X}`);
+    // `pnpm stack:up`, NOT `pnpm up` — the latter is pnpm's built-in alias for `pnpm update`. This is
+    // the line a stuck user copies, so getting it wrong here costs them a rewritten lockfile.
+    console.log(`  ${D}agent not running — start it with  pnpm dev  (host) or  pnpm stack:up  (container)${X}`);
   } else {
     // Genuinely worth distinguishing: the process is alive but unreachable, which on the container
     // path means the Traefik labels or the `edge` network, not the app.
@@ -196,7 +198,10 @@ console.log('\n\x1b[1mURLS\x1b[0m');
 console.log(`  ${D}public    ${X}https://${publicHost}${D}          (web, and /api /events /health on the agent)${X}`);
 console.log(`  ${D}health    ${X}https://${publicHost}/health`);
 console.log(`  ${D}dev web   ${X}http://localhost:${WEB_PORT}`);
-console.log(`  ${D}dev health${X}http://localhost:${AGENT_PORT}/health`);
+// `dev api` rather than `dev health`: every label in this block is hand-padded to 10 columns, and
+// `dev health` fills the field exactly, so it printed flush against its URL. Shortened rather than
+// widened, so the URLs stay in the one column the other four already share.
+console.log(`  ${D}dev api   ${X}http://localhost:${AGENT_PORT}/health`);
 console.log(`  ${D}langfuse  ${X}http://localhost:${LANGFUSE_PORT}`);
 console.log(`\n${D}build progress: docs/HANDOFF.md${X}`);
 console.log(`${D}checks:         pnpm typecheck && pnpm test${X}\n`);

@@ -67,10 +67,16 @@ export function buildApp(deps: AppDeps): {
      * socket.
      *
      * The idle socket has TWO sources, and T15 added the one that outlives development: in dev it is
-     * Next's rewrite proxy, created on every `/bench` visit; in the container it is TRAEFIK'S
-     * KEEP-ALIVE POOL, which is permanent and present whether or not a browser is open. Same hazard,
-     * but no longer something that disappears in production — so `forceCloseConnections` is now
-     * load-bearing for every `docker compose stop`, not just for a developer's tab.
+     * Next's rewrite proxy, created on every `/bench` visit; in the container it is Traefik, which
+     * holds a backend socket for up to that same `keepAliveTimeout` after any request — and a Twilio
+     * webhook is enough, so it does NOT need a browser tab open.
+     *
+     * Corrected from an earlier version of this comment, which called Traefik's pool "permanent":
+     * measured, the socket is ESTABLISHED at 40s and 65s and TIME_WAIT by 75s, closed from our side
+     * at 72s, because nothing refreshes it (compose configures no Traefik healthcheck for this
+     * service). So the practical rule is not "always" but "for a while after recent traffic" — which
+     * still covers every realistic `docker compose stop`, and `forceCloseConnections` is correct
+     * either way.
      *
      * Note the `'idle'` default does NOT help: fastify only wires up `closeIdleConnections` when a
      * `serverFactory` is supplied, which we do not do.

@@ -54,8 +54,14 @@ RUN --mount=type=secret,id=corp_ca \
 FROM node:24-bookworm-slim AS runtime
 WORKDIR /app
 
-# Next's standalone server needs this; `next build` also bakes it in. Unlike the
-# agent (see Dockerfile.agent's note) it is genuinely required here.
+# REDUNDANT, and kept deliberately — an earlier version of this comment claimed it
+# was "genuinely required here", which is false. Next's generated
+# /app/web/server.js sets `process.env.NODE_ENV = 'production'` itself, on its own
+# line 5, before it chdirs or requires next. Nothing observes the variable earlier:
+# the CMD is exec form with no --import, and compose gives `web` no env at all.
+# Verified by booting the image with `-e NODE_ENV=` — still production mode, /bench
+# still 200. Kept only so `docker inspect` and `docker compose config` show the mode
+# without having to reason about Next's generated entry point.
 ENV NODE_ENV=production
 
 # THE PATH IS NESTED, AND THE OFFICIAL DOCS SHOW THE UN-NESTED ONE.

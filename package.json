@@ -18,7 +18,7 @@
     "seed:knowledge": "node --env-file-if-exists=.env scripts/seed-knowledge.ts",
     "seed:studio": "node --env-file-if-exists=.env scripts/seed-studio-flow.ts",
     "preflight": "node --env-file-if-exists=.env scripts/preflight.mjs",
-    "stack:up": "export CORP_CA_PATH=\"${CORP_CA_PATH:-$HOME/.config/zscaler-root.crt}\" && pnpm preflight && docker compose up -d --build",
+    "stack:up": "if [ -z \"$CORP_CA_PATH\" ] && [ -e \"$HOME/.config/zscaler-root.crt\" ]; then export CORP_CA_PATH=\"$HOME/.config/zscaler-root.crt\"; fi; pnpm preflight && docker compose up -d --build",
     "stack:down": "docker compose down"
   },
   "license": "UNLICENSED",

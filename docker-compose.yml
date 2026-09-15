@@ -3,11 +3,13 @@
 # public host, split by path.
 #
 # ⚠ THE FILENAME IS LOAD-BEARING. tests/architecture.test.ts hardcodes
-# `join(ROOT, 'docker-compose.yml')` and opens with `if (!existsSync(compose))
-# return`. Renaming this to the `compose.yaml` that Compose v2 prefers does not
-# break anything visibly — it turns that guard into a vacuous pass forever, and
-# the guard's whole job is to catch a missing PathPrefix, which presents as a 404
-# that looks like a Twilio problem.
+# `join(ROOT, 'docker-compose.yml')` and now ASSERTS that it exists, so renaming
+# this to the `compose.yaml` Compose v2 prefers FAILS that test rather than
+# silently retiring it. (Up to T15 the test opened with
+# `if (!existsSync(compose)) return`, which made it a vacuous pass; T15 landed the
+# file and replaced the guard with an assertion in the same commit.) What the test
+# protects is the PathPrefix list below, whose absence presents as a 404 that looks
+# like a Twilio problem.
 #
 # Bring it up with:  pnpm stack:up  (runs preflight first — see scripts/preflight.mjs)
 #   NOT `pnpm up`, which is a built-in alias for `pnpm update` and cannot be
@@ -37,12 +39,26 @@ services:
     container_name: ${APP_NAME}-agent
     restart: unless-stopped
 
-    # ⚠ `restart: unless-stopped` MASKS A REAL FAILURE MODE, so read the logs on
+    # ⚠ `restart: unless-stopped` MASKS TWO REAL FAILURE MODES, so read the logs on
     # first boot rather than trusting a running container:
-    # preflightDefaultPromptTools() (server/index.ts) deliberately THROWS on a bad
-    # tool name, and a throw on the boot path under this policy presents as a
-    # crash loop with empty logs — which reads like a Docker problem.
     #   docker compose logs agent
+    #
+    # 1. A DUPLICATE OR ILL-FORMED TOOL NAME throws while the catalog is built at
+    #    IMPORT time (server/agent/tools/catalog.ts), not when it is called — which
+    #    is why server/index.ts guards the import rather than the call.
+    # 2. A `FST_ERR_DEC_ALREADY_PRESENT` inside an avvio microtask is uncatchable
+    #    (see server/twilio/tac.ts).
+    #
+    # NOT a throw, and worth knowing because it is the likelier clone edit: a
+    # DEFAULT_PROMPTS entry naming a tool that does not exist. Contrary to an
+    # earlier version of this comment, `preflightDefaultPromptTools()` deliberately
+    # does NOT throw — server/agent/tools/resolve.ts says "Logs rather than throws:
+    # the process still boots", so that lands as one logged ERROR on a container
+    # that then runs perfectly happily, which is easy to scroll past.
+    #
+    # Either way the logs are not EMPTY — a throw prints a stack trace, and
+    # server/logging.ts uses pino with no worker transport, so nothing is buffered
+    # away. Empty logs plus exit 0 is a different failure: a dev-only run guard.
 
     # Secrets and overrides layer on top of .env, which supplies most of it.
     env_file: [.env]
@@ -201,7 +217,17 @@ secrets:
   # expand `~`, so that literal resolves relative to this file, does not exist,
   # and is FATAL at container create (`invalid mount config`) — a confusing
   # failure for someone who is simply off the VPN. /dev/null mounts as an empty
-  # file, Node prints one non-fatal "Ignoring extra certs", and the stack comes
-  # up. `pnpm up` passes the real path; scripts/preflight.mjs checks it resolves.
+  # file and the stack comes up.
+  #
+  # MEASURED, because an earlier version of this comment got it backwards: with
+  # NODE_EXTRA_CA_CERTS pointing at an empty file, /dev/null, or a garbage file,
+  # Node prints NOTHING and quietly uses the system bundle. Only a MISSING path
+  # produces the "Ignoring extra certs" warning. So off the VPN there is no log
+  # line confirming the fallback happened — absence of the warning is the normal
+  # case, not a signal.
+  #
+  # `pnpm stack:up` fills this in from ~/.config/zscaler-root.crt only if that file
+  # exists, and passes an explicitly-set value through untouched so
+  # scripts/preflight.mjs can reject a typo.
   corp_ca:
     file: ${CORP_CA_PATH:-/dev/null}

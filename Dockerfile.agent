@@ -64,10 +64,12 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 
 # ALL of server/ and shared/, not a trimmed subset. server/index.ts resolves
-# `./twilio/tac.ts` and `./twilio/voice-token.ts` through DYNAMIC import() at
-# lines 97 and 114, off disk, on the boot path. A trimmed COPY therefore builds
-# clean, boots clean, answers /health 200 — and fails on the first inbound call,
-# which is the worst place to find out.
+# `./twilio/tac.ts` (for `bootTac`) and `./twilio/voice-token.ts` (for
+# `mintVoiceToken`) through DYNAMIC import(), off disk, on the boot path. A trimmed
+# COPY therefore builds clean, boots clean, answers /health 200 — and fails on the
+# first inbound call, which is the worst place to find out.
+# Cited by symbol rather than line: an earlier version of this comment named two
+# line numbers and both were already wrong when written.
 COPY server ./server
 COPY shared ./shared
 

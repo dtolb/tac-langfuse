@@ -254,8 +254,9 @@ its driver is running forever. Verify the pid is not lima's before moving the fi
 
 `.env` has a real `OPENAI_API_KEY`, local Langfuse config, and — since T12 — real Twilio credentials
 including `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` and `TWILIO_CONVERSATION_CONFIGURATION_ID`, so
-**SMS works**. Since T13 `TWILIO_VOICE_PUBLIC_DOMAIN` is set to the ngrok host as well, so
-`capabilities().voice` is true and voice boots — it was the only variable SMS did not need. Since T14
+**SMS works**. Since T13 `TWILIO_VOICE_PUBLIC_DOMAIN` is set as well, so `capabilities().voice` is
+true and voice boots — it was the only variable SMS did not need. **Since T15 its value is the stable
+Traefik host `<APP_NAME>.twilio.dtolb.com`, not an ngrok host.** Since T14
 `TWILIO_KNOWLEDGE_BASE_ID` is set too, so `capabilities().knowledge` is true and `search_knowledge` is
 a real tool. **Since T14b `TWILIO_STUDIO_HANDOFF_FLOW_SID` is set as well** — it was absent from `.env`
 right up until T14b.9, which is why `/health` reported `handoff: false` through eight tasks of building
@@ -281,13 +282,17 @@ as present whatever `.env` says — a clone on another machine behaves different
 `scripts/repoint-public-host.ts <host> --write` updates all three places that must agree —
 `TWILIO_VOICE_PUBLIC_DOMAIN`, the number's `voice_url`, and the CO `statusCallbacks[0].url` — backing
 the configuration up and re-reading the backup BEFORE the full-replace PUT, then diffing afterwards to
-prove nothing else moved. **Reserve a static ngrok domain** (the free plan includes one) and this chore
-disappears until T15; without one, every tunnel restart is a new host and another repoint.
+prove nothing else moved. ~~**Reserve a static ngrok domain** and this chore disappears until T15.~~
 
-There is no Docker/Traefik yet (T15), so the loop is an ngrok
-tunnel to `:8910` with the CO configuration's `statusCallbacks[0].url` pointed at
-`https://<host>/webhook`. That URL is baked into the configuration, so it must be repointed whenever
-ngrok restarts — and updating it is a **full-replace PUT** where every omitted field is deleted.
+**Superseded at T15: ngrok is retired, and the chore is gone rather than reduced.** The public host is
+now the Traefik dev box's `<APP_NAME>.twilio.dtolb.com`, which survives restarts, so there is nothing
+to repoint on a reboot. Run the stack with `pnpm stack:up`. The repoint script still matters — for the
+one-time move onto this host, and for moving off it — and the mechanism below is unchanged: the CO
+configuration's `statusCallbacks[0].url` is baked in, and updating it is a **full-replace PUT** where
+every omitted field is deleted.
+
+`preflight` and `pnpm status` both now warn if `TWILIO_VOICE_PUBLIC_DOMAIN` drifts away from
+`<APP_NAME>.twilio.dtolb.com`, so provisioning a tunnel here would be flagged, not silently accepted.
 
 ## Corrections to the plan — all three fail silently
 
@@ -1574,8 +1579,20 @@ in Traefik and must fail here), and dropping one `PathPrefix`.
 
 ### Verified — at the layer where each failure lives
 
-- **Boot logs read, not assumed.** `restart: unless-stopped` masks a boot throw as a crash loop with
-  empty logs, and `preflightDefaultPromptTools()` deliberately throws on a bad tool name.
+- **Boot logs read, not assumed.** `restart: unless-stopped` turns a boot throw into a crash loop, so a
+  running container is not evidence. `docker compose logs agent`.
+
+  ⚠ **Corrected after the T15 review, because the first version of this bullet was wrong twice and sat
+  under a heading that says "Verified".** It claimed `preflightDefaultPromptTools()` "deliberately
+  throws on a bad tool name" — it deliberately does the *opposite*: `server/agent/tools/resolve.ts`
+  says outright *"Logs rather than throws: the process still boots"*, and `server/index.ts` calls it
+  bare. So the likeliest clone edit — a `DEFAULT_PROMPTS` entry naming an absent tool — is one logged
+  ERROR on a container that runs perfectly happily, which is easy to scroll past. The real boot throws
+  are a **duplicate or ill-formed name in the catalog**, which fires when `createToolCatalog` runs at
+  *import* (`server/agent/tools/catalog.ts` — which is why `index.ts` guards the import, not the call),
+  and an avvio-microtask `FST_ERR_DEC_ALREADY_PRESENT`, which is uncatchable. It also said "empty
+  logs": a throw prints a stack trace, and `server/logging.ts` runs pino with no worker transport, so
+  nothing is buffered away. Empty logs plus **exit 0** is a different failure — a dev-only run guard.
 - **The image carries no secrets.** `.env` is absent from `/app`; the CMD's `--env-file-if-exists` is a
   deliberate no-op inside the image.
 - **CA at runtime, not just at build.** A build-only secret fixes `pnpm install` and leaves runtime
