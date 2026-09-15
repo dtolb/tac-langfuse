@@ -1376,16 +1376,43 @@ script invites the question.
 - **Twilio ships no blessed template for this.** Its own handoff Studio template routes to Flex, not to
   a browser client.
 
-### What is still unmeasured — an open measurement, not a caveat
+### The one open question, now MEASURED — extraction survives a handoff
 
-**Whether Conversation Memory extraction still fires for a handed-off conversation.** TAC's handoff
-clears the conversation's status callbacks, and `clearStatusCallbacks` has **no inverse anywhere in
+**Does Conversation Memory extraction still fire for a handed-off conversation? YES. Measured
+2026-09-15 on the verified call, and the worry was unfounded.**
+
+The worry was reasonable: TAC's handoff calls `clearStatusCallbacks`, which has **no inverse anywhere in
 TAC** — no `'ACTIVE'` write, no re-registration. So a handed-off conversation stops calling `/webhook`
-permanently, which is correct for a transferred call, and may therefore never produce the
-`CONVERSATION_UPDATED`/CLOSED event that extraction runs off. Extraction is post-conversation only (see
-T14), so if the CLOSED transition never arrives, nothing is extracted and T14's memory story quietly
-loses every handed-off conversation. Nobody has looked. The cheap check is the T14 one: hand a call off,
-wait past the configured close timeout, then run `scripts/verify-memory.ts` against the store baseline.
+permanently, and the fear was that it would therefore never produce the `CONVERSATION_UPDATED`/CLOSED
+event extraction runs off, silently costing T14's memory story every transferred call.
+
+What actually happened, read from the Conversations and Memory APIs after the call:
+
+| | |
+|---|---|
+| conversation `status` | **`CLOSED`** |
+| `statusCallbacks` | **`None`** — so `clearStatusCallbacks` did take effect |
+| `createdAt` → `updatedAt` | 14:01:16 → 14:01:48 — **32 seconds**, i.e. it closed when the call ended |
+| observations attributed to that conversation id | **3**, all written at 14:01:51 |
+
+So extraction ran **~3 seconds after the close**, consistent with the ~2-second latency T14 measured.
+
+**The mechanism, and why the inference was wrong:** `statusCallbacks` are *outbound notifications to
+us*. Clearing them stops Orchestrator telling this process about the transition; it does **not** stop
+Orchestrator making the transition or running extraction, both of which are server-side. Losing the
+webhook and losing the lifecycle are different things, and only the first one happens.
+
+Two things worth carrying forward from the same measurement:
+
+- **The close was 32 seconds, not the ~5 minutes `statusTimeouts.closed: 5` implies.** That timeout is
+  timed from creation and is what T14 measured (5m36s) on a conversation nobody transferred. The
+  handoff's own `updateConversation(..., 'INACTIVE')` write evidently short-circuits the wait. Useful
+  for demos: a transferred conversation's memory is available almost immediately, where an ordinary one
+  takes minutes.
+- **The three observations are the caller's own utterances**, not the agent's answers — *"Asked what the
+  last order number was (A4721)"*, *"Asked what was discussed during the user's last call"*, *"Requested
+  that the order and return-policy information be sent via text"*. So a handed-off call feeds the
+  profile exactly as a completed one does.
 
 ## Gaps and honest limits
 
@@ -1435,9 +1462,10 @@ wait past the configured close timeout, then run `scripts/verify-memory.ts` agai
   T14b — a caller transferred to a browser softphone that a person answered, with the screen pop
   rendered. What remains unexercised: the **45 s shutdown timeout** (needs a SIGTERM *during* a call) and
   a **`/ws` signature rejection** (invisible by construction). **Studio handoff is no longer on that
-  list**, and it was right up to T14b. What T14b left open is a measurement rather than a path: whether
-  Conversation Memory extraction still fires for a handed-off conversation, whose status callbacks are
-  cleared with no inverse anywhere in TAC. See the end of the T14b section.
+  list**, and it was right up to T14b. T14b's one open measurement is now closed too: extraction **does**
+  still fire for a handed-off conversation — it reached CLOSED in 32 s and wrote 3 observations 3 s later,
+  even with its status callbacks cleared. See the end of the T14b section for why the inference that it
+  would not was wrong.
 - **The demo's memory story needs TWO conversations and a five-minute gap, and that is a product fact,
   not a limitation to engineer around.** Extraction is post-conversation only. A demo script that texts
   once and expects the agent to remember will fail, correctly. Either seed a profile beforehand or
