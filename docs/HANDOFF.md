@@ -58,11 +58,15 @@ stable public host, split by path — `https://$APP_NAME.twilio.dtolb.com`, `APP
 SMS round-tripped through it; routing, TLS, signature validation, the corporate CA at runtime, Langfuse
 reachability from inside a container, a 184 s SSE hold and a clean SIGTERM shutdown are all measured.
 
-⚠ **Two things T15 did NOT prove, and they are the two you would demo:** no real **inbound call** has
-traversed the containerised stack (every component it depends on is proven individually, but `/ws` is
-invisible by construction), and **single-reply SMS needs an external handset** — testing from the
-account's own spare number doubles every reply for a reason that is not a bug. Both are written up at
-the end of the T15 section. Read that before demoing.
+**Both channels are now proven THROUGH THE CONTAINERS, from an external handset** (2026-09-15 17:56–17:58
+UTC, same container process, `restarts=0`). One `conversation.voice` trace held **4 voice turns** and
+exercised `lookup_order`, `search_knowledge`, `handoff` and `end_call`; the caller was transferred to
+the browser softphone, **a human answered** (`outbound-dial → client:browser_agent`, completed), and the
+screen pop was fetched through Traefik. The SMS was **1 inbound → 1 reply**, answered from Conversation
+Memory with **0 tool calls**. Telemetry export from inside the container is confirmed in ClickHouse.
+
+⚠ **One thing T15 still has not exercised:** the **45 s TAC shutdown drain**, which needs a SIGTERM
+*during* a call. The signal path is proven; the drain is not. See the shutdown bullet in honest limits.
 
 ```
 pnpm stack:up     preflight, then docker compose up -d --build   (NOT `pnpm up` — that is `pnpm update`)
@@ -135,7 +139,7 @@ conversation.sms                    5m 00s   $0.001388   is_app_root = true
 | **T13 TAC/voice** | **done, proven on two real calls.** One `conversation.voice` trace held all five `turn.voice` spans; turn 2 recalled an order number with **0 tool calls**; barge-in works on real audio; and the agent hangs up by itself via `end_call` |
 | **T14 memory + tools** | **done, proven across two conversations.** Extraction on, a real Knowledge Base, `search_knowledge` + `retrieve_profile_memory` adapted with Zod mirrors and drift tests, and conversation 2 recalled a fact from conversation 1 with **0 tool calls on a fresh `conversationId`** |
 | **T14b handoff + softphone** | **done, proven on one real call.** The caller asked for a person, the model called `handoff`, the farewell streamed, the real parked frame went out (`frameSent: true`, `hadPayload: true`), our action route redirected to Studio, the browser softphone rang, a human answered, and the screen pop rendered the transcript |
-| **T15 Docker + Traefik** | **done, routed, ngrok retired.** Two containers on one public host split by path; a real SMS round-tripped. Every layer measured — TLS chain byte-identical, `signedUrl` correct, runtime corp CA, Langfuse reachable from `edge`, 184 s SSE hold, clean SIGTERM. **Not proven: a real inbound call, and single-reply SMS from an external handset** — see the T15 section |
+| **T15 Docker + Traefik** | **done, routed, ngrok retired, and proven on real traffic from an external handset.** Two containers on one public host split by path. A 72 s call: `/ws` upgraded, **4 voice turns in one trace**, `lookup_order` + `search_knowledge` + `handoff` + `end_call`, transferred to the softphone and **a human answered**; screen pop fetched through Traefik. SMS: **1 in → 1 reply**, 0 tool calls, from memory. Every layer measured — TLS chain byte-identical, `signedUrl` correct, runtime corp CA, Langfuse reachable *and exporting spans*, 184 s SSE hold, clean SIGTERM. Still unexercised: the **45 s drain** (needs SIGTERM mid-call) |
 
 **Not started:** T16–T17 Traefik follow-ons, T18–T20 UI + docs.
 
@@ -1611,6 +1615,10 @@ replies** for one inbound text. It looks exactly like a duplicate-delivery bug. 
 | 11 Sep (T12) | external handset | **1.00** ✓ |
 | 14 Sep (T14b) | the spare **on-account** number | 2.00 |
 | 15 Sep (T15) | the spare **on-account** number | 2.00 |
+| 15 Sep (T15, **the control**) | external handset, through the containers | **1.00** ✓ |
+
+That last row is the one that settles it: same containers, same CO configuration, same capture rules,
+same minute — only the sender changed, and the doubling vanished.
 
 **Mechanism**, pinned by reading `eventType` off `/events/stream`: CO emits **two
 `COMMUNICATION_CREATED` events** ~300 ms apart, and TAC runs a turn for each. An on-account send creates
@@ -1620,22 +1628,63 @@ handset creates only the inbound leg, which is why 11 Sep is clean.
 
 Consequences worth stating plainly:
 - **T14b's "ten SMS turns" figure is inflated**; roughly half were the same message answered twice.
-- The doubling is a **test-method artefact**, not a regression in T14b or T15. Do not "fix" it.
-- **It also means T15 has NOT proven single-reply behaviour under containers** — that needs one text
-  from an external handset. The analysis says it will be clean; the analysis is not a measurement.
+- The doubling is a **test-method artefact**, not a regression in T14b or T15. Do not "fix" it — do not
+  touch the capture rules, and in particular do not remove the bidirectional outbound rule, which is
+  what lets CO see the agent's own messages in the transcript.
+- **Verify SMS from an external handset, always.** The on-account number is still useful for proving the
+  *route* (webhook 200, signature valid, a turn runs) — it simply cannot measure reply count.
 
-### Not proven by T15 — read this before demoing
+### CLOSED by real traffic from an external handset, 2026-09-15 17:56–17:58 UTC
 
-- **A real inbound CALL.** Everything the call depends on is proven *individually* — the TwiML names the
-  new `wss://` host, the signature validates through the public edge, the WebSocket path is routed, the
-  agent reports `voice: ready` — but no audio has traversed the containerised stack. The one failure
-  this would catch that nothing above does is a `/ws` upgrade problem, and `/ws` is invisible by
-  construction: `@fastify/websocket` hijacks the reply, so the `onResponse` diagnostic never fires for
-  it and silence from `/ws` is **not** evidence of health.
-- **The handoff to the browser softphone**, which needs a person to answer.
-- **The 45 s shutdown path** (see the shutdown bullet in honest limits — the signal path is proven, the
-  45 s drain is not).
-- **Single-reply SMS from an external handset** (above).
+Same container process throughout (`restarts=0`, started 15:51 UTC), so this is the containerised run
+and not a host fallback.
+
+**The call — `/ws` is no longer an act of faith.** `GET /ws` from `54.174.70.237` (Twilio
+ConversationRelay) at 17:56:40, **logged with no matching response line**, which is exactly the
+`@fastify/websocket` hijack signature the code documents — the absence *is* the evidence, once you know
+a successful upgrade produces it. The call ran **72 s**. Then `POST /api/voice/relay-action` (the
+`<Connect action>`), then `GET /api/handoff/context?from=…` **from a browser, through Traefik** — the
+screen pop. Twilio's own record: `outbound-dial → client:browser_agent`, completed. A person answered.
+
+**One trace, four turns, four tools.** From ClickHouse (see the note below on why not the API):
+
+| trace | started | turns | tools |
+|---|---|---|---|
+| `a01d08e1…` voice | 17:56:46 | **4** `turn.voice` | `lookup_order`, `search_knowledge`, `handoff`, `end_call` |
+| `448f3c4b…` sms | 17:56:11 | **1** `turn.sms` | none — answered from Conversation Memory |
+
+Four turns in **one** trace is the `conversation.voice` grouping working through the containers, and
+`handoff` + `end_call` in the same call means the model both transferred and hung up.
+
+**Single-reply SMS is confirmed: 1 inbound → 1 reply**, from `+1919…` (external). That is the control
+for the doubling described above, and it lands exactly where the analysis predicted — so the doubling
+really is an on-account artefact and there is nothing to fix.
+
+**Telemetry export from inside the container is confirmed**, which closes the plan's silent-failure
+worry (a well-formed but unreachable `LANGFUSE_BASE_URL` yields `caps.prompts = true` while every span
+is dropped). `prompt.fetch`, `prompt.compose`, `memory.recall`, `tools.resolve`, `llm.stream`,
+`invoke_agent`, `step 1`/`step 2` and `chat gpt-5.4-mini` spans are all present for both traces.
+
+> ⚠ **Verifying traces: this Langfuse is v4 in `events_only` mode, so the READ API IS DISABLED.**
+> `GET /api/public/traces`, `/observations` and `/metrics/daily` all return **404 with a message saying
+> the endpoint is unavailable in this mode** — a 404 that means "disabled", not "no data", and reading
+> it as the latter would have had us chasing a telemetry bug that did not exist. `/api/public/projects`
+> and `/api/public/health` still work, and `/api/public/otel/v1/traces` is POST-only ingestion.
+> The legacy `traces` / `observations` ClickHouse tables are **empty by design** — the data is in
+> **`events_core` / `events_full`**:
+> ```bash
+> docker exec scaffold-clickhouse-1 clickhouse-client --user clickhouse --password clickhouse \
+>   --query "SELECT trace_id, name, count() FROM default.events_core
+>            WHERE start_time > now() - INTERVAL 30 MINUTE GROUP BY trace_id, name"
+> ```
+> The Langfuse **UI** still works, which is what the "Verified waterfall" section above used.
+
+### Still not exercised
+
+- **The 45 s shutdown drain**, which needs a SIGTERM *during* a call — `docker compose stop agent`
+  mid-call. The signal path is proven (see honest limits); the drain is not, and a fast clean exit with
+  no call in flight says nothing about it.
+- **A `/ws` signature rejection**, invisible by construction.
 
 ## Gaps and honest limits
 
