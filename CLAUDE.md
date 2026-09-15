@@ -63,6 +63,12 @@ debugging session. Langfuse *prompt* edits do land live (~20s TTL); code does no
 **Containers: after any `.env` change use `docker compose up -d --force-recreate`, never `restart`** —
 `restart` re-runs the container with its original env block, so the change silently does not take.
 
+**And after any CODE change, containers need `pnpm stack:up` (i.e. `up -d --build`) — `Dockerfile.agent`
+COPYs the source, it does not mount it.** Measured 2026-09-15: a real call was placed against an image
+built 2.5 h earlier, and the trace came back missing every new span. That reads as "the instrumentation
+does not work" rather than "the code was never deployed". Check the image against the commit — the
+container variant of the restart rule above.
+
 **The stack runs `restart: "no"` on purpose — it must NOT come back after a reboot,** because it
 publishes unauthenticated endpoints on a stable public host. Langfuse is `always` and does return, so
 tooling survives a restart while the demo surface needs an explicit `pnpm stack:up`. Do not "fix" this
