@@ -1,12 +1,17 @@
 # Handoff — demo scaffold
 
-Updated 2026-09-14. Read this first, then `~/.claude/plans/i-want-to-build-reactive-muffin.md`
+Updated 2026-09-15. Read this first, then `~/.claude/plans/i-want-to-build-reactive-muffin.md`
 for the full plan and the footgun list.
 
 **The plan is wrong in twenty-three places now, and so was this file.** Three concern telemetry and
 prompt linking (plan footguns #30–#32); nine were found building T12; **eleven more were found building
 T14, and two of those correct statements in THIS file** — that TAC ships no tests, and the stated reason
 for `memoryMode: 'never'`. Both were specific enough to be believed for two whole tasks.
+
+**T14b then found seven more against its own design and six against THIS FILE**, and the biggest of
+the six is the one that reads most authoritatively below (line ~205): the claim that pinning
+`actionUrl` lets our callback and Studio "coexist" was true about the precedence and wrong about the
+conclusion. Both sets are folded into the T14b section near the end.
 
 Read whichever section matches what you are about to touch. Do not re-derive them; each was verified by
 executing it, not by reasoning about it. **Where a claim here and a claim in the design or plan docs
@@ -41,11 +46,11 @@ POCs don't:
 All three land in **self-hosted Langfuse**. Its prompt `config` JSON is versioned with the prompt and
 is Langfuse's own documented home for `tools`/`tool_choice`/model params.
 
-## Status: T1–T14 done, all four spikes closed — SMS *and* VOICE verified live, WITH MEMORY
+## Status: T1–T14b done, all four spikes closed — SMS *and* VOICE verified live, WITH MEMORY, AND A CALLER HANDED TO A HUMAN
 
 ```
 pnpm typecheck   → 0          (TS 7.0.2, node project + web project)
-pnpm test        → 291 passed, 16 files
+pnpm test        → 326 passed, 19 files
 ```
 
 **T14 IS DONE AND PROVEN ACROSS TWO CONVERSATIONS.** Conversation Memory is on, TAC's built-in tools
@@ -112,12 +117,16 @@ conversation.sms                    5m 00s   $0.001388   is_app_root = true
 | **T12 TAC/SMS** | done — a real text to `+15805630929` is answered, turn 2 recalled the order number with **0 tool calls**, and the `conversation.sms` trace tree is confirmed in the Langfuse UI |
 | **T13 TAC/voice** | **done, proven on two real calls.** One `conversation.voice` trace held all five `turn.voice` spans; turn 2 recalled an order number with **0 tool calls**; barge-in works on real audio; and the agent hangs up by itself via `end_call` |
 | **T14 memory + tools** | **done, proven across two conversations.** Extraction on, a real Knowledge Base, `search_knowledge` + `retrieve_profile_memory` adapted with Zod mirrors and drift tests, and conversation 2 recalled a fact from conversation 1 with **0 tool calls on a fresh `conversationId`** |
+| **T14b handoff + softphone** | **done, proven on one real call.** The caller asked for a person, the model called `handoff`, the farewell streamed, the real parked frame went out (`frameSent: true`, `hadPayload: true`), our action route redirected to Studio, the browser softphone rang, a human answered, and the screen pop rendered the transcript |
 
-**Not started:** T14b handoff + browser softphone, T15–T17 Docker/Traefik, T18–T20 UI + docs.
+**Not started:** T15–T17 Docker/Traefik, T18–T20 UI + docs.
 
 **A human can talk to the agent three ways now**, and all three have been done for real —
 `pnpm dev:all` then <http://localhost:3000/bench>, **text the number**, or **call it** and hang up by
-saying you're done. Still absent: Docker for the app, and the home page is a placeholder.
+saying you're done. Since T14b there is a fourth page, <http://localhost:3000/softphone>, which is not
+a way to talk to the agent but the place a caller **lands when the agent gives them up** — open it
+before the call or the transfer rings nothing. Still absent: Docker for the app, and the home page is a
+placeholder.
 
 ## Running it
 
@@ -135,6 +144,9 @@ pnpm seed:prompts demo-agent-voice   # just one — every run relabels what it t
 node --env-file-if-exists=.env scripts/verify-memory.ts        # is memory ACTUALLY on; store baseline
 node --env-file-if-exists=.env scripts/verify-knowledge.ts     # does the KB answer real questions
 pnpm seed:knowledge                                            # push the Northwind articles (idempotent)
+pnpm seed:studio                                               # publish the handoff flow, backing the
+                                                               #   live revision to disk first
+
 node --env-file-if-exists=.env scripts/repoint-public-host.ts <host>          # dry run
 node --env-file-if-exists=.env scripts/repoint-public-host.ts <host> --write  # all 3 places at once
 
@@ -200,11 +212,23 @@ including `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` and `TWILIO_CONVERSATION_CO
 **SMS works**. Since T13 `TWILIO_VOICE_PUBLIC_DOMAIN` is set to the ngrok host as well, so
 `capabilities().voice` is true and voice boots — it was the only variable SMS did not need. Since T14
 `TWILIO_KNOWLEDGE_BASE_ID` is set too, so `capabilities().knowledge` is true and `search_knowledge` is
-a real tool. Only `TWILIO_STUDIO_HANDOFF_FLOW_SID` remains unset, and leaving it that way is currently
-*helpful*: with it set, TAC repoints the ConversationRelay `action` at Studio and
-`/conversation-relay-callback` is never hit. **T14b's plan for that is to pin `actionUrl` in
-`VOICE_TWIML_OPTIONS`, which beats Studio because `resolveActionUrl` is a five-layer precedence and
-Studio is only layer 4** — so the two can coexist. Note the shell also exports real
+a real tool. **Since T14b `TWILIO_STUDIO_HANDOFF_FLOW_SID` is set as well** — it was absent from `.env`
+right up until T14b.9, which is why `/health` reported `handoff: false` through eight tasks of building
+handoff — so `capabilities().handoff` is true and the `handoff` tool resolves.
+
+⚠ **What this file used to say here was wrong, and it was wrong in the confident direction.** The old
+text said that with the flow SID set, TAC repoints the ConversationRelay `action` at Studio, and that
+T14b's answer was to pin `actionUrl` in `VOICE_TWIML_OPTIONS` — *"so the two can coexist."* The
+precedence claim is true and measured (`defaultTwimlOptions` is layer 2 of five and nothing sits
+between it and Studio's layer 4). **The conclusion is false.** `/conversation-relay-callback` is
+**TAC's own route**, registered unconditionally; its handler answers
+`{status: 200, content: "OK", contentType: "text/plain"}` and **never TwiML**; and
+`ConversationRelayCallbackPayloadSchema` has **no `HandoffData` field**, so being a plain non-strict
+`z.object` it **strips** it. Pinning `actionUrl` at TAC's own path would have kept the POST arriving
+while silently discarding the handoff and then dropping the call. Coexistence required pinning a **new
+path this repo owns** — `POST /api/voice/relay-action` — and returning routing TwiML there. Also note
+the const is gone: it is now `buildVoiceTwimlOptions(publicDomain)`, a function, because the second key
+depends on the public host. Note the shell also exports real
 `TWILIO_ACCOUNT_SID` / `TWILIO_API_KEY` / `TWILIO_API_SECRET` from the user profile, so those three read
 as present whatever `.env` says — a clone on another machine behaves differently.
 
@@ -350,6 +374,14 @@ server/
     sse.ts          SseHub: heartbeat, drop-on-throw, transport-agnostic
     routes-obs.ts   GET /events/stream (SSE) + /events/recent
     routes-bench.ts POST /api/bench/turn. MUST NOT import TAC — that rule is the whole point.
+    routes-voice-action.ts  POST /api/voice/relay-action — the `<Connect action>` URL, and the ONE
+                    place a call is routed. Returns valid TwiML on EVERY path, bugs included.
+    routes-handoff.ts  GET /api/handoff/context (the screen pop) + POST /api/voice/token. Imports NO
+                    vendor: `mintToken` is INJECTED from index.ts, which is what keeps `twilio` inside
+                    server/twilio/ and out of a credential-free process.
+  handoff/
+    snapshots.ts    the bounded screen-pop store. Imports nothing but shared/, deliberately — voice.ts
+                    writes it and http/ reads it, so a vendor import here would drag TAC into http/.
   twilio/           the ONLY dir allowed to import twilio-agent-connect
     tac.ts          bootTac — ONE function, both channels, because there is only one TACServer.
                     SMS: registerChannel BEFORE new TACServer or /webhook is never registered.
@@ -362,8 +394,12 @@ server/
     builtin-tools.ts   TAC's built-ins as ToolDefs, Zod mirrors + drift tests, constructed LAZILY
                     inside execute. Closes over `tac`, which is why ToolCtx needs no TAC handle.
     voice.ts        one ConversationRelay turn → runTurn → tokens spoken as they arrive. Owns the
-                    end-session frame, which is how the agent hangs up. Read its
+                    end-session frame, which is how the agent hangs up — and since T14b the handoff
+                    frame, which is how it gives the caller away. Read its
                     header: every failure mode on this channel is silence.
+    handoff.ts      the `handoff` ToolDef wrapping TAC's `createStudioHandoffTool`. Records an intent
+                    and lets TAC PARK a ready-made frame; sends nothing. voice.ts drains it.
+    voice-token.ts  AccessToken + VoiceGrant for the softphone. The ONLY file importing `twilio`.
   obs/
     instrumentation.ts  --import preload. NodeSDK + LangfuseSpanProcessor + registerTelemetry.
     spans.ts            THE span API. Read its header before touching telemetry.
@@ -374,11 +410,18 @@ server/
                         SMS it is the traceparent carrier IN PREFERENCE to TAC's session.metadata.
 shared/               types + pure constants ONLY. Compiled by BOTH tsconfigs.
                       tac-tool-names.ts — the ONE source of truth for the TAC-provided tool
-                      names, because builtin-tools.ts imports TAC and agent/ may not.
+                      names, because builtin-tools.ts imports TAC and agent/ may not. ⚠ APPEND ONLY:
+                      indices 0/1 are read positionally by builtin-tools.ts and 2 by twilio/handoff.ts.
+                      handoff.ts — CLIENT_IDENTITY, the three route paths, the screen-pop types.
 web/                  Next 16 + Strix. Own package.json, own lockfile, own .npmrc.
+                      src/app/softphone/ — the browser agent. One client island that dynamically
+                      imports @twilio/voice-sdk, registers, rings, screen-pops and answers.
 tests/                vitest. No mocking library, no snapshots — injection instead.
+                      helpers/ is NOT collected (vitest.config.ts includes only tests/**/*.test.ts) —
+                      helpers/fake-tac.ts is shared by the handoff and voice suites.
 scripts/              status · dev · seed-prompts · seed-knowledge · knowledge-articles
                       repoint-public-host (all 3 host places at once, with a verified backup)
+                      studio-handoff-flow (the committed flow DEFINITION) · seed-studio-flow
                       verify-{model,prompts,tools,turn,telemetry,memory,knowledge}
 ```
 
@@ -534,8 +577,12 @@ construction without it.
 
 **As of T12 these are live, not preparation.** `TWILIO_CONVERSATION_CONFIGURATION_ID` and
 `TWILIO_PHONE_NUMBER` are read into the SMS channel at boot, and `capabilities().sms` gates on both.
-`TWILIO_VOICE_PUBLIC_DOMAIN` and `TWILIO_STUDIO_HANDOFF_FLOW_SID` are still unread until T13/T14 — and
-note SMS does **not** need the voice domain, which the plan assumed it would.
+`TWILIO_VOICE_PUBLIC_DOMAIN` and `TWILIO_STUDIO_HANDOFF_FLOW_SID` were still unread then — and
+note SMS does **not** need the voice domain, which the plan assumed it would. **Both are live now:** the
+domain since T13, the flow SID since T14b, where it also became the gate on `capabilities().handoff`.
+⚠ The domain must be a bare host with **no scheme and no trailing slash**; `server/config.ts` rejects
+the scheme and not the slash, so `buildVoiceTwimlOptions` strips it — see T14b below for what a stray
+`/` used to cost.
 
 ## T12, TAC boot for SMS — what was built, and the nine ways the plan was wrong
 
@@ -721,7 +768,7 @@ The signed pre-flight is the highest-value check here and it costs nothing. Its 
 five things at once:
 
 ```xml
-<Connect action="https://<host>/conversation-relay-callback">
+<Connect action="https://<host>/api/voice/relay-action">
   <ConversationRelay url="wss://<host>/ws"
     welcomeGreeting="Hello! How can I assist you today?"
     conversationConfiguration="conv_configuration_…"
@@ -733,8 +780,16 @@ five things at once:
 `TWILIO_VOICE_PUBLIC_DOMAIN`; 3. **our `defaultTwimlOptions` reached the wire** — see below for why
 that attribute is the difference between a working agent and a deaf one; 4. CO is wired through the
 **noun** (`conversationConfiguration`), which is the path that is not double-billed; 5. `action`
-points at us, not Studio — `resolveActionUrl` would silently redirect it to Studio if
-`TWILIO_STUDIO_HANDOFF_FLOW_SID` were set, and our callback route would then never be hit.
+points at a route **we** own.
+
+⚠ **That `action` value changed at T14b, and the reason recorded here was half right.** It read
+`https://<host>/conversation-relay-callback` at T13 — TAC's derived default — with the note that
+`resolveActionUrl` would "silently redirect it to Studio if `TWILIO_STUDIO_HANDOFF_FLOW_SID` were set,
+and our callback route would then never be hit." Studio does win over the derived default, and the flow
+SID is now set. But TAC's own route was never a usable handoff target either (it answers `text/plain`
+and strips `HandoffData`), so T14b pinned `actionUrl` at `/api/voice/relay-action` in
+`buildVoiceTwimlOptions`, which is layer 2 and beats both. **Verified live, not by probe:** a signed
+`POST /twiml` after T14b returns our path with no `webhooks.twilio.com` anywhere in the document.
 
 **Still not proven even after two calls:** the 45 s shutdown timeout. Both SIGTERM checks ran with no
 WebSocket open, where the 10 s default would also have passed — it only bites if a SIGTERM lands
@@ -749,7 +804,9 @@ construction (see below).
    `signal?.aborted` is falsy forever, and the caller is talked over with the answer they just
    interrupted. `tests/voice.test.ts` asserts it is *our* signal; removing the option fails that test
    with `expected [ undefined ]`, which is exactly the production symptom. **Proven to bite.**
-2. **`reportInputDuringAgentSpeech: 'any'`** in `VOICE_TWIML_OPTIONS`. The ConversationRelay default
+2. **`reportInputDuringAgentSpeech: 'any'`** in `buildVoiceTwimlOptions(publicDomain)` — a **function**
+   since T14b, not the `VOICE_TWIML_OPTIONS` const this file used to name, because the second key
+   (`actionUrl`) depends on the public host. The reasoning below is unchanged. The ConversationRelay default
    changed from `any` to `none` in May 2025. With `none` a barge-in still stops the audio and still
    fires `interrupt`, but the words that caused it are **never delivered as a `prompt`** — the agent
    stops talking and then cannot hear. Every example written before May 2025 omits this attribute.
@@ -781,8 +838,10 @@ session and return control of the call to Twilio"*, with `handoffData` **optiona
 end-session method: it builds this same frame for Studio handoff and parks it on
 `session.pendingHandoffData`, which is drained **only inside `sendResponse` and never inside
 `sendStreamingResponse`** — so on a streaming channel a parked frame would never be sent at all. That
-is a live trap for T14's handoff work. `getWebsocket()` is public, so writing the documented frame
-needs no vendor internals.
+is a live trap for T14b's handoff work, **and T14b both fell into it and out the other side**: it is
+now `voice.ts` that performs the five-line drain, and *because* `sendResponse` drains the same field
+itself, the empty-answer fallback briefly sent two frames on one socket. See T14b below.
+`getWebsocket()` is public, so writing the documented frame needs no vendor internals.
 
 Measured on the call that proved it, and both correct a guess made before it:
 
@@ -1085,55 +1144,248 @@ The cheap way to verify a per-conversation cache without spending a call: send O
 number on the account. The double-capture trap (above) produces two turns in the SAME conversation, so
 the second is a guaranteed cache hit.
 
-## T14b, NOT STARTED — Studio handoff + browser softphone, and what is already known
+## T14b, DONE — Studio handoff + browser softphone, proven on a real call
 
-Split out of T14 at the `web/` boundary. Everything below was researched during T14 and verified
-against 2.2.0 or the live account; none of it is guesswork, and it is the reason this is its own task.
+Split out of T14 at the `web/` boundary. **Done, and verified end to end on one real phone call on
+2026-09-15**: four turns, then the caller asked for a person, and a person answered — in a browser, with
+the transcript already on screen.
 
-**The landmine, confirmed.** TAC's Studio handoff tool sets `session.pendingHandoffData` (one write
-site, `packages/tools/src/built-in/handoff.ts:211`, voice branch only) and that frame is drained **only
-inside `sendResponse` — never inside `sendStreamingResponse`**. We stream. So a TAC-built handoff frame
-would never be sent at all and the caller simply would not be transferred. **We must write the
-`{"type":"end","handoffData":"<json string>"}` frame ourselves**, which `endSession` in
-`server/twilio/voice.ts` already does for `end_call` — `handoffData` is the one field to add, and it is
-double-encoded (a JSON *string* inside the frame).
+New: `shared/handoff.ts`, `server/handoff/snapshots.ts`, `server/twilio/{handoff,voice-token}.ts`,
+`server/http/{routes-voice-action,routes-handoff}.ts`, `web/src/app/softphone/{page,softphone-client}.tsx`,
+`scripts/{studio-handoff-flow,seed-studio-flow}.ts`, `tests/{handoff,voice-action,handoff-http}.test.ts`,
+`tests/helpers/fake-tac.ts`. Changed: `server/twilio/{voice,tac,builtin-tools}.ts`,
+`server/http/app.ts`, `server/index.ts`, `server/agent/prompt/defaults.ts`, `shared/tac-tool-names.ts`.
+New dependencies: `@fastify/formbody`, `twilio@5.13.1` (pinned **exactly**, to dedupe with TAC's
+resolved copy rather than install a second SDK), and `@twilio/voice-sdk@2.18.4` in `web/` only.
 
-⚠ And TAC's own docblock is a trap here: it says *"the voice channel will send the WS end message with
-your payload"*. True of `sendResponse`, false on our path.
+Design and plan: `docs/superpowers/specs/2026-09-14-t14b-studio-handoff-and-softphone-design.md` and
+`docs/superpowers/plans/2026-09-14-t14b-studio-handoff-and-softphone-plan.md`. **Both are wrong in the
+places listed below** — this section wins.
 
-**Worse than not transferring:** before parking the frame, the tool fires
-`coClient.updateConversation(..., 'INACTIVE')` and `clearStatusCallbacks(...)`, both warn-only on
-failure and **not reverted**. So a silently-unsent frame leaves the conversation in a broken state, not
-merely an untransferred one.
+### What was built
 
-**The `actionUrl` problem has a clean answer.** `resolveActionUrl` (`packages/core/src/channels/voice.ts:1067`)
-is a FIVE-layer precedence: `onInboundCallTwiml` → `defaultTwimlOptions` → host per-call → **Studio** →
-derived default. Studio is only layer 4, and this repo already passes `defaultTwimlOptions`, so pinning
-`actionUrl` there beats it — a one-key addition, and all five branches are covered by TAC's own
-`tests/voice-channel.test.ts:384-497`. Then our own route inspects the callback and redirects to Studio
-when handoff data is present. TAC's source endorses exactly this (`handoff.ts:104-112`).
+- **`server/twilio/handoff.ts`** — the `handoff` `ToolDef`, wrapping TAC's `createStudioHandoffTool`.
+  It **does not transfer the call**: like `end_call`, it records an intent, because a tool runs inside
+  the model loop before the turn's text exists. What it delegates for is the part a hand-built frame
+  would silently skip — TAC parks a *complete* `{type:'end',handoffData:"<json>"}` frame on
+  `session.pendingHandoffData` and performs the two Conversation Orchestrator side effects
+  (`updateConversation(…,'INACTIVE')`, then `clearStatusCallbacks(…)`). Construction is lazy, inside
+  `execute`, because TAC's factory has three guards that **throw at construction** — at boot that is a
+  crash, inside `execute` it is a structured miss the model can speak about. `requires: 'handoff'`, and
+  it is the first tool to claim that pre-existing capability. Its description is ours and is
+  load-bearing for the same reason `search_knowledge`'s is: TAC's default invites a transfer whenever
+  the model feels stuck, which on a demo means transferring instead of searching the policy library.
+- **`server/twilio/voice.ts`** — the drain, and the `actionUrl` pin. `VOICE_TWIML_OPTIONS` became
+  **`buildVoiceTwimlOptions(publicDomain)`** because the second key depends on the public host. After
+  the farewell has streamed, the handler consumes the intent, snapshots the transcript, sends the
+  parked frame, and `delete`s the field exactly as TAC's own drain does. **Handoff beats a pending
+  `end_call` unconditionally** — two `{type:'end'}` frames on one socket is undefined behaviour, and
+  hanging up on someone who has just asked for a human is the worst available outcome. A barge-in
+  during "putting you through" cancels the transfer, same argument as the goodbye.
+- **`server/http/routes-voice-action.ts`** — `POST /api/voice/relay-action`, the `<Connect action>` URL
+  and the one place a call is routed. It returns **valid TwiML on every path, including the buggy ones**:
+  unparseable `HandoffData` answers `<Hangup/>` with a loud log rather than a 500, and a missing account
+  SID falls back to dialling the browser client rather than emitting a URL Twilio would 404. No Twilio
+  signature validation, stated rather than hidden — `validateRequest` lives in the `twilio` package,
+  which the architecture test confines to `server/twilio/`; an unauthenticated POST here returns routing
+  TwiML and nothing else. `@fastify/formbody` is registered by us, **awaited**, inside `bootTac`, because
+  TAC's own registration is guarded by `hasContentTypeParser` and a second one throws
+  `FST_ERR_CTP_ALREADY_PRESENT`.
+- **`server/twilio/voice-token.ts` + `server/http/routes-handoff.ts`** — the minter and the two
+  endpoints (`POST /api/voice/token`, `GET /api/handoff/context`). The split is forced: `twilio` may only
+  be imported from `server/twilio/`, so minting lives there and is **injected** into the HTTP module from
+  `server/index.ts`'s TAC-boot success path. A credential-free process therefore never loads `twilio` at
+  all — the same property `bootTac`'s dynamic import already buys.
+- **`server/handoff/snapshots.ts`** — the bounded screen-pop store, importing nothing but `shared/`.
+  Also forced: `voice.ts` writes it and `server/http/` reads it, so a vendor import here would drag TAC
+  into the HTTP layer at module load.
+- **`web/src/app/softphone/`** — one client island that dynamically imports `@twilio/voice-sdk`,
+  registers as the identity in `shared/handoff.ts`, rings, screen-pops and answers.
+- **`scripts/studio-handoff-flow.ts` + `scripts/seed-studio-flow.ts`** — the flow as a **committed
+  definition**, and a seeder (`pnpm seed:studio`) that backs the live revision up to disk, publishes,
+  then re-reads the published flow and dies unless it dials the identity from `shared/handoff.ts`.
 
-**The Studio side, and the prerequisite nobody had noticed.** One published flow on the account,
-`FW3ffc6d00f903d291b16cbd134cc474f5` "TAC Payment Reminder Handoff", `incomingCall → ring_browser_agent`.
-It will accept the returning call, so the transfer mechanically works — but it contains **no
-`HandoffData` reference at all**, so every bit of TAC context is dropped. The fix is one `set-variables`
-widget using `{{trigger.call.HandoffData}}` typed **`json_object`** (that type is what un-double-encodes
-it), after which `flow.variables.handoffData.*` works. Note the digital path is different and NOT
-interchangeable: `{{trigger.request.parameters.HandoffData}}`, already a Map.
+### Seven corrections to the design, each found by reading the code it describes
 
-**And `ring_browser_agent` dials `client:browser-agent`, which nothing is registered as** — so without a
-browser softphone the transfer rings nothing for 30 s and times out. That is why the softphone is in
-scope: Voice JS SDK client, a token route with a `VoiceGrant`, a TwiML App SID, and a page to host it.
+1. **C1 — the token route cannot live in `server/http/`.** The spec put `AccessToken` + `VoiceGrant`
+   there; `tests/architecture.test.ts` allows the `twilio` package only under `server/twilio/` or
+   `scripts/`, so that file would have failed the build. Hence the mint-here-inject-there split.
+2. **C2 — snapshot at DRAIN time, not inside the tool.** `run-turn.ts` appends the user+assistant pair
+   **at the end of `runTurn`, before `done` resolves**, so at tool-execution time history contains
+   neither the caller's "I want a human" line — the single most important line on the screen pop — nor
+   the farewell. The snapshot is still taken before the socket closes, because the socket closes
+   *because* we send the frame.
+3. **C3 — the snapshot store must be TAC-free.** Read from `server/handoff/snapshots.ts`'s intended
+   callers: putting the store beside the tool would have made `server/http/` load the vendor.
+4. **C4 — `handleVoiceDisconnect` must NOT clear the snapshot, only the intent.** The spec said to clear
+   both "for the same reason it already clears the `end_call` intent". Wrong for the snapshot:
+   `webSocketDisconnected` fires seconds **before** a human presses answer, so clearing there would make
+   the screen pop reliably empty on the one path it exists for. Lifetime is bounded by eviction instead.
+5. **C5 — `handoff` is named in the VOICE prompt only.** TAC's tool does branch internally and its
+   digital branch works, but it sets the conversation `INACTIVE` and clears its status callbacks
+   **before** the POST that can fail, and TAC contains no `'ACTIVE'` write and no inverse for
+   `clearStatusCallbacks`. On SMS that leaves a customer whose next text reaches nothing, with no
+   downstream repair. Sending the frame is what mitigates that failure path on voice; nothing mitigates
+   it on SMS. Reversing this is a one-line prompt change.
+6. **C6 — `buildHandoffPayload` does not throw on a null profile.** `dist/index.js:6410` is
+   `profileId: session.profileId ?? ""`, so an unrecognised caller yields an empty-string `profileId`
+   rather than an exception. No profile guard was needed and handoff works for a first-time caller.
+   Recorded because it changes an error path we would otherwise have written.
+7. **C7 — the Studio flow never receives `HandoffData`, so the `json_object` widget the spec called
+   "the load-bearing detail" would have resolved to nothing.** That detail is correct *when Studio
+   itself is the `<Connect action>` URL* — ConversationRelay POSTs `HandoffData` in the body and Studio
+   surfaces it on the trigger. But §2.1 requires us to own the action route, so Studio is reached by a
+   **`<Redirect>`, which starts a fresh incoming-call execution**, and the Incoming Call trigger exposes
+   a **fixed** variable list (the Call-resource fields: `From`, `To`, `CallSid`, `CallStatus`, geo).
+   Arbitrary query parameters are not among them; passing custom data in is documented for the REST API
+   trigger (`{{flow.data.X}}`) and for returning to a TwiML Redirect widget (`{{widgets.NAME.VAR}}`),
+   neither of which is a redirect into a fresh voice trigger. So `{{trigger.call.HandoffData}}` would
+   have silently resolved to nothing. **The flow therefore needs no handoff data at all** and reduces to
+   `Trigger(incomingCall) → connect-call-to client:<identity>`; the reason and transcript reach the
+   browser through `GET /api/handoff/context`, correlated on the caller's number — which is the
+   mechanism the design already needed anyway, because `connect-call-to` cannot pass parameters to a
+   client. Our action route has the parsed `HandoffData` in the POST body; it is what decides to route
+   at all.
 
-**Other decided-but-unbuilt points:** two handoff tools rather than one (SMS completes synchronously
-inside `execute`; voice must park intent and let the channel send the frame after streaming), and a
-policy for `end_call` versus handoff, which both terminate in a `{"type":"end"}` frame on the same
-socket and are undefined behaviour together.
+### The design's six corrections to THIS FILE, and its two hazards
 
-**Free pre-flight before spending a call on it:** the documented `<Connect action>` callback delivers
-handoff data as the POST parameter **`HandoffData`** with `SessionStatus: ended` and the call still
-`in-progress`. Note TAC's own callback schema has no `HandoffData` field and would strip it, which is
-precisely why TAC repoints the action at Studio instead of parsing it.
+Folded in here because this file is the entry point and the spec is not.
+
+1. **The "coexist" claim at line ~205 is refuted** — see the ⚠ block up there. `/conversation-relay-callback`
+   is TAC's own route, answers `text/plain "OK"` and never TwiML, and its payload schema has no
+   `HandoffData` field so it **strips** it. Coexistence required a new path we own. Also
+   `VOICE_TWIML_OPTIONS` is now a function, `buildVoiceTwimlOptions`.
+2. **The five-layer precedence is real and runtime-proven**, not merely read: `onInboundCallTwiml` →
+   **`defaultTwimlOptions`** → host per-call → **Studio** → derived default. `actionUrl` is resolved once
+   up front, before the three `overlayFields` calls, and `overlayFields` explicitly skips it. Layers 1
+   and 3 are unreachable here (never registered; `TACServer` calls `handleIncomingCall(twimlRequest)`
+   with no options, so `host` is always undefined inbound), so **nothing sits between
+   `defaultTwimlOptions` and Studio**. Driven both ways against the installed `VoiceChannel`: with the
+   pin, our path; without it, Studio's `webhooks.twilio.com/…/Flows/…?Trigger=incomingCall`.
+   ⚠ And `actionUrl: ''` **silently deletes the attribute and does not throw** — `TwiMLOptionsSchema`
+   declares `z.string().min(1)` but `VoiceChannelConfig` is a plain interface, so that validation never
+   runs for `defaultTwimlOptions`; `as const` is no barrier either. Hence the boot-time assertion.
+3. **ONE handoff tool, not two.** This file recorded "two tools, because SMS completes synchronously
+   and voice must park" as a decision; it is a description of TAC's *existing* behaviour —
+   `if (session.channel === 'voice')` inside TAC's own tool. The voice branch cannot fail (it builds the
+   frame and assigns it); the digital branch POSTs the Studio Executions URL and can return
+   `handoff_failed`. The two wire shapes are **not** interchangeable: voice uses lowercase `handoffData`
+   as a JSON *string*, digital capital-`HandoffData` as a nested *object* inside `Parameters`.
+4. **"Write the frame ourselves" was the wrong instinct.** `session.pendingHandoffData` is a
+   **complete frame**, not raw data. The double encoding is the documented contract, not a defect.
+   What TAC omits is only the drain: its five lines live inside `sendResponse` (`dist/index.js:5245-5254`)
+   and `sendStreamingResponse` has **zero** references to the field.
+5. **Landmine 3 is narrower than this file recorded.** TAC's own source says
+   *"Downstream (Studio/Flex) flips it back to ACTIVE on pickup and CLOSED on hangup"* — so on the
+   **success** path the status is reverted, just not by TAC. The unreverted-broken-conversation outcome
+   is specific to the **failure** path, which is exactly the silently-unsent-frame case this task
+   eliminates. Sending the frame is not merely the feature; it is the mitigation. The `statusCallbacks`
+   half has no downstream repair, and that is the open measurement at the end of this section.
+6. **No TwiML Application is required, and `twilio` was not installed.** A TwiML App is needed only for
+   **outgoing**; inbound to a browser client needs `incomingAllow: true` and nothing else, so the
+   softphone needed **zero account mutations**. `twilio` existed only as TAC's unhoisted transitive dep,
+   and TAC's dist contains zero `AccessToken` references, so it was declared directly. Token minting
+   needs no API permission at all — it is a locally signed JWT and the key carries `signing`.
+
+**Hazard 1, designed around: the client identity must not contain a hyphen.** The Voice JS SDK documents
+the token identity as *"may only contain alpha-numeric and underscore characters"*. The one published
+flow on the account dialled a hyphenated client, which is outside that set and undocumented either way.
+`CLIENT_IDENTITY` in `shared/handoff.ts` is hyphen-free and is read by the token route, the flow
+definition and the page. **Answered live at T14b.7:** a hyphen-free identity registers fine.
+⚠ The pre-existing flow's hyphen means the softphone **could never have rung** before this change.
+
+**Hazard 2, designed around: the softphone cannot correlate on `CallSid`.** Studio's `connect-call-to`
+widget exposes only `caller_id`, `noun`, `timeout`, `to` — it cannot pass parameters to a client — and
+dialling a client mints a **new call leg with a new CallSid**, so `call.parameters.CallSid` in the
+browser can never match the inbound call. Correlation is therefore the caller's number (which Studio
+preserves via `caller_id`) with a most-recent fallback, and the response **states which match it made**
+(`exact` | `caller` | `recent` | `none`). Only the direct-`<Dial>` path can be `exact`, via
+`<Parameter name="conversationId">` surfaced as `call.customParameters` — which also means **with a flow
+SID set the screen pop can only ever be `caller` or `recent`**; unset it to exercise `exact`.
+
+### Two bugs the whole-feature review caught that the test suite could not
+
+Both are patterns, not one-offs.
+
+1. **Two `{type:'end'}` frames on one socket, on a reachable path.** TAC's `sendResponse` drains
+   `pendingHandoffData` **itself** (`dist/index.js:5245-5254`), and the empty-answer fallback called
+   `sendResponse` *above* the handoff block. So a zero-token transfer — reachable, since `maxSteps` is 3
+   and search + answer + handoff exhausts it — had TAC send the parked frame and then us send a second
+   bare one, while the obs event reported `hadPayload: false` for a transfer that carried one.
+   **Why it was invisible: `recordingSender` in `tests/voice.test.ts` did not emulate the vendor's
+   drain.** A test fake that diverges from the vendor hides the bug the feature is built on. The fake now
+   drains, and a new test pins exactly-one-frame — proven red against the old ordering.
+2. **`GET /api/handoff/context` with no query parameters returned the newest snapshot** — a full
+   verbatim call transcript, 200 OK, unauthenticated, on the path Traefik and ngrok route **publicly**.
+   It now requires at least one correlator, and the guard turned out to be one character wide as first
+   specified: `?from=` is `''`, which is `!= null`. Blank now counts as absent.
+
+**And a trailing slash in `TWILIO_VOICE_PUBLIC_DOMAIN` would have 404'd every transfer.** It would have
+produced `https://host//api/voice/relay-action`, silently. `server/config.ts` rejects a *scheme* in that
+variable and says nothing about a trailing slash, so `buildVoiceTwimlOptions` now strips it.
+
+### The live call — measured, one call, 2026-09-15
+
+Four turns, then a transfer. From the obs bus:
+
+```
+caller   "Thank you. Can I speak to a person?"
+model    handoff{ reason: "caller asked to speak to a person" }
+handoff  frameSent: true   hadPayload: true   farewell: "I'm putting you through now."
+action   route: "studio"   reasonCode: "live-agent-handoff"
+         sessionStatus: "ended"   sessionDurationSeconds: "34"
+softphone rang, was answered, screen pop rendered
+```
+
+`hadPayload: true` is the assertion that matters: **the real parked frame went out**, not the bare
+`{type:'end'}` fallback — and the 28-character farewell streamed in full before it, which is the whole
+reason the drain sits after `sendStreamingResponse` resolves.
+
+```
+handoff tool execution            553 ms   (two Conversation Orchestrator calls plus the park)
+per-turn ttft         2472 / 2411 / 801 / 2257 ms
+per-turn total        2712 / 2826 / 1156 / 2484 ms
+one barge-in handled            281 ms
+tool.selection        "5 of 5 tools resolved", every turn
+```
+
+`5 of 5` is what proves `handoff` **resolved** rather than landing in `unavailable` — the T14 lesson that
+a tool in the catalog is not a tool being offered, checked at the layer where that failure lives.
+
+**One demo observation, not a bug.** The caller also asked *"Can you send me a text message with that
+information?"* and the agent could not comply: there is deliberately no `send_message` tool. The three
+reasons are in `server/twilio/builtin-tools.ts`'s header — the model already speaks or sends its own
+answer, TAC's `sendResponse` throws **synchronously** on a closed socket so a bare `.catch()` misses it,
+and the literal string is the unknown-tool fixture in `tests/tools.test.ts`. Worth knowing before a demo
+script invites the question.
+
+### Honest limits, carried from the design's §10 and still true
+
+- **Screen-pop correlation is caller-number plus most-recent.** Two simultaneous calls from one number
+  would cross. Acceptable for a demo; stated rather than hidden.
+- **The transcript is a new PII surface, and it is deliberately unscrubbed.** `obs/pii.ts` scrubs log
+  lines and obs payloads; it does not touch this route's body and must not — the human agent needs the
+  real words the caller said. The caller's number is masked for display; the transcript is verbatim by
+  necessity.
+- **One identity allows 10 concurrent registrations**; the 11th evicts the oldest. Two demo tabs are
+  fine, eleven are not.
+- **The repo's 7-day supply-chain guard is not enforced.** pnpm 11.8 does not read
+  `minimum-release-age` from `.npmrc`, and `pnpm-workspace.yaml` has no `minimumReleaseAge`. Reported,
+  not policed: `@twilio/voice-sdk` is pinned by hand to a version older than seven days, and `twilio` is
+  pinned to an exact 5.x to dedupe with TAC's copy rather than pull the 6.x line as a second install.
+- **Twilio ships no blessed template for this.** Its own handoff Studio template routes to Flex, not to
+  a browser client.
+
+### What is still unmeasured — an open measurement, not a caveat
+
+**Whether Conversation Memory extraction still fires for a handed-off conversation.** TAC's handoff
+clears the conversation's status callbacks, and `clearStatusCallbacks` has **no inverse anywhere in
+TAC** — no `'ACTIVE'` write, no re-registration. So a handed-off conversation stops calling `/webhook`
+permanently, which is correct for a transferred call, and may therefore never produce the
+`CONVERSATION_UPDATED`/CLOSED event that extraction runs off. Extraction is post-conversation only (see
+T14), so if the CLOSED transition never arrives, nothing is extracted and T14's memory story quietly
+loses every handed-off conversation. Nobody has looked. The cheap check is the T14 one: hand a call off,
+wait past the configured close timeout, then run `scripts/verify-memory.ts` against the store baseline.
 
 ## Gaps and honest limits
 
@@ -1176,14 +1428,16 @@ precisely why TAC repoints the action at Studio instead of parsing it.
   this is no longer trivially true and re-running it is the one outstanding check that costs nothing.**
   Two cases, and the second is the real one: credentials ABSENT (the dynamic import in `index.ts` never
   evaluates) and credentials PRESENT (the import rejects, the try/catch degrades, `/bench` still serves).
-- **BOTH channels are verified live, now including memory ACROSS conversations.** Ten SMS turns and
-  four calls (20 voice turns total) have round-tripped, including memory across a conversation
-  boundary with 0 tool calls, barge-in on real audio, the not-found tool branch, an agent-initiated
-  hangup, and `search_knowledge` against a real Knowledge Base on both channels.
-  What remains unexercised: the **45 s shutdown timeout** (needs a SIGTERM *during* a call), a **`/ws`
-  signature rejection** (invisible by construction), and **Studio handoff** (T14b). Everything else in
-  T14 — memory across conversations, the profile cache, `search_knowledge` on both channels, the voice
-  verbosity fix — has been measured against real traffic.
+- **BOTH channels are verified live, now including memory ACROSS conversations and a handoff to a
+  human.** Ten SMS turns and five calls (24 voice turns total) have round-tripped, including memory
+  across a conversation boundary with 0 tool calls, barge-in on real audio, the not-found tool branch,
+  an agent-initiated hangup, `search_knowledge` against a real Knowledge Base on both channels, and — at
+  T14b — a caller transferred to a browser softphone that a person answered, with the screen pop
+  rendered. What remains unexercised: the **45 s shutdown timeout** (needs a SIGTERM *during* a call) and
+  a **`/ws` signature rejection** (invisible by construction). **Studio handoff is no longer on that
+  list**, and it was right up to T14b. What T14b left open is a measurement rather than a path: whether
+  Conversation Memory extraction still fires for a handed-off conversation, whose status callbacks are
+  cleared with no inverse anywhere in TAC. See the end of the T14b section.
 - **The demo's memory story needs TWO conversations and a five-minute gap, and that is a product fact,
   not a limitation to engineer around.** Extraction is post-conversation only. A demo script that texts
   once and expects the agent to remember will fail, correctly. Either seed a profile beforehand or
@@ -1194,10 +1448,15 @@ precisely why TAC repoints the action at Studio instead of parsing it.
   projects communications down and drops `recipients` so an address cannot reach the model through a
   tool result, and a test asserts it; the store itself is Twilio-side and out of our control.
 - `docker-compose.yml` for the app does not exist yet (T15). The Langfuse compose does.
-- Carried Minor review findings, for the final whole-branch review: a duplicated prose block across
+- Carried Minor review findings, for a final whole-branch review: a duplicated prose block across
   the two default prompts; `log.warn` outside the never-rejects guard in `prompt/langfuse.ts`;
   `telemetryLink: unknown | null` collapsing to `unknown`; `verify-tools.ts` no longer reproducing
-  the mixed-partition case on demand.
+  the mixed-partition case on demand. **T14b's own whole-feature review is done** — one session, four
+  Important and six Minor, all ten fixed in a single commit; the two bugs worth remembering are recorded
+  in the T14b section. Two Minors were accepted as-is there: `isTacToolName('handoff')` is a tautology
+  given the line above it, and `tests/shared-purity.test.ts`'s `startsWith` has no path-segment boundary
+  (so `/apifoo` counts as under `/api`) — which matches its own sibling assertion, making a change a
+  consistency regression rather than a fix.
 
 ## Conventions worth not breaking
 
@@ -1209,10 +1468,12 @@ precisely why TAC repoints the action at Studio instead of parsing it.
   `process.env` reads; keep it that way. (`logging.ts` and `obs/instrumentation.ts` are pre-existing
   exceptions — the pino instance and the `--import` preload both run before config could load.)
 - **`shared/` is data.** Compiled by both projects, so no Node global and no DOM global.
-- **Vendor boundaries are tested.** Only `server/twilio/` may import TAC; only
-  `agent/model/openai.ts` may import `ai` (plus `obs/instrumentation.ts` for `registerTelemetry`
-  ONLY, itself asserted); only `agent/prompt/langfuse.ts` may import `@langfuse/client`. Prove a
-  guard bites before trusting it — every rule was validated by deliberately breaking it.
+- **Vendor boundaries are tested.** Only `server/twilio/` may import TAC — and, since T14b, the
+  `twilio` package under the same rule, which is why token minting lives there and is injected into
+  `server/http/`; only `agent/model/openai.ts` may import `ai` (plus `obs/instrumentation.ts` for
+  `registerTelemetry` ONLY, itself asserted); only `agent/prompt/langfuse.ts` may import
+  `@langfuse/client`. Prove a guard bites before trusting it — every rule was validated by deliberately
+  breaking it.
 - **No `console.*`** anywhere under `server/` or `web/src/` — it bypasses the PII scrubber.
   `scripts/` is exempt.
 - **Verify at the layer where the failure can live.** Both T11 bugs were invisible to the tests written
