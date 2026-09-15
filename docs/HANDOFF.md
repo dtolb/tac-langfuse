@@ -68,6 +68,13 @@ Memory with **0 tool calls**. Telemetry export from inside the container is conf
 ⚠ **One thing T15 still has not exercised:** the **45 s TAC shutdown drain**, which needs a SIGTERM
 *during* a call. The signal path is proven; the drain is not. See the shutdown bullet in honest limits.
 
+⚠ **TOP OPEN ITEM (2026-09-15): the Conversation Memory block is uncapped and is now 52% of the system
+prompt** — 696 chars at T14, **4412 today**. It costs the cold first turn of every conversation (6214 ms
+measured) and it is accreting self-contradictory duplicates, so it degrades answers as well as latency.
+Nothing is broken; nothing is capped either. See **"Latency, investigated 2026-09-15"**, which carries the
+attributed waterfall, the ranked levers, and the two queries for proving a fix. **Do not baseline latency
+off the T15 call above — it landed in a 2–5× upstream slow window.**
+
 ```
 pnpm stack:up     preflight, then docker compose up -d --build   (NOT `pnpm up` — that is `pnpm update`)
 pnpm stack:down   docker compose down
@@ -1704,14 +1711,211 @@ is dropped). `prompt.fetch`, `prompt.compose`, `memory.recall`, `tools.resolve`,
   no call in flight says nothing about it.
 - **A `/ws` signature rejection**, invisible by construction.
 
+## Latency, investigated 2026-09-15 — the deferral has expired and the cause has MOVED
+
+Dan reported voice latency as "kinda high" after a round of testing. Investigated against ClickHouse
+`events_full`, since the read API is disabled (see the box above). **T9's framework conclusion still
+holds and is no longer the useful explanation.** Our own code costs 84 ms. What dominates is the
+**first** model round-trip of each conversation, against a system prompt that Conversation Memory has
+grown **88% in one day** — a cause that did not exist at T9.
+
+### The instrument this needed, and nothing here had been reading it
+
+The AI SDK writes a **native time-to-first-chunk attribute on every `GENERATION`, in SECONDS**:
+
+```bash
+docker exec scaffold-clickhouse-1 clickhouse-client --user clickhouse --password clickhouse \
+  --query "SELECT formatDateTime(start_time,'%H:%i:%S') AS at,
+             dateDiff('millisecond',start_time,end_time) AS span_ms,
+             arrayElement(metadata_values, indexOf(metadata_names,
+               'attributes.gen_ai.client.operation.time_to_first_chunk')) AS model_ttft_s,
+             usage_details['input'] AS inp, usage_details['input_cached_tokens'] AS cached
+           FROM default.events_full WHERE type='GENERATION'
+             AND start_time > now() - INTERVAL 2 HOUR ORDER BY start_time"
+```
+
+Siblings on the same span: `attributes.gen_ai.client.operation.duration` and
+`…time_per_output_chunk`. Across 33 generations `model_ttft_s` accounts for the generation span almost
+exactly; the residual is streaming the remaining output, not overhead. **This turns "is it us or is it
+the model?" into one query** — which is why nothing below is inferred.
+
+### The 6214 ms turn, fully attributed — no residual
+
+Worst turn of the most recent call (trace `1c835f9d…`, turn span `73cc06285891f6a0`, 19:33:21 UTC).
+Every number is a span timestamp, and they close to within 1 ms of `turn.ttft_ms`:
+
+```
+21.438  turn.voice starts                                          t0
+21.522  llm.stream starts                     +   84 ms   preamble: prompt.fetch 41 ∥ memory.recall 79
+25.360  generation 1 first chunk              + 3838 ms   ← cold cache, 2520 input tokens
+26.001  tool-call args finish → search_knowledge starts  +  641 ms   streaming 42 output tokens
+27.019  search_knowledge returns              + 1018 ms   Twilio knowledge base
+27.026  generation 2 starts                   +    7 ms
+27.651  generation 2 FIRST CHUNK → first audio to caller  +  625 ms
+        ────────────────────────────────────────────────────────────
+        turn.ttft_ms = 6214 ms                  84 + 3838 + 641 + 1018 + 7 + 625 = 6213
+```
+
+Note `search_knowledge` starts at 26.001 while generation 1's span runs to 26.267 — the tool fires as
+soon as its arguments are parsed, so the two overlap and the span durations do **not** sum to the turn.
+Read the timestamps, not the durations.
+
+### Four causes, in order of what they cost
+
+**1. Model time-to-first-chunk is the entire latency. `runTurn` is not the place to look.** Preamble
+0–84 ms across every turn measured. Tools: `lookup_order` 1 ms, `search_knowledge` 417–1018 ms,
+`handoff` 266 ms. This is T9's conclusion re-confirmed with a better instrument.
+
+**2. The memory block is now LARGER than the prompt we wrote, and it grows per call.**
+
+**The longest baseline available is in this file.** The T14 status block above records
+`memory.recall = 1 observation + 1 summary + 1 trait group → 696 chars` on 2026-09-14. One day later it
+is **4412 chars — 6.3×**. (That T14 figure was an SMS conversation and the file does not record its
+caller, so treat 6.3× as a scale reference rather than a same-caller series. The within-day series below
+*is* same-caller and is the rigorous one.)
+
+`memory.recall` `chars`, by conversation, 2026-09-15 (all the same caller, `+1919…`):
+
+| UTC | channel | memory chars |
+|---|---|---|
+| 14:01 | voice | 2341 |
+| 15:47 | bench | 0 — the bench sends no memory payload |
+| 15:52 | sms | 1837 |
+| 17:56 | sms **and** voice | 3303 — identical, so recall is caller-scoped, not channel-scoped |
+| 19:33 | voice | **4412** |
+
+Not strictly monotonic — 15:52 dips below 14:01, so Orchestrator **rewrites** rather than only
+appending — but net **+88%** in a day. Prompt budget on generation 1 of the 19:33 call:
+
+| component | chars | share |
+|---|---|---|
+| base voice prompt (Langfuse v6) | 4087 | 33% |
+| **injected memory** | **4412** | **35%** |
+| tool definitions (5) | 4035 | 32% |
+
+⚠ Those are `chars ÷ 4` proportions. The tokenizer reported **2520** input tokens where `chars ÷ 4`
+predicts ~3132, so it overestimates by ~24% — **trust the shares, not the absolute token counts.**
+
+`server/twilio/memory-compose.ts` **caps nothing.** `RECALL_SECTIONS` takes whatever Recall returns and
+`MemoryPromptBuilder.build` renders all of it; the only cap in that file is `MAX_CACHED_PROFILES`, which
+bounds the profile *cache* and is unrelated to prompt size. Any bound has to come from the Orchestrator
+capture rules or be added here.
+
+The content is also degrading, which is a **quality** problem before it is a latency one — the model is
+reading contradictory versions of one fact. Verbatim from the 19:33 prompt:
+
+> "Has a previously placed order that was shipped and includes one desk lamp. Has a last order with the
+> order number A4721. Previously has a previously placed order that was shipped and includes one desk
+> lamp. Has a last order with the order number 4721."
+
+Note `4721` against `A4721` inside a single observation, and four Past Conversation Summaries that all
+recount the same return-policy call.
+
+**Where the cost actually lands: the FIRST turn of every conversation.** Turns 2+ report
+`input_cached_tokens` of 1536–2560, so OpenAI's prompt cache absorbs the bloat and they run 0.51–0.71 s.
+Turn 1 pays it cold. That is precisely the turn a caller forms an impression on.
+
+**3. A ~2-hour upstream slow patch — and it is the window T15 closed on.** Model TTFT by window:
+
+| UTC window | model TTFT per generation | verdict |
+|---|---|---|
+| 14:01 | 1.61, 0.74, 1.02, 0.59, 0.80, 0.74, 0.70 | healthy |
+| 15:47–15:55 | 2.00, 0.80, 1.25, 1.21, 0.54, 0.40, 0.77, 0.82, 0.69, 0.58 | healthy |
+| **17:56–17:57** | **3.71, 4.74, 2.07, 2.26, 4.39, 4.74, 1.28, 2.90, 2.79** | **2–5× worse** |
+| 19:33–19:34 | 3.83, 0.63, 0.58, 0.51, 0.57, 0.71, 0.55 | cold first turn, then healthy |
+
+Not us, and provably so on three counts: container `ef371f7fbd13` served **both** the fast 15:52 call
+and the slow 17:56 call, so it is not container cold start; prompt v6 and `model_parameters` were
+identical throughout; and the **tool-free** SMS turn at 17:56:11 took **3835 ms** where tool-free turns
+elsewhere took 586–801 ms, which isolates it from tool-cycle structure entirely.
+
+⚠ **Consequence for this document: the T15 close-out call (`a01d08e1…`, 17:56:46) landed inside that
+window.** Its `turn.ttft_ms` of 6934 / 7723 / 6850 / 6047 ms are the worst on record here — T13 measured
+2405 → 463 ms and T14b 2472 / 2411 / 801 / 2257 ms. **Do not quote the T15 call as a latency baseline;
+it is an upstream-variance sample.** It remains valid for everything T15 actually claimed (routing,
+`/ws` upgrade, trace grouping, handoff) — none of which is timing-dependent.
+
+**4. A tool turn's TTFT structurally contains the whole tool cycle.** Tool-free turn **586 ms**; tool
+turns 1282–1433 ms at healthy model speed. Nothing is spoken while a tool runs. A design choice, not a
+defect — and the reason a policy question always feels slower than a chatty one.
+
+### Untried lever: reasoning effort is never sent
+
+`model_parameters` is `{}` on **all 33** generations. `openai.ts`'s `stream()` has no `providerOptions`,
+and `PromptConfigSchema` (`server/agent/prompt/port.ts`) admits only `model`, `temperature`, `maxSteps`,
+`tools`, `toolChoice`. `gpt-5.4-mini` is a reasoning model, so it runs at the provider default effort.
+
+**This is a hypothesis, not a measurement.** No reasoning-token attribute exists on the span at all —
+`gen_ai.usage.*` carries only `input_tokens`, `output_tokens`, `cache_read.input_tokens`,
+`cache_creation.input_tokens` — so the traces **cannot** tell you whether reasoning is costing time.
+Wiring `providerOptions` would be needed to find out, and that is a code change plus a schema widening.
+
+### The levers, best first
+
+1. **Cap or dedupe the memory block.** Largest, entirely ours, actively worsening, and it improves
+   answer quality as well as TTFT. Either bound observations/summaries in `memory-compose.ts`, or fix
+   the Orchestrator capture rules so it stops writing near-duplicates — probably both, since the two
+   fix different halves (prompt size vs. the contradictions).
+2. **Prune tool definitions** — 4035 chars for five tools, paid on every turn:
+   `search_knowledge` 1244, `handoff` 967, `end_call` 773, `get_store_hours` 529, `lookup_order` 512.
+   ⚠ `search_knowledge`'s description is **load-bearing** — see the T14 section on why score cannot gate
+   it. Trim it with that constraint in hand, or not at all.
+3. **Try `reasoning_effort: 'low'` for voice.** Needs the `providerOptions` path built first.
+4. **Speak a filler while a tool runs**, if tool turns should feel like tool-free turns.
+
+### How to prove a fix worked — the two queries, so the next session does not rebuild them
+
+**Memory-block size per conversation.** This is the number a cap has to move. `chars` is published by
+`memory-compose.ts` onto its own `memory.recall` obs event, so it needs no code change to read:
+
+```bash
+docker exec scaffold-clickhouse-1 clickhouse-client --user clickhouse --password clickhouse \
+  --query "SELECT substring(trace_id,1,8) AS trace, formatDateTime(min(start_time),'%H:%i:%S') AS at,
+             any(output) AS memory_chars
+           FROM default.events_full WHERE name='memory.recall'
+             AND start_time > now() - INTERVAL 24 HOUR
+           GROUP BY trace_id ORDER BY at"
+```
+
+**The prompt budget, split into its three parts.** Pass the `span_id` of the first `GENERATION` of the
+conversation. This is what produced the 33 / 35 / 32 % table:
+
+```bash
+docker exec scaffold-clickhouse-1 clickhouse-client --user clickhouse --password clickhouse \
+  --query "SELECT input FROM default.events_full WHERE span_id='<span_id>' FORMAT TSVRaw" > /tmp/gen1.json
+python3 -c "
+import json; d=json.load(open('/tmp/gen1.json'))
+s=[m for m in d['messages'] if m['role']=='system'][0]['content']
+i=s.find('# Customer Context'); base,mem=s[:i],s[i:]; tools=json.dumps(d['tools'])
+for n,v in (('base prompt',base),('memory',mem),('tools',tools)):
+    print(f'{n:<14}{len(v):>6} chars  {100*len(v)/(len(base)+len(mem)+len(tools)):>4.0f}%')
+"
+```
+
+⚠ **Read `input` from `events_full`, not `events_core`** — `events_core` carries the same column but the
+full serialised request is what this needs, and it is the one place the *actual* prompt the model saw is
+recoverable. It includes the PII the honest-limits section warns about.
+
+**Which process produced a trace** — `resourceAttributes.host.name` is a **docker hash** for a container
+run and the **laptop hostname** for a `pnpm dev` run. This is how container cold start was ruled out
+above (`ef371f7fbd13` served both a fast and a slow call), and it is the fastest way to tell whether a
+trace came from the stack or from a host process you forgot was running:
+
+```bash
+docker exec scaffold-clickhouse-1 clickhouse-client --user clickhouse --password clickhouse \
+  --query "SELECT DISTINCT arrayElement(metadata_values,
+             indexOf(metadata_names,'resourceAttributes.host.name')) AS host
+           FROM default.events_full WHERE start_time > now() - INTERVAL 24 HOUR"
+```
+
 ## Gaps and honest limits
 
-- **Latency is deferred by decision, not oversight.** Measured at T9: `turn.ttft_ms` **3124 ms**,
-  `turn.total_ms` 3582 ms, preamble (prompt fetch + recall + compose + resolve) only **46 ms**. The
-  waterfall attributes it to **two sequential model round-trips** (2.12s + 2.50s), so it is a
-  model/prompt/tool-shape question — `maxSteps`, whether both tools can resolve in one step, whether
-  a reasoning model suits voice — not something tunable inside `runTurn`. Dan's call: address it once
-  the full stack is wired. Compare to spike S1's 1112 ms only carefully; that was a single-step turn.
+- **Latency: no longer deferred, and now measured properly — see "Latency, investigated 2026-09-15"
+  above, which supersedes this bullet.** T9's finding (preamble 46 ms; cost is in sequential model
+  round-trips, not `runTurn`) was re-confirmed with the native `time_to_first_chunk` attribute. What T9
+  could not see is that the dominant term is now the **cold first turn** against a memory block that has
+  grown to 52% of the system prompt. Compare to spike S1's 1112 ms only carefully; that was a
+  single-step turn.
 - **`gpt-5.4-mini` is a reasoning model and silently ignores `temperature`.** The AI SDK warns twice
   per turn. `temperature` was therefore dropped from the compiled defaults, but **live Langfuse
   prompt v2 still sets `0.4`** — an operator edit, deliberately not policed in code.

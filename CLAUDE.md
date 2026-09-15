@@ -116,3 +116,20 @@ signature was validated against**.
 
 **Langfuse here is v4 in `events_only` mode, so its read API is DISABLED** — `GET /api/public/traces`
 returns 404 meaning *disabled*, not *no data*. Verify traces in ClickHouse `events_core`, or the UI.
+
+**Latency: read `attributes.gen_ai.client.operation.time_to_first_chunk` before theorising.** It is a
+native AI SDK attribute on every `GENERATION` in `events_full`, **in seconds**, and it accounts for the
+generation span almost exactly — so "is it us or is it the model?" is one query, not an investigation.
+Measured 2026-09-15 across 33 generations: the framework costs **84 ms**, and everything else is model
+time-to-first-chunk. Two things follow, both of which will mislead you otherwise:
+
+- **The memory block is now 52% of the system prompt and grows per call** (2341 → 4412 chars in a day;
+  `memory-compose.ts` caps nothing). It is absorbed by the prompt cache on turns 2+, so it costs almost
+  entirely the **first turn of each conversation** — which is the turn a caller judges.
+- **The T15 close-out call (17:56 UTC) landed in a 2–5× upstream slow window** and its 6.0–7.7 s TTFTs
+  are the worst on record. **Never quote it as a latency baseline.** Confirm any "it got slower" against
+  a tool-free turn, which is 586–801 ms when the model is healthy.
+
+Full waterfall, the per-component prompt budget, and the four ranked levers are in `docs/HANDOFF.md`
+→ "Latency, investigated 2026-09-15". Note `search_knowledge`'s long description is load-bearing (T14),
+so it is not free to trim.
