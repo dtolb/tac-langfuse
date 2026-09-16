@@ -166,6 +166,7 @@ that produce a green-looking stack and a silent phone call.
 | [**docs/HANDOFF.md**](docs/HANDOFF.md) | The deep record: what was built and *measured* task by task, where reality contradicted the plan, the latency waterfall, and the honest limits |
 | [**`.env.example`**](.env.example) | The real configuration documentation — every entry says what breaks when it is absent |
 | [**CLAUDE.md**](CLAUDE.md) | What an AI coding agent needs before changing anything here |
+| [**Published walkthrough**](https://pages-4296.twil.io/agent-scaffold-architecture) | Shareable version: clickable topology, a hop-by-hop turn anatomy, and the measured lessons about the agent framework and the telemetry. Source in `docs/pages/` |
 
 `docs/HANDOFF.md` is long, and that is the point: most of it is findings that cost real time to
 discover once.

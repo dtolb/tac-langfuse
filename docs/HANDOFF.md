@@ -31,6 +31,14 @@ There is a published walkthrough written for a human rather than an agent:
 does not know SMS works. Re-publish it before showing it to anyone, or treat this file as the only
 current source.
 
+**Current, and the one to share (published 2026-09-16):**
+<https://pages-4296.twil.io/agent-scaffold-architecture> — clickable topology, a 15-hop turn anatomy,
+the measured latency table, and the TAC + OpenTelemetry lessons as assumption-against-reality tables.
+Source and fragments in `docs/pages/`; rebuild by concatenating `.build/*.frag` in order and re-inlining
+the favicon. It is **public with no auth**, so it carries no SIDs, no phone numbers, no hostnames and no
+account-specific names. Its content came from THIS file, so this file stays authoritative; when a finding
+here changes, the page is stale until re-deployed with `pages deploy --file`.
+
 ## What this is
 
 A clonable starting point for customer-facing Twilio demos. Beyond the baseline (UI, agent, backend,

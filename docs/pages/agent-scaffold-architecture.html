@@ -1,0 +1,1514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice and SMS AI agent scaffold: architecture, turn anatomy, and what the traces proved</title>
+<meta name="description" content="How one channel-agnostic agent serves ConversationRelay, Conversation Orchestrator and a browser, what a single turn actually does, and the measured lessons from instrumenting it with OpenTelemetry.">
+    <link rel="icon" href="data:image/x-icon;base64,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vf/Hqc3/2sbf/+7l8f/59vr//fz9//bx+P/cyeP/uZXJ/5Jbrf+DQ6P/fTuh/306ov98OaT/fDmm/3s4p/97N6n/ejeq/no2rPp6Nq60eTWwb5JYY5iSV2XMkVZm/5BVZ/+QVGn/j1Rr/49TbP+OUm7/jlFv/45Rcv+gbYr/vZqv/+nd5f/59vj//v3+//n2+P/n2uT/zrTJ/66EqP+ZZJT/jE+H/4dIhP+GR4b/hkaH/4VGif+FRYv/hUWN/4pNk/+ZZKP/sIa5/9G51//p3uz/+vj7//7+/v/28fj/4NDm/6yCv/+PVar/fjyf/307of99OqL/fDmk/3w5pv97OKf/ezep/3o3qv97N6zMeTWumZNZYrqSV2PckVZk/5FWZv+QVWf/kFRp/49Ua/+PU2z/j1Nv/5Rbd/+3kKX/387Y//fy9f/+/f3/+fb4/+LT3v+/nrf/nmuT/5BWhv+LToL/iEqC/4dJg/+HSIT/hkeG/4ZGh/+FRon/hUWL/4VGjf+HSZH/jVGY/51rqf/Cosr/59rq//r4+//9/P3/8+31/9K73P+nebv/gkKg/348oP99O6H/fTqi/3w5pP98Oab/ezin/3s3qf96N6rdezetupNZYNKTWGHokldj/5FWZP+RVmb/kFVn/5BUaf+PVGv/k1ly/6Z2jP/Os8D/8+3w//z7/P/38/b/5tnh/7+etf+ldZf/l2CK/6NymP+rf6P/rYGm/6FwnP+TWo//iEqG/4hKiP+UXJX/oXCk/6uAr/+meKz/nGik/5FYnP+jdK7/wqLK/+ne7P/59vr/+/n8/+zi7/+/n83/k1ur/4FBoP9+PJ//fTuh/306ov98OaT/fDmm/3s4p/97OKnpezir0pNZXuWTWV/yklhh/5JXY/+RVmT/kVZm/5BVZ/+QVGn/mGJ3/7yYp//i0tn//v3+//79/v/r4Ob/zLHB/59sjP+YYof/pnaY/8apv//WwdL/2cXW/8aowf+oe6P/kFaM/5NakP+sgaz/yq7K/9nG2//Tu9X/vp3D/5tmo/+RWJz/nWup/9G51//u5fH//v3+//z6/P/Xwt//qXy7/4dJov9/PJ7/fjyf/307of99OqL/fDmk/3w5pv97OKfyezep5ZRaXfCTWV74k1lf/5JYYf+SV2P/kVZk/5FWZv+SWGr/oW+B/9K5w//u5un//v3+//r4+f/Wwcz/rYKb/5Naff+neZf/y7DC/+3j6v/38vb/9/L2//Do7v/Kr8b/qHqj/66Eq//QuM//8+zz//fz9//28fb/6N3p/76cwv+caKT/jVGY/7CGuf/ax9///fv9//79/v/m2uv/wqLO/49Vpv+AP53/fzye/348n/99O6H/fTqi/3w5pP98Oab4fDmo8JRbW/eUWlz7k1le/5NZX/+SWGH/kldj/5FWZP+YYXD/rYGP/+HR1//38vT//Pr7/+7l6v/EpbX/m2aC/5FWeP+ziqP/3s3Y//j19////////v7+//37/P/ax9f/upW0/8Ghvv/g0N///v3+///////+/v7/9fD2/9K61P+md6z/h0mR/5lko//Hqs3/8+31//37/f/x6vP/1b/c/5llrf+ERZ7/fz2c/388nv9+PJ//fTuh/306ov98OaT7fDmm95VbWfyUW1v+lFpc/5NZXv+TWV//klhh/5JXY/+eanb/uZOd/+zi5f/8+vv/+fb3/+DQ1/+1jaD/kFVz/5BVdf+3kaf/5Nbe//n3+P////////////79/v/fztv/waG8/8mtxf/k1+P//v7+////////////9/P3/9nE2v+rf6//hUaN/4pNk/+2kL3/5trp//r3+//49fn/49To/6V2tf+KTaH/gD6b/389nP9/PJ7/fjyf/307of99OqL+fDmk/JVcV/6VW1n/lFtb/5RaXP+TWV7/k1lf/5JYYf+kc33/w6Oq//Hq7P/+/v7/9vHz/9K5w/+rfpH/jlJu/45ScP+ug5r/1sDN//by9f///////v3+//r3+f/Uvc7/sYeo/7iSsf/ax9j//Pv8//7+/v/+/f7/8+zz/8mtyv+hcKT/hUWL/4VFjf+rf7L/2MTc//fz+P/8+/3/6uDt/6+GvP+PVqT/gD+Z/4A+m/9/PZz/fzye/348n/99O6H/fTqi/pZdVv+VXFf/lVtZ/5RbW/+UWlz/k1le/5NZX/+oeYH/yq6z//Tu8P/+/v7/9O7v/8mstv+mdoj/j1Ns/45Sbv+fa4X/t5Gm/9fCzv/j1d7/5dfg/9fD0f+4kq3/nGiP/6Bulf+8mbb/2sfY/+XX5P/g0N//0LjP/6yBrP+UXJX/hUaJ/4VFi/+kdar/zrXS//Xw9v/+/f7/7ubx/7eSwv+UXab/gT+X/4A/mf+APpv/fz2c/388nv9+PJ//fTuh/5ZeVP+WXVb/lVxX/5VbWf+UW1v/lFpc/5NZXv+rfoP/zrS4//Xw8f/+/v7/8uvt/8Ojrf+icYL/j1Rr/49TbP+SV3L/nGeB/7eRpf/GqLn/yq2//7WNp/+eao3/jE96/41Rfv+gbpX/uJOx/8qtxf/Cob7/roSr/5NakP+ISoj/hkaH/4VGif+gbqT/yKvL//Tu9f/+/v7/8erz/7yZxf+XYab/gUCW/4E/l/+AP5n/gD6b/389nP9/PJ7/fjyf/5deU/+WXlT/ll1W/5VcV/+VW1n/lFtb/5RaXP+sf4L/z7W4//Xw8f/+/v7/8uvt/8OjrP+jcoH/kFRp/49Ua/+RVm//mWN8/7GHnP+/na//wqK1/66Dnf+aZYf/jE94/4xPev+caI//sYio/8KivP+6lrX/qHqj/5BWjP+ISob/hkeG/4ZGh/+gb6P/yKvK//Tu9f/+/v7/8ery/72axP+XYqX/gkGU/4FAlv+BP5f/gD+Z/4A+m/9/PZz/fzye/5hfUf+XXlP/ll5U/5ZdVv+VXFf/lVtZ/5RbW/+qfH7/zLCy//Xv8P/+/v7/9O3v/8mrsv+mdoP/kFVn/5BUaf+daX3/s4qc/9G5xP/ezNX/387X/9G5x/+0jKT/mmWH/55qjf+4k63/1L7P/9/O2//ax9f/yq/G/6h7o/+TWo//h0iE/4ZHhv+kdaX/zbPP//Xw9v/+/f7/7+fx/7mUwP+WX6L/gkGT/4JBlP+BQJb/gT+X/4A/mf+APpv/fz2c/5hgUP6YX1H/l15T/5ZeVP+WXVb/lVxX/5VbWf+nd3f/xqep//Ps7P/+/v7/9vHy/9G4vf+sf4n/kVZm/5BVZ/+tgZD/0rnD//Tu8f/+/f7//fz9//j09v/Rucf/roSe/7SNpv/Xw9H/+vf5//79/v/9+/z/8Oju/8aowf+hcJz/h0mD/4dIhP+qfqr/18HX//fy9//9+/3/7OLt/7OLuf+TW57/g0KR/4JBk/+CQZT/gUCW/4E/l/+AP5n/gD6b/plhTvyYYFD+mF9R/5deU/+WXlT/ll1W/5VcV/+icG7/vZmZ/+7l5f/9+/v/+PX1/97Mz/+1jZX/k1lm/5Raav+5k5//49TZ//n29////////v7+//38/f/fztf/wqK0/8mtvv/k1t///v3+///////+/v7/9vL2/9nE1f+sgab/iEqC/4xPh/+1j7T/5Nbk//r3+v/69/r/5djm/6l9r/+OVJf/g0OP/4NCkf+CQZP/gkGU/4FAlv+BP5f+gD+Z/JlhTPeZYU77mGBQ/5hfUf+XXlP/ll5U/5ZdVv+daGT/somH/+XX1//49PT/+/r6/+3j5P/EpKn/nGhy/5Vcaf+3kZv/4tLX//n29/////////////79/f/dy9T/v52v/8aouf/j1N3/////////////////9/L2/9bA0f+rfqP/i06C/5lklP/Fp8P/8erx//z7/P/z7fP/2cXa/59tpP+KTZH/hESO/4NDj/+DQpH/gkGT/4JBlP+BQJb7gT+X95piS/CZYUz4mWFO/5hgUP+YX1H/l15T/5ZeVP+ZYVv/qHl1/9fCwf/x6ur//v39//n29v/Wv8L/rYGI/5hga/+vhI7/07vC//Do6//59vf/+fb3//Tu8P/RucT/sYec/7eQpf/Xws7/9vL1//n3+P/49ff/7ePq/8apv/+jcpj/kFaG/66DqP/YxNb/+/r7//79/v/q3+r/yKzJ/5VemP+GR4z/hESM/4REjv+DQ4//g0KR/4JBk/+CQZT4gUCW8JpjSeWaYkvymWFM/5lhTv+YYFD/mF9R/5deU/+WXlT/oGxm/8Skof/m2Nj///////79/f/p3d3/yq2x/6Fudv+fbHb/sYeQ/9O7wv/i09j/5Nbb/9K5w/+zipv/mWN8/5xngf+3kaX/1sDN/+TW3//fzdj/y7DC/6Z2mP+XYIr/nmuT/860yf/s4uv//v3+//38/f/cydv/somx/45Tj/+FRon/hUWL/4REjP+ERI7/g0OP/4NCkf+CQZPygkGU5ZtkSNKaY0rpmmJL/5lhTP+ZYU7/mGBQ/5hfUf+XXlP/m2Vc/7CEf//Uvbv/9vLy//39/f/28fH/49XW/76an/+oeYD/n2x2/6+Ejv+3kZz/uZSg/62BkP+daX3/kVZv/5JXcv+fa4X/roOa/7iSqP+ziqP/p3mX/5hih/+ldZf/v563/+fa5P/49Pf//Pr8//Dp8P/IqsX/nWma/4pMif+GRof/hUaJ/4VFi/+ERIz/hESO/4NDj/+DQ5HogkKT0pxlR7qbY0jdmmNJ/5piS/+ZYUz/mWFO/5hgUP+YX1H/mGBV/55qYf/Bn5v/5tnY//n29f/9/f3/9/P0/97Nzv++mp//oW52/5hga/+VXGn/lFpq/5BVZ/+QVGn/j1Rr/49TbP+OUm7/jlJw/5BVdf+RVnj/k1p9/59sjf+/nrX/4tPe//n2+P/+/f3/9vH1/9vI2P+xiKz/jFCI/4dJhf+GR4b/hkaH/4VGif+FRYv/hESM/4REjv+DQ4/cg0ORupxlRJmcZUfMm2NI/5pjSf+aYkv/mWFM/5lhTv+YYFD/mF9R/5hgVP+rfnb/yKqm/+7l5P/7+fn//fz8//fz8//j1NX/yq2x/62BiP+caHL/k1lm/5FWZv+QVWf/kFRp/49Ua/+PU2z/jlJu/5BVc/+bZoL/roKb/82ywv/m2eH/+fb4//79/v/59vj/59vk/7mUsv+bZpP/iEmB/4dJg/+HSIT/hkeG/4ZGh/+FRon/hUWL/4REjP+ERI7MhESQmJ1mRG+cZUW0m2RG+ptjSP6aY0n/mmJL/5lhTP+ZYU7/mGBQ/5hfUf+famD/r4R9/9K5tv/q397/+/n5//39/f/28fH/6d3d/9a/wv/EpKn/tY2V/6x/if+mdoP/o3KB/6Jxgv+mdoj/q36R/7WNoP/EpbX/18HN/+vg5v/38/b//v39//n2+P/k1d//xqe+/6Btlf+PVIX/iEp//4hJgf+HSYP/h0iE/4ZHhv+GRof/hUaJ/oVFi/qFRYy0hEWOb51nQkScZkOYnGVF7ptkRvybY0j/mmNJ/5piS/+ZYUz/mWFO/5hgUP+YX1H/nGdc/7KJgv/Subb/7uXl//n29f/9/f3//v39//n29v/t4+T/3s3Q/9G4vf/Jq7L/w6Os/8Ojrf/JrLb/0rnD/+DQ1//u5er/+vj5//79/v/8+/z/9/P1/+nd5f/Hqb3/o3KV/45TgP+JTHz/iUt+/4hKf/+ISYH/h0mD/4dIhP+GR4b/hkaH/IZGie6FRYuYhUWNRJ9qQx6dZ0J1nGZD1JxlRfabZEb/m2NI/5pjSf+aYkv/mWFM/5lhTv+YYFD/mWFT/5xnXP+vhH3/yKun/+bZ2P/28vL//v7+//79/f/7+vr/+PX1//bx8v/07e//8uvt//Lr7f/07u//9vHz//n29//8+vv//v3+//79/v/z7fD/387Y/72ar/+icZH/j1R9/4tOev+KTHv/iUx8/4lLfv+ISn//iEmB/4dJg/+HSIT/h0iG9oZHiNSGRol1h0mNHqJu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////////+vf6/+PV4//Krsv/vZq//72awf/MstH/5tnp//v5/P///////////+ne7v+darT/fjug/306ov98OaX/ezin/3s3qf96Nqz/eTWu83g0sU6SWGSQkVZm/5BVaP+PVGr/jlJt/45Rb/+NUHL/qHmW//Hq7////////v7+/+PU4P+sgaf/jlKJ/4dIhf+GRoj/hUWK/4REjP+MUZf/r4W4/+fb6////////////+nd7f+VXq7/fjug/306ov98OaX/ezin/3s3qf96Nqz/ejavkJJYYcKSV2P/kVZm/5BVaP+PVGr/jlJt/5dge//j1Nz///////7+/v/WwdD/lV2I/4lLfv+ISoD/h0mD/4dIhf+GRoj/hUWK/4REjP+DQ4//lF2h/9zK4f///////////9W/3v+ERaH/fjug/306ov98OaX/ezin/3s3qf96NqzDk1lf4pJYYf+SV2P/kVZm/5BVaP+PVGr/vpyr//79/v//////4dHa/5Vdgv+UW4T/xae+/9fC1P+1jrD/ikyF/4xPiv+6lrv/18LY/72awf+JS5T/lF2h/+fb6///////+/j7/6p+vP9/PZ3/fjug/306ov98OaX/ezin/3s4quKUWlzzk1le/5JYYf+SV2P/kVZm/5Zecf/l19z///////j09v+rfpf/jE90/8yxw/////////////n2+f+sgaf/t5G0//37/f///////v3+/7yZwf+DQ4//r4W4//z6/P//////1sDe/4NCnf9/PZ3/fjug/306ov98OaX/ezin85VbWvyUWlz/k1le/5JYYf+SV2P/qXuH//j09f//////3szU/5FWc/+RV3f/49Td/////////////////8Slvv/Ptsz/////////////////1cDX/4REjP+MUZf/5tnp///////w6fP/klqn/38+m/9/PZ3/fjug/306ov98OaX8llxX/5VbWv+UWlz/k1le/5JYYf+6lp3//v7+///////EpbH/jlJt/45Rb//Krr3//v7+///////49Pf/q3+h/7WOrv/7+fv///////37/f+6lrv/hUWK/4REjP/MstH///////v5/P+jdLP/gD+Y/38+m/9/PZ3/fjug/306ov+WXVX/llxX/5VbWv+UWlz/k1le/8Slqv///////v7+/7iRnv+PVGr/jlJt/5Vdef/AnrD/0bnI/7GHo/+MT3r/jlKA/7WOrv/QuM3/t5G0/4xPiv+GRoj/hUWK/72awf///////v7+/66Fuv+BQJb/gD+Y/38+m/9/PZ3/fjug/5dfUv+WXVX/llxX/5VbWv+UWlz/xaap///////+/f3/t5Gb/5BVaP+PVGr/k1ly/7WOof/Gp7j/p3mV/4tOd/+MT3r/q3+h/8Smv/+sgaf/ikyF/4dIhf+GRoj/vZq////////+/v7/r4a5/4JBlP+BQJb/gD+Y/38+m/9/PZ3/mGBQ/5dfUv+WXVX/llxX/5VbWv++mpv////////////EpKr/kVZm/5BVaP/EpLD//Pv8///////07vL/qHmW/7GHo//49Pf///////n2+f+1j7H/h0mD/4dIhf/Krsv///////z6/P+nea//g0KR/4JBlP+BQJb/gD+Y/38+m/+ZYU38mGBQ/5dfUv+WXVX/llxX/66Dgf/59vb//////9zJy/+TWWX/lVxr/+PU2f/////////////////Fp7f/0LjH/////////////////9bB0v+ISoD/jlKJ/+PU4///////8+30/5hinv+DQ4//g0KR/4JBlP+BQJb/gD+Y/JpiS/OZYU3/mGBQ/5dfUv+WXVX/nWlk/+ne3f//////9vLy/6p8g/+SV2P/1L3D/////////////Pr7/7WOof+/nbD//v7+////////////xae+/4lLfv+sgaf/+vf6///////cydz/iUuO/4REjP+DQ4//g0KR/4JBlP+BQJbzm2NJ4ppiS/+ZYU3/mGBQ/5dfUv+WXVX/yKmn////////////3MrL/5hgaP+fbHf/1L3D/+TW2//EpLD/k1ly/5Vdef/Krr3/5Nbe/8yxw/+UW4T/lV2I/+PU4P///////fv9/7SNs/+GRoj/hUWK/4REjP+DQ4//g0KR/4JBlOKbZEfDmmNJ/5piS/+ZYU3/mGBQ/5dfUv+icGj/6t/e///////9/f3/0Le6/5hgaP+SV2P/lVxr/5BVaP+PVGr/jlJt/45Rb/+RV3f/jE90/5Vdgv/WwdD////////////ezdz/j1SK/4dIhf+GRoj/hUWK/4REjP+DQ4//g0KRwpxmRZCbZEb/mmNJ/5piS/+ZYU3/mGBQ/5dfUv+2joj/9/Ly///////9/Pz/3MrL/6p8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">
+<style>
+  :root{
+    --field:#ECF1F3;
+    --paper:#FFFFFF;
+    --ink:#14283A;
+    --muted:#5A6B7A;
+    --line:#C6D2D9;
+    --edge:#A8B7C0;
+
+    /* Semantic trio. Blue is the Twilio platform, magenta is the code in this repo,
+       green is observability. Callers and the model provider stay neutral grey so the
+       three accents keep meaning. */
+    --plat:#2E6FA3;
+    --app:#C42B72;
+    --obs:#2E7D5B;
+    --neutral:#5A6B7A;
+
+    --code:#0E1B27;
+    --codeink:#D8E4EC;
+    --codemuted:#6E879A;
+
+    --display:"Avenir Next","Futura","Century Gothic","Trebuchet MS",sans-serif;
+    --body:"Helvetica Neue",Helvetica,Arial,sans-serif;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--field);color:var(--ink);
+    font-family:var(--body);font-size:16px;line-height:1.55;
+    background-image:
+      repeating-linear-gradient(0deg, transparent 0 79px, rgba(46,111,163,.06) 79px 80px),
+      repeating-linear-gradient(90deg, transparent 0 79px, rgba(46,111,163,.06) 79px 80px);
+    padding:0 0 80px;
+    overflow-wrap:break-word;
+  }
+  .wrap{max-width:1280px;margin:0 auto;padding:0 clamp(16px,4vw,24px)}
+
+  /* hero */
+  header{padding:clamp(34px,6vw,52px) 0 6px}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.22em;color:var(--plat);text-transform:uppercase}
+  h1{
+    font-family:var(--display);font-weight:600;
+    font-size:clamp(30px,5.4vw,52px);letter-spacing:-.02em;line-height:1.06;
+    margin:10px 0 14px;max-width:19ch;
+  }
+  .thesis{max-width:66ch;color:var(--muted);font-size:17px}
+  .thesis strong{color:var(--ink);font-weight:600}
+  .thesis + .thesis{margin-top:10px}
+  .facts{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0 0}
+  .fact{
+    font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+    background:var(--paper);border:1px solid var(--line);padding:5px 10px;color:var(--muted);
+  }
+  .fact b{color:var(--ink);font-weight:600}
+
+  /* section chrome */
+  section{margin:48px 0 0}
+  section > h2{
+    font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;
+    color:var(--muted);padding-bottom:9px;border-bottom:1px solid var(--line);margin-bottom:22px;
+    display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;
+  }
+  section > h2 b{color:var(--ink);font-weight:600}
+  section > h2 .num{font-family:var(--mono);color:var(--plat)}
+  .bulk{margin-left:auto;display:flex;gap:6px}
+  .bulk button{
+    font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    background:var(--paper);border:1px solid var(--line);color:var(--muted);
+    padding:3px 8px;cursor:pointer;
+  }
+  .bulk button:hover{border-color:var(--ink);color:var(--ink)}
+  .lede-sm{font-size:14.5px;color:var(--muted);margin:0 0 16px;max-width:78ch}
+  .lede-sm b{color:var(--ink);font-weight:600}
+
+  /* legend */
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:0 0 14px}
+  .legend span{
+    font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);display:flex;align-items:center;gap:6px;
+  }
+  .legend i{width:9px;height:9px;border-radius:50%;display:inline-block}
+
+  /* topology: the panel scrolls at a min-width floor, the 9px labels never shrink */
+  .topo{background:var(--paper);border:1px solid var(--line);padding:6px 10px 2px;overflow-x:auto}
+  .topo svg{display:block;width:100%;min-width:980px;height:auto}
+  .nlabel{font-family:var(--body);font-size:13px;fill:var(--ink)}
+  .nsub{font-family:var(--mono);font-size:9px;letter-spacing:.07em;fill:var(--muted);text-transform:uppercase}
+  .elabel{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;fill:var(--muted)}
+  .glabel{font-family:var(--mono);font-size:9px;letter-spacing:.16em;fill:var(--muted);text-transform:uppercase}
+  .node{cursor:pointer}
+  .node rect{fill:var(--paper);stroke-width:1.5}
+  .node:hover rect{fill:#F7FAFB}
+  .node:focus{outline:none}
+  .node:focus-visible rect{stroke-width:3}
+  .node.sel rect{stroke-width:3;fill:#F2F7F9}
+  .edge{stroke:var(--edge);stroke-width:1.4;fill:none}
+  .edge.dash{stroke-dasharray:5 4}
+  .gbox{stroke:var(--line);stroke-width:1;stroke-dasharray:2 6;fill:none}
+
+  .hint{
+    font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);margin:10px 0 0;
+  }
+
+  /* ladders */
+  .lblock{margin:0 0 30px}
+  .lblock > h3{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--ink);margin:0 0 4px;
+  }
+  .lblock > .sub{font-size:13.5px;color:var(--muted);margin:0 0 6px}
+  .lanes{
+    display:grid;grid-template-columns:repeat(5,1fr);
+    position:sticky;top:0;z-index:6;
+    background:var(--field);padding:12px 0 11px;border-bottom:1px solid var(--line);
+  }
+  .lane{display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center}
+  .lane .dot{width:9px;height:9px;border-radius:50%}
+  .lane span{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink)}
+  .dot.plat{background:var(--plat)} .dot.app{background:var(--app)}
+  .dot.obs{background:var(--obs)}   .dot.neutral{background:var(--neutral)}
+
+  .ladder{position:relative;padding:8px 0 4px}
+  .rails{position:absolute;inset:0;pointer-events:none;z-index:0}
+  .rails i{position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
+
+  .spanwrap{position:relative}
+  .spanmark{position:absolute;left:0;top:10px;bottom:10px;width:30px;pointer-events:none;z-index:2}
+  .spanmark i{position:absolute;left:26px;top:0;bottom:0;border-left:2px dashed var(--obs)}
+  .spanmark em{
+    position:absolute;left:0;top:0;font-style:normal;white-space:nowrap;
+    writing-mode:vertical-rl;line-height:1;
+    font-family:var(--mono);font-size:9px;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--obs);
+  }
+  .ladder .detail{margin-left:40px}
+
+  .step{position:relative;z-index:1}
+  .row{
+    position:relative;display:flex;align-items:center;width:100%;padding:17px 0;
+    background:none;border:0;cursor:pointer;font:inherit;color:inherit;text-align:left;
+  }
+  .row::before{
+    content:"";position:absolute;top:50%;transform:translateY(-50%);
+    left:var(--from);right:calc(100% - var(--to));height:1.5px;background:var(--wc,var(--line));
+  }
+  .row::after,.row .head2{
+    content:"";position:absolute;top:50%;transform:translateY(-50%);z-index:2;
+    width:0;height:0;border-top:5px solid transparent;border-bottom:5px solid transparent;
+  }
+  .row[data-dir="r"]::after,.row[data-dir="b"]::after{
+    left:calc(var(--to) - 8px);border-left:8px solid var(--wc,var(--line));
+  }
+  .row[data-dir="l"]::after,.row[data-dir="b"] .head2{
+    left:var(--from);border-right:8px solid var(--wc,var(--line));
+  }
+  .wlabel{
+    position:relative;z-index:1;background:var(--paper);border:1px solid var(--line);
+    width:clamp(150px, calc(20vw - 44px), 216px);flex:0 0 auto;padding:7px 11px 9px;
+    margin-left:calc((var(--from) + var(--to)) / 2);transform:translateX(-50%);
+    display:flex;flex-direction:column;align-items:stretch;gap:1px;
+    transition:border-color .14s,box-shadow .14s;
+  }
+  .wlabel .hdr{display:flex;align-items:center;justify-content:space-between}
+  .wlabel .n{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--muted)}
+  .wlabel .t{font-size:13.5px;line-height:1.3}
+  .wlabel .chev{font-size:9px;color:var(--muted);transition:transform .16s}
+  .row:hover .wlabel{border-color:var(--wc,var(--ink));box-shadow:0 1px 0 var(--wc,var(--ink))}
+  .row:focus-visible .wlabel{outline:2px solid var(--wc,var(--ink));outline-offset:2px}
+  .step.open .wlabel{border-color:var(--wc,var(--ink));box-shadow:inset 0 0 0 1px var(--wc,var(--ink))}
+  .step.open .wlabel .chev{transform:rotate(90deg)}
+  .step.open .row{--wc:var(--acc)}
+
+  /* Stacked ladder. Neither the rails nor the hop labels reflow, so below the floor the
+     lane colour moves to a left border and every hop becomes a full-width panel. */
+  @media (max-width:820px){
+    .lanes,.rails{display:none}
+    .row{padding:8px 0}
+    .row::before,.row::after,.row .head2{display:none}
+    .wlabel{width:100%;margin-left:0;transform:none;border-left:3px solid var(--acc,var(--line))}
+    .ladder .detail{margin-left:0}
+    .spanmark{display:none}
+  }
+
+  /* detail panels */
+  .detail{
+    background:var(--paper);border:1px solid var(--line);border-left:3px solid var(--acc,var(--line));
+    padding:18px 20px 20px;margin:0 0 12px;
+  }
+  .detail .what{font-size:15px;margin-bottom:9px}
+  .detail .why{font-size:14px;color:var(--muted)}
+  .detail .why b{color:var(--ink);font-weight:600}
+  .detail .why + .why{margin-top:7px}
+  .node-detail dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;font-size:14px}
+  .node-detail dt{
+    font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--muted);padding-top:3px;
+  }
+  .node-detail dd{color:var(--ink)}
+  @media (max-width:600px){
+    .node-detail dl{grid-template-columns:1fr;gap:2px}
+    .node-detail dd{margin-bottom:8px}
+  }
+
+  /* cards */
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:14px}
+  .card{
+    background:var(--paper);border:1px solid var(--line);border-top:3px solid var(--acc);
+    padding:16px 17px 18px;display:flex;flex-direction:column;
+  }
+  .card h4{font-family:var(--display);font-size:16px;font-weight:600;margin-bottom:3px}
+  .card .api{font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:var(--muted);margin-bottom:11px;display:block}
+  .card ul{list-style:disc;padding-left:18px;font-size:13.5px;color:var(--ink);margin-bottom:14px}
+  .card li{margin-bottom:6px;line-height:1.45}
+  .card li:last-child{margin-bottom:0}
+  .card li strong{font-weight:600}
+  .card .when{
+    font-family:var(--mono);font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;
+    color:var(--ink);border-top:1px dashed var(--line);padding-top:9px;margin-top:auto;
+  }
+
+  /* callout */
+  .callout{
+    background:var(--paper);border:1px solid var(--line);
+    border-left:3px solid var(--acc,var(--line));padding:15px 18px 16px;margin:18px 0 0;
+  }
+  .callout .dtitle{
+    font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ink);margin-bottom:9px;
+  }
+  .callout p{font-size:14px}
+  .callout p + p{margin-top:8px}
+  .callout ul{list-style:disc;padding-left:19px;font-size:13.5px;color:var(--ink)}
+  .callout li{margin-bottom:5px;line-height:1.5}
+  .callout li:last-child{margin-bottom:0}
+  .callout li strong{font-weight:600}
+
+  pre{
+    background:var(--code);color:var(--codeink);font-family:var(--mono);font-size:12px;line-height:1.65;
+    padding:13px 15px;overflow-x:auto;margin:14px 0 0;border-radius:2px;
+  }
+  pre b{color:#8FD1A8;font-weight:400}
+  pre i{color:var(--codemuted);font-style:normal}
+  pre u{color:#F0B37E;text-decoration:none}
+
+  /* tables: the wrapper scrolls, never the page */
+  .tablewrap{overflow-x:auto;margin:0 0 4px}
+  table{width:100%;min-width:600px;border-collapse:collapse;background:var(--paper);border:1px solid var(--line)}
+  th{
+    font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+    text-align:left;color:var(--muted);padding:11px 14px;border-bottom:1px solid var(--line);font-weight:400;
+  }
+  td{padding:12px 14px;border-bottom:1px solid var(--line);font-size:13.5px;vertical-align:top}
+  tr:last-child td{border-bottom:0}
+  td:first-child{width:27%;font-weight:600}
+  table.wide-first td:first-child{width:34%}
+  td code,p code,li code,dd code,.detail code,.callout code,th code{
+    font-family:var(--mono);font-size:12px;background:var(--field);
+    border:1px solid var(--line);padding:1px 4px;border-radius:2px;
+  }
+  td b.warn{color:var(--app)}
+
+  /* footer */
+  footer{margin:52px 0 0;border-top:1px solid var(--line);padding-top:18px}
+  footer p{font-size:13px;color:var(--muted);max-width:78ch}
+  footer p + p{margin-top:7px}
+  footer b{color:var(--ink);font-weight:600}
+
+  @media (prefers-reduced-motion:reduce){*{transition:none !important}html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="eyebrow">ConversationRelay &middot; Conversation Orchestrator &middot; OpenTelemetry</p>
+    <h1>One agent, three channels, every turn traced</h1>
+    <p class="thesis">A reference scaffold for customer-facing voice and SMS AI demos. A phone call, a
+    text message and a browser all reach <strong>one turn function</strong>. Prompts, the model and the
+    tool list are versioned outside the code, and each turn lands in a trace you can argue with.</p>
+    <p class="thesis">Everything below was measured on real traffic rather than reasoned about. Where a
+    number carries a caveat, the caveat is next to it.</p>
+    <div class="facts">
+      <span class="fact"><b>3</b> channels</span>
+      <span class="fact"><b>1</b> turn function</span>
+      <span class="fact"><b>6</b> tools</span>
+      <span class="fact"><b>84 ms</b> framework cost</span>
+      <span class="fact"><b>86</b> observations in one call</span>
+      <span class="fact"><b>0 ms</b> gap in the voice timeline</span>
+    </div>
+  </header>
+
+  <!-- ============ 01 ARCHITECTURE ============ -->
+  <section id="architecture">
+    <h2><span class="num">01</span> <b>System architecture</b> &middot; select a node</h2>
+
+    <p class="lede-sm">Two Twilio front doors, one adapter layer, one core. The channel decides how audio
+    or text arrives and how a reply is delivered, and nothing else.</p>
+
+    <div class="legend">
+      <span><i style="background:var(--plat)"></i> Twilio platform</span>
+      <span><i style="background:var(--app)"></i> This repo</span>
+      <span><i style="background:var(--obs)"></i> Observability</span>
+      <span><i style="background:var(--neutral)"></i> Caller or provider</span>
+    </div>
+
+    <div class="topo">
+      <svg viewBox="0 0 1200 520" role="img" aria-label="Topology: two Twilio front doors reaching one adapter layer and one agent core, with the model provider, Langfuse, and Twilio Memory and Knowledge attached">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,1 L9,5 L0,9 z" fill="#8A9BA6"/>
+          </marker>
+        </defs>
+
+        <!-- what we actually build -->
+        <rect class="gbox" x="508" y="126" width="500" height="248"/>
+        <text class="glabel" x="514" y="118">This repo</text>
+
+        <!-- edges -->
+        <path class="edge" d="M184,117 H240" marker-end="url(#ah)"/>
+        <path class="edge" d="M184,227 H240" marker-end="url(#ah)"/>
+
+        <path class="edge" d="M450,117 H484 V160 H520" marker-end="url(#ah)"/>
+        <text class="elabel" x="485" y="107" text-anchor="middle">wss media</text>
+
+        <path class="edge" d="M450,227 H484 V190 H520" marker-end="url(#ah)"/>
+        <text class="elabel" x="485" y="250" text-anchor="middle">webhook</text>
+
+        <path class="edge" d="M710,171 H750 V211 H790" marker-end="url(#ah)"/>
+        <text class="elabel" x="750" y="163" text-anchor="middle">one turn</text>
+
+        <path class="edge" d="M710,317 H750 V251 H790" marker-end="url(#ah)"/>
+        <text class="elabel" x="716" y="333">no credentials</text>
+
+        <path class="edge" d="M890,186 V118" marker-start="url(#ah)" marker-end="url(#ah)"/>
+        <text class="elabel" x="900" y="156">tokens</text>
+
+        <path class="edge" d="M990,171 H1010 V161 H1030" marker-start="url(#ah)" marker-end="url(#ah)"/>
+        <path class="edge" d="M990,257 H1010 V331 H1030" marker-start="url(#ah)" marker-end="url(#ah)"/>
+
+        <path class="edge dash" d="M850,276 V437 H452" marker-end="url(#ah)"/>
+        <text class="elabel" x="660" y="428" text-anchor="middle">handoff tool</text>
+
+        <path class="edge" d="M240,437 H186" marker-end="url(#ah)"/>
+
+        <!-- callers, not clickable -->
+        <g>
+          <rect x="24" y="86" width="160" height="62" fill="var(--paper)" stroke="var(--neutral)" stroke-width="1.5"/>
+          <text class="nlabel" x="40" y="112">Phone call</text>
+          <text class="nsub"   x="40" y="130">inbound pstn</text>
+        </g>
+        <g>
+          <rect x="24" y="196" width="160" height="62" fill="var(--paper)" stroke="var(--neutral)" stroke-width="1.5"/>
+          <text class="nlabel" x="40" y="222">Text message</text>
+          <text class="nsub"   x="40" y="240">inbound sms</text>
+        </g>
+        <g>
+          <rect x="24" y="406" width="160" height="62" fill="var(--paper)" stroke="var(--neutral)" stroke-width="1.5"/>
+          <text class="nlabel" x="40" y="432">Human agent</text>
+          <text class="nsub"   x="40" y="450">browser softphone</text>
+        </g>
+
+        <!-- Twilio platform -->
+        <g class="node" data-node="relay" role="button" tabindex="0"
+           aria-expanded="false" aria-controls="n-relay" aria-label="ConversationRelay">
+          <rect x="240" y="86" width="210" height="62" stroke="var(--plat)"/>
+          <text class="nlabel" x="256" y="112">ConversationRelay</text>
+          <text class="nsub"   x="256" y="130">streaming stt and tts</text>
+        </g>
+
+        <g class="node" data-node="orch" role="button" tabindex="0"
+           aria-expanded="false" aria-controls="n-orch" aria-label="Conversation Orchestrator">
+          <rect x="240" y="196" width="210" height="62" stroke="var(--plat)"/>
+          <text class="nlabel" x="256" y="222">Conversation Orchestrator</text>
+          <text class="nsub"   x="256" y="240">capture rules, extraction</text>
+        </g>
+
+        <g class="node" data-node="studio" role="button" tabindex="0"
+           aria-expanded="false" aria-controls="n-studio" aria-label="Studio flow">
+          <rect x="240" y="406" width="210" height="62" stroke="var(--plat)"/>
+          <text class="nlabel" x="256" y="432">Studio flow</text>
+          <text class="nsub"   x="256" y="450">rings the softphone</text>
+        </g>
+
+        <!-- this repo -->
+        <g class="node" data-node="adapters" role="button" tabindex="0"
+           aria-expanded="false" aria-controls="n-adapters" aria-label="Adapter layer">
+          <rect x="520" y="140" width="190" height="62" stroke="var(--app)"/>
+          <text class="nlabel" x="536" y="166">Adapter layer</text>
+          <text class="nsub"   x="536" y="184">the only tac importer</text>
+        </g>
+
+        <g class="node" data-node="bench" role="button" tabindex="0"
+           aria-expanded="false" aria-controls="n-bench" aria-label="Browser bench">
+          <rect x="520" y="286" width="190" height="62" stroke="var(--app)"/>
+          <text class="nlabel" x="536" y="312">Browser bench</text>
+          <text class="nsub"   x="536" y="330">runtime proof</text>
+        </g>
+
+        <g class="node" data-node="core" role="button" tabindex="0"
+           aria-expanded="false" aria-controls="n-core" aria-label="Agent core">
+          <rect x="790" y="186" width="200" height="90" stroke="var(--app)"/>
+          <text class="nlabel" x="806" y="216">Agent core</text>
+          <text class="nsub"   x="806" y="234">one turn function</text>
+          <text class="nsub"   x="806" y="252">prompt, model, tools</text>
+        </g>
+
+        <!-- providers and platform data -->
+        <g class="node" data-node="model" role="button" tabindex="0"
+           aria-expanded="false" aria-controls="n-model" aria-label="Model provider">
+          <rect x="790" y="56" width="200" height="62" stroke="var(--neutral)"/>
+          <text class="nlabel" x="806" y="82">Model provider</text>
+          <text class="nsub"   x="806" y="100">streamed, tool calling</text>
+        </g>
+
+        <g class="node" data-node="memkb" role="button" tabindex="0"
+           aria-expanded="false" aria-controls="n-memkb" aria-label="Memory and Knowledge">
+          <rect x="1030" y="130" width="160" height="62" stroke="var(--plat)"/>
+          <text class="nlabel" x="1044" y="156">Memory, Knowledge</text>
+          <text class="nsub"   x="1044" y="174">recall and search</text>
+        </g>
+
+        <g class="node" data-node="langfuse" role="button" tabindex="0"
+           aria-expanded="false" aria-controls="n-langfuse" aria-label="Langfuse">
+          <rect x="1030" y="300" width="160" height="62" stroke="var(--obs)"/>
+          <text class="nlabel" x="1044" y="326">Langfuse</text>
+          <text class="nsub"   x="1044" y="344">prompts in, spans out</text>
+        </g>
+      </svg>
+    </div>
+    <p class="hint">Click a node, or focus it and press Enter</p>
+
+    <div class="node-detail detail" id="n-relay" style="--acc:var(--plat);margin-top:14px" hidden>
+      <dl>
+        <dt>What</dt><dd>The voice front door. It does speech to text and text to speech, and streams
+        recognised speech in over a WebSocket while tokens stream back out.</dd>
+        <dt>Why here</dt><dd>Barge-in, playback and endpointing stay on the platform, so the agent
+        handles text on both channels and never touches audio.</dd>
+        <dt>Talks to</dt><dd>The adapter layer over <code>wss://host/ws</code>, plus an action callback
+        when the session ends.</dd>
+        <dt>Constraint</dt><dd><code>reportInputDuringAgentSpeech</code> defaults to <code>none</code>
+        since May 2025. Left at the default, a barge-in stops the audio and the words that caused it are
+        never delivered, so the agent goes quiet and cannot hear.</dd>
+      </dl>
+    </div>
+
+    <div class="node-detail detail" id="n-orch" style="--acc:var(--plat);margin-top:14px" hidden>
+      <dl>
+        <dt>What</dt><dd>The SMS front door, and the owner of conversation state. Capture rules post
+        inbound messages to the agent, and it extracts memory after a conversation closes.</dd>
+        <dt>Why here</dt><dd>Cross-conversation memory is a platform feature. The agent contributes
+        nothing to extraction beyond letting the conversation close.</dd>
+        <dt>Talks to</dt><dd>A status callback pointing at the agent's webhook, in an event envelope
+        rather than a Twilio form post.</dd>
+        <dt>Constraint</dt><dd>Extraction is post-conversation only, so memory makes the <b>next</b>
+        conversation smart. Any honest test needs two conversations with a close in between.</dd>
+      </dl>
+    </div>
+
+    <div class="node-detail detail" id="n-studio" style="--acc:var(--plat);margin-top:14px" hidden>
+      <dl>
+        <dt>What</dt><dd>The handoff target. The live call is redirected into a flow that rings a browser
+        softphone carrying the reason for the transfer and the transcript so far.</dd>
+        <dt>Why here</dt><dd>Ringing a human is routing, not agent logic, and a flow is editable without
+        a deploy.</dd>
+        <dt>Talks to</dt><dd>The action callback on the voice session, then the browser client.</dd>
+        <dt>Constraint</dt><dd>The handoff makes two platform writes before the post that can fail, and
+        there is no inverse for either. The failure path leaves state that nothing repairs.</dd>
+      </dl>
+    </div>
+
+    <div class="node-detail detail" id="n-adapters" style="--acc:var(--app);margin-top:14px" hidden>
+      <dl>
+        <dt>What</dt><dd>Everything channel specific: the WebSocket handler, the webhook handler, the
+        end-of-call frame, the interrupt handler, and the only imports of the Twilio SDK and the agent
+        connect library.</dd>
+        <dt>Why here</dt><dd>A test fails the build if either package is imported anywhere else, which is
+        what makes the credential-free bench a runtime proof rather than a claim about import strings.</dd>
+        <dt>Talks to</dt><dd>Both Twilio front doors on one side, the core on the other.</dd>
+        <dt>Constraint</dt><dd>The two channels diverge on abort handling. On voice an abort means the
+        caller interrupted on purpose, so nothing is said. On SMS an abort can only be our own timeout,
+        so the fallback is sent and an error is published.</dd>
+      </dl>
+    </div>
+
+    <div class="node-detail detail" id="n-bench" style="--acc:var(--app);margin-top:14px" hidden>
+      <dl>
+        <dt>What</dt><dd>A browser page that streams a complete agent turn over plain HTTP with no
+        Twilio credentials present.</dd>
+        <dt>Why here</dt><dd>It is the demo you can give on a laptop with one API key, and it is the
+        runtime evidence that the core is channel agnostic.</dd>
+        <dt>Talks to</dt><dd>The core directly, through the same turn function the phone uses.</dd>
+        <dt>Constraint</dt><dd>It proves the turn and nothing else: not signature validation, not
+        streaming speech latency, not live barge-in, not platform memory retrieval, not the handoff.</dd>
+      </dl>
+    </div>
+
+    <div class="node-detail detail" id="n-core" style="--acc:var(--app);margin-top:14px" hidden>
+      <dl>
+        <dt>What</dt><dd>One function per turn. It resolves the prompt and the caller's memory, resolves
+        which tools that prompt version offers, calls the model, runs any tools, and streams the answer
+        back as tokens.</dd>
+        <dt>Why here</dt><dd>Channel differences are pushed out to the adapters, so a change to how the
+        agent thinks is one edit rather than two.</dd>
+        <dt>Talks to</dt><dd>The model provider, the platform's memory and knowledge APIs, and the
+        observability layer.</dd>
+        <dt>Constraint</dt><dd>It does not create its own trace span. The caller creates the span and
+        passes it in, because a span created inside would close before the model streamed a token and put
+        every model span in a different trace.</dd>
+      </dl>
+    </div>
+
+    <div class="node-detail detail" id="n-model" style="--acc:var(--neutral);margin-top:14px" hidden>
+      <dl>
+        <dt>What</dt><dd>The language model, reached through the AI SDK, streaming, with tool calling.</dd>
+        <dt>Why here</dt><dd>One file owns the provider, so swapping it is a single edit and the
+        telemetry convention stays the same.</dd>
+        <dt>Talks to</dt><dd>The core only.</dd>
+        <dt>Constraint</dt><dd>Model spans carry the full prompt and completion, so anything personal in
+        a prompt is in the trace. The app's own spans are scrubbed; the model's are not.</dd>
+      </dl>
+    </div>
+
+    <div class="node-detail detail" id="n-memkb" style="--acc:var(--plat);margin-top:14px" hidden>
+      <dl>
+        <dt>What</dt><dd>Two platform services behind two tools: a memory profile recalled per caller,
+        and a knowledge base searched per question.</dd>
+        <dt>Why here</dt><dd>Both are managed, and both are the difference between a demo that answers
+        and a demo that remembers.</dd>
+        <dt>Talks to</dt><dd>The core, through tools built lazily from a live handle.</dd>
+        <dt>Constraint</dt><dd>Search relevance scores are normalised per query, so they are not
+        comparable across queries and no threshold can separate in scope from out of scope. The tool
+        description has to do that work.</dd>
+      </dl>
+    </div>
+
+    <div class="node-detail detail" id="n-langfuse" style="--acc:var(--obs);margin-top:14px" hidden>
+      <dl>
+        <dt>What</dt><dd>Self-hosted, and it points both ways: prompts, model and tool list are read from
+        it, and every span is written to it.</dd>
+        <dt>Why here</dt><dd>Changing behaviour becomes a prompt revision rather than a deploy, and the
+        prompt version that produced a trace is on the trace.</dd>
+        <dt>Talks to</dt><dd>The core, over the prompt API and an OpenTelemetry exporter.</dd>
+        <dt>Constraint</dt><dd>In events-only mode the public read API for traces is disabled. Requests
+        answer 404, which means disabled rather than no data, and reading it the other way sends you
+        chasing a telemetry bug that does not exist.</dd>
+      </dl>
+    </div>
+  </section>
+  <!-- ============ 02 ANATOMY OF A TURN ============ -->
+  <section id="turn">
+    <h2><span class="num">02</span> <b>Anatomy of a turn</b> &middot; select any hop
+      <span class="bulk">
+        <button data-bulk="open" data-scope="#turn">Expand all</button>
+        <button data-bulk="close" data-scope="#turn">Collapse all</button>
+      </span>
+    </h2>
+
+    <p class="lede-sm">One voice turn, in the order the spans appear. A text turn is the same ladder
+    without hops 01, 02, 09 and 10: the message arrives on a webhook and the reply is one complete
+    answer rather than a stream.</p>
+
+    <div class="lblock">
+      <h3>A &middot; The turn itself</h3>
+      <p class="sub">Numbers in the panels are from an instrumented call and carry the caveat they were
+      measured with.</p>
+      <div class="lanes" aria-hidden="true">
+        <div class="lane"><span class="dot neutral"></span><span>Caller</span></div>
+        <div class="lane"><span class="dot plat"></span><span>Relay</span></div>
+        <div class="lane"><span class="dot app"></span><span>Adapter</span></div>
+        <div class="lane"><span class="dot app"></span><span>Core</span></div>
+        <div class="lane"><span class="dot plat"></span><span>Model, data</span></div>
+      </div>
+
+      <div class="spanwrap">
+      <div class="ladder">
+        <div class="rails" aria-hidden="true">
+          <i style="left:10%"></i><i style="left:30%"></i><i style="left:50%"></i>
+          <i style="left:70%"></i><i style="left:90%"></i>
+        </div>
+        <span class="spanmark" aria-hidden="true"><i></i><em>caller.turn spans the gap</em></span>
+
+        <div class="step" id="hop-01" style="--acc:var(--plat)">
+          <button class="row" aria-expanded="false" aria-controls="d01" data-dir="r" style="--from:10%;--to:30%">
+            <span class="wlabel"><span class="hdr"><span class="n">01</span><span class="chev">&#9656;</span></span>
+            <span class="t">Caller speaks, speech recognition finalises</span></span>
+          </button>
+          <div class="detail" id="d01" hidden>
+            <p class="what">Streaming recognition decides the caller has stopped and emits a final
+            transcript.</p>
+            <p class="why">This is inside <code>caller.turn</code>, the span that covers every instant
+            between two agent turns. It is a <b>blend</b> of bot playback, caller speech and endpointing,
+            and it was 65 percent of one real call. Do not read it as how long the caller talked.</p>
+          </div>
+        </div>
+
+        <div class="step" id="hop-02" style="--acc:var(--plat)">
+          <button class="row" aria-expanded="false" aria-controls="d02" data-dir="r" style="--from:30%;--to:50%">
+            <span class="wlabel"><span class="hdr"><span class="n">02</span><span class="chev">&#9656;</span></span>
+            <span class="t">A prompt frame arrives on the socket</span></span>
+          </button>
+          <div class="detail" id="d02" hidden>
+            <p class="what">The transcript arrives as a <code>prompt</code> message. The timestamp is
+            captured as the first statement of the handler, and the turn span is back-dated to it.</p>
+            <p class="why">The turn span opens here and <code>caller.turn</code> closes here, which is why
+            the two tile with a measured 0 ms between them. Everything before this point, socket frame
+            parsing and queue serialisation, is not measurable from inside the app.</p>
+          </div>
+        </div>
+
+        <div class="step" id="hop-03" style="--acc:var(--app)">
+          <button class="row" aria-expanded="false" aria-controls="d03" data-dir="r" style="--from:50%;--to:70%">
+            <span class="wlabel"><span class="hdr"><span class="n">03</span><span class="chev">&#9656;</span></span>
+            <span class="t">The core runs the turn inside that span</span></span>
+          </button>
+          <div class="detail" id="d03" hidden>
+            <p class="what">The adapter calls the turn function and gets back a token stream plus a
+            promise that settles when the turn is done.</p>
+            <p class="why">The adapter owns the span, not the core. A span created inside the core would
+            close before the model streamed a token and every model span would land in a different trace.
+            The token stream also has to be consumed before the caller's next await, or the first-token
+            timing comes back null while the caller still hears the whole answer.</p>
+          </div>
+        </div>
+
+        <div class="step" id="hop-04" style="--acc:var(--obs)">
+          <button class="row" aria-expanded="false" aria-controls="d04" data-dir="b" style="--from:70%;--to:90%">
+            <span class="wlabel"><span class="hdr"><span class="n">04</span><span class="chev">&#9656;</span></span>
+            <span class="t">Prompt and memory resolve in parallel</span></span>
+          </button>
+          <div class="detail" id="d04" hidden>
+            <p class="what">The prompt version, its model and its tool list are fetched from the prompt
+            store while the caller's memory profile is recalled from the platform.</p>
+            <p class="why">Measured at 41 ms for the prompt fetch running alongside 79 ms for the recall,
+            which is the whole framework cost of <b>84 ms</b> per turn. Everything else in a slow turn is
+            model time. If the prompt store is unreachable the compiled-in default answers and reports
+            its version as <code>fallback</code>, so a degraded demo is visible rather than silently
+            different.</p>
+          </div>
+        </div>
+
+        <div class="step" id="hop-05" style="--acc:var(--neutral)">
+          <button class="row" aria-expanded="false" aria-controls="d05" data-dir="b" style="--from:70%;--to:90%">
+            <span class="wlabel"><span class="hdr"><span class="n">05</span><span class="chev">&#9656;</span></span>
+            <span class="t">Model call, first token</span></span>
+          </button>
+          <div class="detail" id="d05" hidden>
+            <p class="what">One streamed model call with the resolved tool definitions attached.</p>
+            <p class="why">The AI SDK writes <code>gen_ai.client.operation.time_to_first_chunk</code>
+            natively on every generation, in seconds, and across 33 generations it accounted for the
+            generation span almost exactly. That turns "is it us or the model" into one query. A cold
+            first turn measured 3838 ms here against 0.51 to 0.71 s once the prompt cache was warm.</p>
+          </div>
+        </div>
+
+        <div class="step" id="hop-06" style="--acc:var(--plat)">
+          <button class="row" aria-expanded="false" aria-controls="d06" data-dir="b" style="--from:70%;--to:90%">
+            <span class="wlabel"><span class="hdr"><span class="n">06</span><span class="chev">&#9656;</span></span>
+            <span class="t">A tool runs, and nothing is spoken</span></span>
+          </button>
+          <div class="detail" id="d06" hidden>
+            <p class="what">The model asks for a tool, the tool executes, and the result goes back as
+            another step.</p>
+            <p class="why">Measured: a local lookup at 1 ms, a knowledge search at 417 to 1018 ms, a
+            handoff at 266 ms. The caller hears silence for that whole time, which is the argument for a
+            filler line rather than for a faster tool. Tools that need live credentials are built lazily
+            inside execute, so a missing credential is a structured miss the model can talk about instead
+            of a crash at boot.</p>
+          </div>
+        </div>
+
+        <div class="step" id="hop-07" style="--acc:var(--neutral)">
+          <button class="row" aria-expanded="false" aria-controls="d07" data-dir="l" style="--from:70%;--to:90%">
+            <span class="wlabel"><span class="hdr"><span class="n">07</span><span class="chev">&#9656;</span></span>
+            <span class="t">Second model call composes the answer</span></span>
+          </button>
+          <div class="detail" id="d07" hidden>
+            <p class="what">With the tool result in context, the model produces the words the caller will
+            hear.</p>
+            <p class="why">This is why a tool turn's time to first token structurally contains the whole
+            tool cycle. Tool-free turns measured 586 to 801 ms on a healthy model against 1282 to 1433 ms
+            for tool turns, so comparing the two as if they were the same thing invents a regression.</p>
+          </div>
+        </div>
+
+        <div class="step" id="hop-08" style="--acc:var(--app)">
+          <button class="row" aria-expanded="false" aria-controls="d08" data-dir="l" style="--from:50%;--to:70%">
+            <span class="wlabel"><span class="hdr"><span class="n">08</span><span class="chev">&#9656;</span></span>
+            <span class="t">Tokens stream back to the adapter</span></span>
+          </button>
+          <div class="detail" id="d08" hidden>
+            <p class="what">The turn function yields tokens as they arrive; the adapter forwards each one
+            immediately.</p>
+            <p class="why">The turn records a first-audio proxy at the first non-empty token. It landed
+            within 0 to 3 ms of first-token on all six turns of a call, which is a useful negative: it
+            proves nothing queues between the model and the socket. It is not time to first audio, and
+            presenting it that way would be wrong.</p>
+          </div>
+        </div>
+
+        <div class="step" id="hop-09" style="--acc:var(--app)">
+          <button class="row" aria-expanded="false" aria-controls="d09" data-dir="l" style="--from:30%;--to:50%">
+            <span class="wlabel"><span class="hdr"><span class="n">09</span><span class="chev">&#9656;</span></span>
+            <span class="t">Each token sent, then the last marker</span></span>
+          </button>
+          <div class="detail" id="d09" hidden>
+            <p class="what">Tokens go out on the socket as they arrive, then an end-of-turn marker closes
+            the turn.</p>
+            <p class="why">The end marker is only emitted if at least one token was sent, so an empty
+            answer closes nothing and the caller holds an open line forever. That one has bitten: an
+            empty answer must speak a fallback. Guarding on "we accumulated some text" is also wrong,
+            because text accumulates before the send.</p>
+          </div>
+        </div>
+
+        <div class="step" id="hop-10" style="--acc:var(--plat)">
+          <button class="row" aria-expanded="false" aria-controls="d10" data-dir="l" style="--from:10%;--to:30%">
+            <span class="wlabel"><span class="hdr"><span class="n">10</span><span class="chev">&#9656;</span></span>
+            <span class="t">Speech synthesis plays the answer</span></span>
+          </button>
+          <div class="detail" id="d10" hidden>
+            <p class="what">The platform speaks the tokens, and the next <code>caller.turn</code> is
+            already running.</p>
+            <p class="why">First byte of audio and end of playback are not exposed, so this is the part of
+            the call the traces cannot see. It shows up as the tail of the root span, 2394 ms on the
+            instrumented call, and as the bulk of every <code>caller.turn</code>. Getting the real number
+            means Voice Insights or media stream marks.</p>
+          </div>
+        </div>
+
+        <div class="step" id="hop-11" style="--acc:var(--plat)">
+          <button class="row" aria-expanded="false" aria-controls="d11" data-dir="r" style="--from:10%;--to:50%">
+            <span class="wlabel"><span class="hdr"><span class="n">11</span><span class="chev">&#9656;</span></span>
+            <span class="t">If the caller interrupts</span></span>
+          </button>
+          <div class="detail" id="d11" hidden>
+            <p class="what">A barge-in stops playback and delivers an interrupt, then the caller's words
+            arrive as the next prompt.</p>
+            <p class="why">Three things are load-bearing here. The abort signal must be passed explicitly
+            into the send, or the fallback resolves to undefined and the caller is talked over with the
+            answer they just interrupted. The interrupt handler <b>parks</b> the boundary instant rather
+            than ending the span, because the turn's output and tool list are written after the stream
+            settles and would be dropped on an already-ended span. And a pending hangup has to be
+            cancelled, or the call ends on someone a turn later.</p>
+            <p class="why">Barge-in history keeps the generated partial, which overstates what the caller
+            actually heard. The ground truth arrives after history is appended and is deliberately not
+            written back.</p>
+          </div>
+        </div>
+      </div>
+      </div>
+    </div>
+
+    <div class="lblock">
+      <h3>B &middot; After the last turn</h3>
+      <p class="sub">The half that is easy to get wrong, because most of it happens after anyone is
+      listening.</p>
+      <div class="lanes" aria-hidden="true">
+        <div class="lane"><span class="dot neutral"></span><span>Caller</span></div>
+        <div class="lane"><span class="dot plat"></span><span>Relay</span></div>
+        <div class="lane"><span class="dot app"></span><span>Adapter</span></div>
+        <div class="lane"><span class="dot app"></span><span>Core</span></div>
+        <div class="lane"><span class="dot plat"></span><span>Model, data</span></div>
+      </div>
+
+      <div class="ladder">
+        <div class="rails" aria-hidden="true">
+          <i style="left:10%"></i><i style="left:30%"></i><i style="left:50%"></i>
+          <i style="left:70%"></i><i style="left:90%"></i>
+        </div>
+
+        <div class="step" id="hop-12" style="--acc:var(--plat)">
+          <button class="row" aria-expanded="false" aria-controls="d12" data-dir="r" style="--from:30%;--to:50%">
+            <span class="wlabel"><span class="hdr"><span class="n">12</span><span class="chev">&#9656;</span></span>
+            <span class="t">The session ends, one way or another</span></span>
+          </button>
+          <div class="detail" id="d12" hidden>
+            <p class="what">The caller hangs up, or the agent decides to. An agent hangup is a two-step
+            mechanism: the tool records an intent, and the frame goes out after the farewell has
+            streamed.</p>
+            <p class="why">Tools run inside the model loop, before the turn's text exists, so hanging up
+            in the tool would cut off the goodbye. Queued audio does drain before the socket closes,
+            measured at 1.75 s on a real call, which the docs do not promise. A handoff beats a pending
+            hangup unconditionally, because two end frames on one socket is undefined behaviour.</p>
+          </div>
+        </div>
+
+        <div class="step" id="hop-13" style="--acc:var(--obs)">
+          <button class="row" aria-expanded="false" aria-controls="d13" data-dir="r" style="--from:50%;--to:70%">
+            <span class="wlabel"><span class="hdr"><span class="n">13</span><span class="chev">&#9656;</span></span>
+            <span class="t">Call statistics, then the root span closes</span></span>
+          </button>
+          <div class="detail" id="d13" hidden>
+            <p class="what">The root span takes its metadata from a stats call that finalises the call
+            first and reports second: turn count, aborted count, total caller time, first-audio median
+            and maximum, and why the call closed.</p>
+            <p class="why">There is deliberately no accessor to call in the wrong order, because root
+            metadata computed from a half-open call would be quietly wrong rather than obviously wrong.</p>
+          </div>
+        </div>
+
+        <div class="step" id="hop-14" style="--acc:var(--obs)">
+          <button class="row" aria-expanded="false" aria-controls="d14" data-dir="r" style="--from:70%;--to:90%">
+            <span class="wlabel"><span class="hdr"><span class="n">14</span><span class="chev">&#9656;</span></span>
+            <span class="t">Spans flush before the process exits</span></span>
+          </button>
+          <div class="detail" id="d14" hidden>
+            <p class="what">On shutdown the conversation is closed first, then telemetry is flushed.</p>
+            <p class="why">That order is not cosmetic. An unended span never arrives, so flushing first
+            ships every turn while dropping the conversation they hang from. The flush itself has to go
+            through the provider's delegate, because the proxy the API hands you has no flush method and
+            calling it optionally is a silent no-op.</p>
+          </div>
+        </div>
+
+        <div class="step" id="hop-15" style="--acc:var(--plat)">
+          <button class="row" aria-expanded="false" aria-controls="d15" data-dir="r" style="--from:30%;--to:90%">
+            <span class="wlabel"><span class="hdr"><span class="n">15</span><span class="chev">&#9656;</span></span>
+            <span class="t">Later, the platform extracts memory</span></span>
+          </button>
+          <div class="detail" id="d15" hidden>
+            <p class="what">When the conversation closes, extraction writes observations to the caller's
+            profile, which the next conversation recalls.</p>
+            <p class="why">Measured about 2 seconds from closed to the observation existing. The slow part
+            is the close itself, which took 5 minutes 36 seconds on an ordinary conversation and 32
+            seconds after a handoff, because the handoff writes an inactive state that short-circuits the
+            wait. Extraction also survives a handoff, which is the opposite of what was expected.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+  <!-- ============ 03 THE NUMBERS ============ -->
+  <section id="numbers">
+    <h2><span class="num">03</span> <b>Where the time goes</b> &middot; measured, with caveats</h2>
+
+    <p class="lede-sm">One attribute answers the only question that matters here.
+    <code>gen_ai.client.operation.time_to_first_chunk</code> is written natively by the AI SDK on every
+    generation, in seconds, and across 33 generations it accounted for the generation span almost exactly.
+    Read it before theorising.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Component</th><th>Measured</th><th>The caveat that comes with it</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Framework preamble</td>
+            <td>84 ms</td>
+            <td>Prompt fetch at 41 ms running alongside memory recall at 79 ms. It was 0 to 84 ms across
+            every turn measured, so the framework is not the problem.</td>
+          </tr>
+          <tr>
+            <td>Cold first generation</td>
+            <td>3838 ms</td>
+            <td>2520 input tokens on a first turn. This is the turn a caller forms an impression on.</td>
+          </tr>
+          <tr>
+            <td>Warm turns</td>
+            <td>0.51 to 0.71 s</td>
+            <td>Turns 2 and later report 1536 to 2560 cached input tokens, so prompt bloat is paid once
+            per conversation rather than per turn.</td>
+          </tr>
+          <tr>
+            <td>Tool-free turn</td>
+            <td>586 to 801 ms</td>
+            <td>The only fair baseline. Confirm any "it got slower" against one of these.</td>
+          </tr>
+          <tr>
+            <td>Turn with a tool</td>
+            <td>1282 to 1433 ms</td>
+            <td>Structurally contains the whole tool cycle: model call, tool, second model call.</td>
+          </tr>
+          <tr>
+            <td>Knowledge search</td>
+            <td>417 to 1018 ms</td>
+            <td>Nothing is spoken while a tool runs, by design.</td>
+          </tr>
+          <tr>
+            <td>Local tool lookup</td>
+            <td>1 ms</td>
+            <td>A credential-free fake. Real integrations will not look like this.</td>
+          </tr>
+          <tr>
+            <td>Handoff tool</td>
+            <td>553 ms</td>
+            <td>Two platform calls plus parking the end frame, on a live call.</td>
+          </tr>
+          <tr>
+            <td>First-audio proxy against first token</td>
+            <td>0 to 3 ms apart</td>
+            <td>A genuine result and a useful negative: nothing queues between model and socket. It is
+            <b class="warn">not</b> time to first audio.</td>
+          </tr>
+          <tr>
+            <td>Time between agent turns</td>
+            <td>65% of one call</td>
+            <td>A blend of playback, caller speech and endpointing. Never quote it as caller talk time.</td>
+          </tr>
+          <tr>
+            <td>Trailing audio after the last token</td>
+            <td>2394 ms</td>
+            <td>The final reply still playing, plus the hangup. Not visible from inside the app.</td>
+          </tr>
+          <tr>
+            <td>An upstream slow window</td>
+            <td>2 to 5 times worse</td>
+            <td>A two hour window produced the worst times on record, 6047 to 7723 ms. Provably not the
+            app: one container served both a fast and a slow call, with an identical prompt version.
+            <b class="warn">Never quote that window as a baseline.</b></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout" style="--acc:var(--app)">
+      <p class="dtitle">The lever that is actually top of the list</p>
+      <p>On a cold turn the system prompt divides roughly into the base prompt at 33 percent, the injected
+      memory block at 35 percent, and five tool definitions at 32 percent. Those are character shares
+      rather than token counts: the tokenizer reported 2520 input tokens where characters divided by four
+      predicts about 3132, so trust the shares and not the absolutes.</p>
+      <p>The memory block is the part that moves. Across one day, same caller, it went 2341, then 1837,
+      then 3303, then <b>4412 characters</b>, a net 88 percent growth, and it is not monotonic, so the
+      platform rewrites rather than only appends. Nothing in the composition path caps it. The prompt
+      cache absorbs it from turn 2 onward, which means it is paid precisely on the turn that is judged.</p>
+      <p>Tool descriptions are the next largest block and they are not free to trim: the knowledge search
+      description is 1244 characters and is load-bearing, because relevance scores are normalised per
+      query and cannot gate on their own.</p>
+    </div>
+
+    <div class="callout" style="--acc:var(--obs)">
+      <p class="dtitle">Two queries that settle an argument</p>
+      <p>The resource attribute <code>host.name</code> is a container hash for a containerised run and the
+      machine hostname for a host run, which is the fastest way to tell which process produced a trace,
+      and how container cold start was ruled out as a cause.</p>
+      <p>The memory block size is readable per conversation as a character count on the recall
+      observation, with no code change required.</p>
+    </div>
+  </section>
+  <!-- ============ 04 LIBRARY LESSONS ============ -->
+  <section id="tac">
+    <h2><span class="num">04</span> <b>Working with the Agent Connect library</b> &middot; assumption against reality</h2>
+
+    <p class="lede-sm">The framework that boots both channels, owns the WebSocket, and provides the memory,
+    knowledge and handoff tools. Everything below was found by reading its source or by watching it run at
+    version 2.2.0, and the right instinct throughout was to <b>extend it rather than work around it</b>.
+    Its 31 test files are usable as evidence, which is worth knowing because it is easy to assume a
+    vendor bundle ships none.</p>
+
+    <div class="lblock">
+      <h3>A &middot; Boot and wiring</h3>
+      <div class="tablewrap">
+        <table class="wide-first">
+          <thead>
+            <tr><th>The assumption</th><th>What is actually true</th><th>Symptom when you get it wrong</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Registration order is cosmetic</td>
+              <td>The server constructor snapshots channels, and the inbound webhook route is only
+              registered if a webhook channel already exists.</td>
+              <td>A 404 on the webhook with one log line about no channels configured.</td>
+            </tr>
+            <tr>
+              <td>Construction is local work</td>
+              <td>Creating the client makes a network call to read the orchestrator configuration, and it
+              rethrows.</td>
+              <td>Boot fails for reasons outside the process, so config resolution has to tolerate it.</td>
+            </tr>
+            <tr>
+              <td>Optional config keys can be omitted</td>
+              <td>Several path options wrap a default in a preprocess step, so the key is required even
+              though a value is not. Pass explicit undefined.</td>
+              <td>A schema error at construction, from a key you deliberately left out.</td>
+            </tr>
+            <tr>
+              <td>The library reads the environment for you</td>
+              <td>It can, and taking that path makes it a second place the environment is read.</td>
+              <td>Two sources of truth for configuration, and a boot that cannot degrade politely.</td>
+            </tr>
+            <tr>
+              <td>Inbound SMS arrives on the number's webhook</td>
+              <td>It arrives through the orchestrator configuration's status callback plus bidirectional
+              capture rules, in an event envelope rather than a form post.</td>
+              <td>A 200 response, an unhandled-event log line, and total silence.</td>
+            </tr>
+            <tr>
+              <td>The server can own the listen call</td>
+              <td>Its start method calls listen itself, which forces two mutually exclusive boot paths
+              where only one of them listens.</td>
+              <td>Either a double listen or a process that never binds, depending on which path you took.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="lblock">
+      <h3>B &middot; What it does not do, so you must</h3>
+      <div class="tablewrap">
+        <table class="wide-first">
+          <thead>
+            <tr><th>The assumption</th><th>What is actually true</th><th>Symptom when you get it wrong</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>It composes the prompt from memory for you</td>
+              <td>Its prompt builder has zero callers inside the library. What reaches the model is
+              entirely the host's decision.</td>
+              <td>You believe a memory block is being injected when nothing is. This corrected an
+              assumption that survived two whole tasks here.</td>
+            </tr>
+            <tr>
+              <td>Every channel hands you an abort signal</td>
+              <td>Only the voice path does. A text turn has no timeout unless you synthesize one.</td>
+              <td>An unbounded turn leaves its span unended, so the turn never reaches the trace at all.</td>
+            </tr>
+            <tr>
+              <td>There is an end-session method</td>
+              <td>There is not. It builds the end frame for a handoff and parks it, and only drains it on
+              the non-streaming send path.</td>
+              <td>On a streaming channel the parked frame is never sent. The socket is public, so writing
+              the documented frame yourself needs no internals.</td>
+            </tr>
+            <tr>
+              <td>Returning an empty reply is safe</td>
+              <td>An empty string is a silent no-reply, and a thrown error inside the handler is caught
+              and logged.</td>
+              <td>Nothing is sent and nothing is raised. Four further conditions drop an inbound message
+              the same way, all of them logging rather than raising.</td>
+            </tr>
+            <tr>
+              <td>The message-ready callback is per channel</td>
+              <td>It is a single global slot on the client, not on the channel.</td>
+              <td>The second channel silently replaces the first. Branch on the channel inside one
+              handler.</td>
+            </tr>
+            <tr>
+              <td>Its callback route can double as your call-action URL</td>
+              <td>That route answers plain text, never markup, and its payload schema has no field for
+              handoff data, so a non-strict parse strips it.</td>
+              <td>The callback keeps arriving and looks healthy while the handoff data is discarded and
+              the call drops. This one refuted an earlier written conclusion that the two could coexist.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="lblock">
+      <h3>C &middot; Memory, and the shape of the tools</h3>
+      <div class="tablewrap">
+        <table class="wide-first">
+          <thead>
+            <tr><th>The assumption</th><th>What is actually true</th><th>Why it matters</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Memory mode controls what the model sees</td>
+              <td>It controls exactly one thing: whether recall runs, and how often. The response is
+              handed to your callback and you decide what to do with it.</td>
+              <td>Choosing a mode is a latency decision. Composing the block is a separate, host-owned
+              decision.</td>
+            </tr>
+            <tr>
+              <td>A conversation can benefit from its own memory</td>
+              <td>Extraction is post-conversation only.</td>
+              <td>Memory makes the <b>next</b> conversation smart. A demo that texts once and expects
+              recall will fail, correctly.</td>
+            </tr>
+            <tr>
+              <td>Recall failure is a no-op</td>
+              <td>On failure it falls back to listing the current conversation's communications with no
+              limit.</td>
+              <td>The fallback can render the conversation into its own prompt, which is why the compose
+              step here makes that section structurally unreachable rather than trusting a config value.</td>
+            </tr>
+            <tr>
+              <td>A tool in the catalog is a tool the model has</td>
+              <td>A prompt has to name it. Typecheck, a full test suite, the boot log, the health route
+              and a tool-resolution diagnostic all passed while two new tools were dead.</td>
+              <td>Green checks do not prove a tool is offered. Only a real turn does.</td>
+            </tr>
+            <tr>
+              <td>Voice and digital handoff need separate tools</td>
+              <td>There is one tool that branches on the session channel internally, and the two wire
+              shapes are not interchangeable.</td>
+              <td>Building two was a decision that had to be reversed after reading the source.</td>
+            </tr>
+            <tr>
+              <td>Default tool descriptions are fine</td>
+              <td>The default handoff description invites a transfer whenever the model feels stuck.</td>
+              <td>Overriding descriptions is behaviour work, not copy editing.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="callout" style="--acc:var(--plat)">
+      <p class="dtitle">Shutdown is where three timeouts disagree</p>
+      <p>The library registers a graceful-shutdown plugin with no options, which means a 10 second
+      watchdog, and separately waits up to 30 seconds for WebSockets to drain. The plugin runs every
+      handler before closing the server, so a host flush registered there sits behind the 30 second wait
+      while the watchdog exits at 10. The last turn is lost, silently.</p>
+      <p>Register the plugin yourself with a longer timeout before starting, put the drain in the
+      pre-close hook rather than the close hook, since the close queue runs last and would deadlock
+      against the connections it is waiting on, and do not add your own signal handler: the plugin
+      installs one and warns about duplicates. Registering the plugin twice throws.</p>
+    </div>
+  </section>
+  <!-- ============ 05 TELEMETRY ============ -->
+  <section id="otel">
+    <h2><span class="num">05</span> <b>Instrumenting it with OpenTelemetry</b> &middot; what silently produced nothing</h2>
+
+    <p class="lede-sm">Every lesson here shares one shape: the code was correct, the span was created, and
+    nothing arrived. None of them raise, and none of them are visible in a unit test.</p>
+
+    <p class="lede-sm">This is the tree one voice turn produces. Read it before writing an assertion about
+    nesting, because two of the relationships are not what they look like.</p>
+
+<pre><b>conversation</b>                             <i>is_app_root, closedBecause: ended</i>
++- <b>caller.turn</b>                           <i>0 ms gap to the next child, by construction</i>
++- <b>turn.voice</b>                            <i>prompt received to last token sent</i>
+|  +- <b>prompt.fetch</b>                       <i>41 ms, version and label on the span</i>
+|  +- <b>memory.recall</b>                      <i>79 ms, chars: 4412</i>
+|  +- <b>prompt.compose</b>                     <i>historyMessages: 2</i>
+|  +- <b>tool.selection</b>                     <i>5 of 5 tools resolved</i>
+|  +- <b>llm.stream</b>                         <u>a timer running alongside, NOT the parent</u>
+|  +- <b>invoke_agent</b>                       <i>AI SDK, parented to turn.voice directly</i>
+|  |  +- step 1 <i>-&gt;</i> <b>chat &lt;model&gt;</b>          <i>gen_ai.client.operation.time_to_first_chunk</i>
+|  |  +- <b>execute_tool</b> search_knowledge   <i>417 to 1018 ms</i>
+|  |  `- step 2 <i>-&gt;</i> <b>chat &lt;model&gt;</b>          <i>composes what the caller hears</i>
+|  `- <b>tts.send</b>                           <i>150 to 804 ms</i>
+`- <b>caller.turn</b>                           <u>a blend: playback, speech, endpointing</u></pre>
+
+    <div class="lblock" style="margin-top:26px">
+      <h3>A &middot; The export pipeline</h3>
+      <div class="tablewrap">
+        <table class="wide-first">
+          <thead>
+            <tr><th>The assumption</th><th>What is actually true</th><th>Symptom</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Any OpenTelemetry span reaches the backend</td>
+              <td>The span processor forwards only spans that pass its own filters for its span types.</td>
+              <td>The span is created correctly, is visible to an in-memory exporter, has a real sampled
+              trace id, and never arrives. This is the single most expensive finding on the page.</td>
+            </tr>
+            <tr>
+              <td>Custom attributes ride at the top level</td>
+              <td>The attribute builder destructures a fixed key set. Anything custom has to nest under
+              metadata, where the key is preserved verbatim.</td>
+              <td>The attribute is simply absent, with no warning.</td>
+            </tr>
+            <tr>
+              <td>A flush on the global provider works</td>
+              <td>The tracer provider you get back is a proxy with no flush method, so an optional call
+              resolves to nothing. Flush through its delegate.</td>
+              <td>Spans are lost at exit and the code reads as if it flushed.</td>
+            </tr>
+            <tr>
+              <td>Metadata values round-trip</td>
+              <td>The serializer's guard is truthiness, so false and an empty array survive while null is
+              dropped.</td>
+              <td>A deliberately null field produces no attribute rather than an explicit null.</td>
+            </tr>
+            <tr>
+              <td>Flush, then shut down</td>
+              <td>An unended span never arrives, so the conversation has to be closed before the flush.</td>
+              <td>Flushing first ships every turn while dropping the conversation they hang from.</td>
+            </tr>
+            <tr>
+              <td>Missing spans mean broken instrumentation</td>
+              <td>A container image copies the source at build time rather than mounting it.</td>
+              <td>A real call against a stale image returns a trace with none of the new spans, which
+              reads as "the instrumentation does not work" instead of "the code was never deployed".</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="lblock">
+      <h3>B &middot; Linking and nesting</h3>
+      <div class="tablewrap">
+        <table class="wide-first">
+          <thead>
+            <tr><th>The assumption</th><th>What is actually true</th><th>Symptom</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Wrapping the model call in your own span parents it</td>
+              <td>Starting an observation does not make it the active context, so the SDK's spans parent
+              to the turn span instead.</td>
+              <td>Your span is a timer running alongside, which is why its duration and the model span's
+              are near identical rather than nested. An earlier version of our own diagram drew this
+              wrongly, and reading the parent id settled it.</td>
+            </tr>
+            <tr>
+              <td>The prompt link goes in telemetry metadata</td>
+              <td>That field does not exist on the current SDK. The link rides on runtime context, must be
+              opted into, and must be a plain object with a string name and a numeric version.</td>
+              <td>A stringified version is discarded with no warning and the metrics view stays empty.</td>
+            </tr>
+            <tr>
+              <td>Any span can carry the prompt version</td>
+              <td>Ingestion computes the prompt link only for generation observations.</td>
+              <td>Per-version latency aggregation works at the model-call level with a native
+              time-to-first-token column, while turn-level timings are filterable but not aggregated.</td>
+            </tr>
+            <tr>
+              <td>Span names start with the SDK's own prefix</td>
+              <td>They follow the OpenTelemetry generative-AI convention.</td>
+              <td>Anything keyed on the old prefix matches nothing.</td>
+            </tr>
+            <tr>
+              <td>An in-memory exporter proves the pipeline</td>
+              <td>It cannot exercise the real processor's filters, and a bare provider makes context
+              propagation a no-op.</td>
+              <td>The first harness run reported six trace ids for one call. It needs an async context
+              manager and a propagator, and the live stack is still the only real proof.</td>
+            </tr>
+            <tr>
+              <td>A 404 from the read API means no data</td>
+              <td>In events-only mode the trace read API is disabled and answers 404 by design.</td>
+              <td>You go chasing a telemetry bug that does not exist. Verify in the UI, or read the event
+              tables directly.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="callout" style="--acc:var(--app)">
+      <p class="dtitle">Say this accurately: the traces contain personal data</p>
+      <p>The app's own spans and events pass through a scrubbing hook. The model's spans do not: they carry
+      the full prompt and the full completion, which on these channels includes whatever the caller said
+      and whatever memory was injected. The memory store holds personal data too, since profile traits
+      include a phone number and observations are prose taken from the transcript.</p>
+      <p>So this stack must not be described as keeping personal data out of the observability layer. What
+      is true is narrower: log lines and the app's own event payloads are scrubbed, and the tool layer
+      projects communications down and drops recipients, with a test asserting it.</p>
+    </div>
+  </section>
+  <!-- ============ 06 WHAT IS PROVEN ============ -->
+  <section id="proven">
+    <h2><span class="num">06</span> <b>What is proven, and what is not</b></h2>
+
+    <div class="cards">
+      <div class="card" style="--acc:var(--obs)">
+        <h4>Proven on real traffic</h4>
+        <span class="api">measured, not inferred</span>
+        <ul>
+          <li>Both channels answered live, by the same turn function.</li>
+          <li><strong>Memory across separate conversations</strong>, with the recall arriving on the next
+          conversation and no tool call.</li>
+          <li>Barge-in on real audio, twice in one call.</li>
+          <li>A knowledge search answering a policy question on both channels.</li>
+          <li>An agent-initiated hangup, with the goodbye audible before the socket closed.</li>
+          <li>A caller transferred to a browser softphone that a human answered, carrying the reason and
+          the transcript.</li>
+          <li>A held event stream surviving 184.7 seconds behind a proxy, ending only when the process
+          stopped.</li>
+          <li>A clean shutdown that force-closed that connection and exited zero in under a second.</li>
+        </ul>
+        <p class="when">Each verified by executing it</p>
+      </div>
+
+      <div class="card" style="--acc:var(--app)">
+        <h4>Not exercised yet</h4>
+        <span class="api">honest gaps</span>
+        <ul>
+          <li><strong>The barge-in telemetry path.</strong> The interrupt attributes are proven by tests
+          and a diagnostic; both instrumented calls report zero aborted turns.</li>
+          <li><strong>The long shutdown drain.</strong> It needs a termination signal mid-call, which has
+          not happened.</li>
+          <li><strong>A signature rejection on the media socket</strong>, which is invisible by
+          construction.</li>
+          <li>First byte of audio and end of playback, which the platform does not expose.</li>
+          <li>Reasoning-effort tuning. Model parameters were empty on all 33 generations, and no
+          reasoning-token attribute exists on the span, so this is a hypothesis rather than a measurement.</li>
+        </ul>
+        <p class="when">Named rather than quietly omitted</p>
+      </div>
+
+      <div class="card" style="--acc:var(--plat)">
+        <h4>Debt taken on purpose</h4>
+        <span class="api">a demo scaffold, not a service</span>
+        <ul>
+          <li>Four unauthenticated endpoints on a stable public host: one mints a real voice access
+          token, one spends the model key unmetered, one fabricates observability events, and one lists
+          the names of unset variables.</li>
+          <li>Conversation state is process local, so a restart drops every conversation mid-call and two
+          instances would not share them.</li>
+          <li>Basic auth is not the bolt-on it looks like: browsers only show the dialog for top-level
+          navigations, fetch gets a bare 401, and an event stream cannot send the header at all.</li>
+          <li>The mitigation is operational. The stack does not restart itself after a reboot, so bringing
+          the public surface up is always an explicit act.</li>
+        </ul>
+        <p class="when">Accepted to get it live and testable</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 07 TRANSFERABLE ============ -->
+  <section id="rules">
+    <h2><span class="num">07</span> <b>Rules worth carrying to the next build</b></h2>
+
+    <div class="tablewrap">
+      <table class="wide-first">
+        <thead>
+          <tr><th>Rule</th><th>What it cost to learn</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Degrade loudly at boot, never refuse to start</td>
+            <td>An empty configuration still boots here. Each missing variable logs what it costs, a health
+            route reports a capability map, and only the routes that genuinely cannot work refuse. A demo
+            that will not start is undebuggable at the worst possible moment.</td>
+          </tr>
+          <tr>
+            <td>A green check is not a proof</td>
+            <td>Typecheck, a full suite, the boot log, a health route and a tool-resolution diagnostic all
+            passed while two tools were dead. Only a real turn caught it.</td>
+          </tr>
+          <tr>
+            <td>Instrument the gaps, not just the work</td>
+            <td>Before tiling the timeline, a 57 second call showed 12 seconds of spans and 45 seconds of
+            unexplained gap. Covering the gap with its own span turned "where did the time go" into a
+            reading rather than an investigation.</td>
+          </tr>
+          <tr>
+            <td>Find the native attribute before theorising</td>
+            <td>The one attribute that answers "us or the model" was already on every generation and
+            nothing here had read it. The whole latency investigation became one query.</td>
+          </tr>
+          <tr>
+            <td>Enforce architectural boundaries with tests</td>
+            <td>The rules that matter here all fail silently: a vendor import in the wrong folder, a
+            console call bypassing the scrubber, an undocumented environment variable. Each is a test, and
+            some tests assert the rule sets themselves are intact.</td>
+          </tr>
+          <tr>
+            <td>Restart or rebuild before concluding a fix failed</td>
+            <td>A verified-correct cache appeared to do nothing because the process predated the commit by
+            53 minutes. Separately, a real call ran against a container image built hours earlier. Both
+            read as broken code.</td>
+          </tr>
+          <tr>
+            <td>Keep the vendor library in one folder</td>
+            <td>One folder imports the platform SDK and the agent framework. That is what lets a browser
+            drive the whole agent with no credentials, which is a runtime proof rather than a claim.</td>
+          </tr>
+          <tr>
+            <td>A claim inherited from an approved plan is still a claim</td>
+            <td>Approval means the approach is agreed, not that every factual assertion in it was checked.
+            The written record for this build corrects itself in more than twenty places, and several of
+            those corrections were confidently worded first time around.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout" style="--acc:var(--plat)">
+      <p class="dtitle">Two test-method traps that produce clean, wrong numbers</p>
+      <p>Texting the agent from a second number on the same account doubles every reply. Both message legs
+      share the same pair of endpoints, so the capture rule matches each one, and the mechanism is two
+      creation events about 300 ms apart. Measured against an external handset it is exactly one reply per
+      inbound. Any "reply count" from an on-account number is inflated.</p>
+      <p>Knowledge search scores are normalised per query. An out-of-scope question scored 0.816 while the
+      in-scope question's own second hit scored 0.54, so no threshold can separate them and the tool
+      description has to carry the scoping.</p>
+    </div>
+  </section>
+
+  <!-- ============ 08 VERIFICATION ============ -->
+  <section id="verification">
+    <h2><span class="num">08</span> <b>Verification and open items</b></h2>
+
+    <div class="tablewrap">
+      <table class="wide-first">
+        <thead>
+          <tr><th>Item</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Every number on this page</td>
+            <td>Taken from the project's own measurement record, which states what was executed to produce
+            it. Latency figures are from a single instrumented call and a 33-generation sample on one day,
+            so they are a shape rather than a benchmark.</td>
+          </tr>
+          <tr>
+            <td>Framework overhead</td>
+            <td>Stated as 84 ms here. Two earlier measurements on the same question read 46 ms and about
+            79 ms on different dates, and no single reconciled figure exists.</td>
+          </tr>
+          <tr>
+            <td>Memory share of the prompt</td>
+            <td>Quoted as 35 percent of the system prompt including tool definitions. A 52 percent figure
+            also appears in the source record against a narrower denominator.</td>
+          </tr>
+          <tr>
+            <td>Barge-in telemetry on a live call</td>
+            <td><b class="warn">Open.</b> Proven by tests and a diagnostic only.</td>
+          </tr>
+          <tr>
+            <td>The long shutdown drain</td>
+            <td><b class="warn">Open.</b> Needs a termination signal during a live call.</td>
+          </tr>
+          <tr>
+            <td>Reasoning-effort as a latency lever</td>
+            <td><b class="warn">Open, and explicitly a hypothesis.</b> The spans carry no attribute that
+            would confirm or refute it.</td>
+          </tr>
+          <tr>
+            <td>Library behaviour</td>
+            <td>Read from the installed bundle at version 2.2.0, whose documentation comments are intact.
+            A minor version could move any of it.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <p>Compiled <b>16 September 2026</b>. Sourced from the project's own verified findings record and from
+    public product documentation only. No account identifiers, customer names or account-specific
+    configuration appear on this page.</p>
+    <p>Anything marked open above is an open item rather than an assumption. Where two measurements of the
+    same quantity disagree, both are shown rather than averaged.</p>
+  </footer>
+</div>
+<script>
+  function panelFor(el) {
+    return document.getElementById(el.getAttribute('aria-controls'));
+  }
+
+  function toggleStep(row, force) {
+    var step = row.closest('.step');
+    var panel = panelFor(row);
+    if (!panel) return;
+    var open = (force === undefined) ? row.getAttribute('aria-expanded') !== 'true' : force;
+    row.setAttribute('aria-expanded', String(open));
+    step.classList.toggle('open', open);
+    panel.hidden = !open;
+  }
+
+  // One node panel open at a time: the panels are long enough that two open at once
+  // pushes the diagram off screen.
+  function toggleNode(node) {
+    var wasOpen = node.getAttribute('aria-expanded') === 'true';
+    document.querySelectorAll('.node').forEach(function (n) {
+      n.setAttribute('aria-expanded', 'false');
+      n.classList.remove('sel');
+    });
+    document.querySelectorAll('.node-detail').forEach(function (d) { d.hidden = true; });
+    if (!wasOpen) {
+      node.setAttribute('aria-expanded', 'true');
+      node.classList.add('sel');
+      var panel = panelFor(node);
+      if (panel) panel.hidden = false;
+    }
+  }
+
+  document.addEventListener('click', function (e) {
+    var bulk = e.target.closest('[data-bulk]');
+    if (bulk) {
+      var scope = document.querySelector(bulk.getAttribute('data-scope'));
+      var open = bulk.getAttribute('data-bulk') === 'open';
+      scope.querySelectorAll('.row').forEach(function (r) { toggleStep(r, open); });
+      return;
+    }
+    var row = e.target.closest('.row');
+    if (row) { toggleStep(row); return; }
+    var node = e.target.closest('.node');
+    if (node) { toggleNode(node); }
+  });
+
+  document.querySelectorAll('.node').forEach(function (n) {
+    n.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        toggleNode(n);
+      }
+    });
+  });
+
+  // Deep link to a hop: works on load and on a hash pasted into an open page.
+  function openFromHash(scroll) {
+    if (!window.location.hash) return;
+    var target;
+    try { target = document.querySelector(window.location.hash); } catch (err) { return; }
+    if (!target || !target.classList.contains('step')) return;
+    toggleStep(target.querySelector('.row'), true);
+    if (scroll) target.scrollIntoView({ block: 'center' });
+  }
+
+  window.addEventListener('hashchange', function () { openFromHash(true); });
+  openFromHash(true);
+</script>
+</body>
+</html>
