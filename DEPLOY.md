@@ -87,7 +87,7 @@ Two things about it that are easy to get wrong:
   plainly in your shell.
 
 Nothing is required to boot. Missing variables produce one warning each and a `/health` capability map;
-see [It never dies at boot](README.md#it-never-dies-at-boot).
+see [It never dies at boot](ARCHITECTURE.md#it-never-dies-at-boot).
 
 ## The two run modes
 

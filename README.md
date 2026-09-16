@@ -9,10 +9,11 @@ versioned tool selection, and every turn traced.**
 [![TypeScript](https://img.shields.io/badge/TypeScript-no%20build%20step-3178C6?logo=typescript&logoColor=white)](https://nodejs.org/api/typescript.html)
 [![Twilio](https://img.shields.io/badge/Twilio-ConversationRelay%20%C2%B7%20Orchestrator-F22F46?logo=twilio&logoColor=white)](https://www.twilio.com/docs)
 [![Langfuse](https://img.shields.io/badge/Langfuse-self--hosted%20v4-0A0A0A)](https://langfuse.com)
-[![Tests](https://img.shields.io/badge/tests-350%20passing-F22F46)](#proof-not-claims)
+[![Tests](https://img.shields.io/badge/tests-350%20passing-F22F46)](ARCHITECTURE.md#proof-not-claims)
 
 [What it shows](#what-it-shows) · [Capabilities](#capabilities) ·
-[Anatomy](#anatomy) · [Deploy](DEPLOY.md) · [Deep record](docs/HANDOFF.md)
+[How it fits together](#how-it-fits-together) · [Architecture](ARCHITECTURE.md) ·
+[Deploy](DEPLOY.md) · [Deep record](docs/HANDOFF.md)
 
 </div>
 
@@ -81,63 +82,49 @@ Six tools ship with it: `lookup_order`, `get_store_hours`, `end_call`, `retrieve
 `search_knowledge`, `handoff`. The first two are credential-free fakes, so the demo is interesting
 before any Twilio setup exists.
 
-## It never dies at boot
+## How it fits together
 
-Start it with an empty `.env` and it comes up. Each missing variable produces one warning naming **what
-that variable costs you**, `/health` returns 200 with a capability map, and only the routes that
-genuinely cannot work return 503.
+```mermaid
+flowchart LR
+  phone["Phone call"]:::caller
+  text["Text message"]:::caller
+  human["Human agent"]:::caller
 
-```jsonc
-GET /health → { "capabilities": { "llm": true, "prompts": true, "voice": true,
-                                  "sms": true, "memory": true, "handoff": true,
-                                  "knowledge": true },
-                "missing": [] }
+  cr["ConversationRelay<br/>streaming STT · TTS"]:::twilio
+  co["Conversation Orchestrator"]:::twilio
+  studio["Studio flow"]:::twilio
+  tsvc["Conversation Memory<br/>Knowledge Base"]:::twilio
+
+  adapters["server/twilio<br/>the only Twilio-aware code"]:::app
+  core["agent core — one turn<br/>prompt → model → tools → stream"]:::core
+  bench["/bench<br/>no credentials"]:::app
+  soft["/softphone<br/>screen pop + transcript"]:::app
+
+  model["OpenAI"]:::ext
+  lf["Langfuse<br/>prompt + tools in · trace out"]:::ext
+
+  phone --> cr --> adapters
+  text --> co --> adapters
+  adapters --> core
+  bench --> core
+  core --> model
+  core --> tsvc
+  core <--> lf
+  core -. "handoff tool" .-> studio --> soft --> human
+
+  classDef caller fill:#F4F4F6,stroke:#8A94A6,color:#121C2D
+  classDef twilio fill:#F22F46,stroke:#F22F46,color:#FFFFFF
+  classDef app fill:#FFFFFF,stroke:#F22F46,color:#121C2D
+  classDef core fill:#121C2D,stroke:#121C2D,color:#FFFFFF
+  classDef ext fill:#F4F4F6,stroke:#121C2D,color:#121C2D
 ```
 
-Every capability is independent. No Twilio account? The bench and the traces still work. No Langfuse?
-Prompts fall back. No knowledge base? That one tool is simply absent.
+Voice, SMS and the browser are three adapters over **one** `runTurn`. Everything channel-specific — how
+audio arrives, how a reply is delivered, how a call ends — stays in `server/twilio/`, and the core cannot
+import it.
 
-## Anatomy
-
-```
-server/
-  index.ts          boot: resolve config, degrade loudly, listen
-  config.ts         every env var → a capability. Never throws
-  http/             Fastify app, bench routes, SSE, voice-action, handoff
-  agent/            the channel-agnostic core
-    run-turn.ts       one turn: prompt + memory → model → tools → stream
-    model/            the LLM provider, swappable in one file
-    prompt/           Langfuse prompts behind a port, with compiled-in fallback
-    tools/            registry, catalog, three-way resolver
-  twilio/           the ONLY place the Twilio SDK and TAC may be imported
-  handoff/          the transcript snapshot the human agent sees before saying hello
-  obs/              bus, SSE hub, spans, PII scrubbing
-shared/             constants both sides must agree on. Self-contained, no globals
-web/                Next app: bench, softphone. Its own install root
-scripts/            seeds and diagnostics
-tests/              integration-weighted, plus tripwires on the guards
-```
-
-Three pages: `/` (landing), `/bench` (drive a turn), `/softphone` (where a handed-off caller lands).
-
-## Proof, not claims
-
-The boundaries that matter are enforced by tests, because each fails *silently* when broken: the Twilio
-import rule above, `ai`/`@ai-sdk` confined to `server/agent/model/`, no `console.*` anywhere in
-`server/` or `web/src/` (one logger carries the PII scrubber), `shared/` importing nothing outside
-itself, and every `process.env` read documented in `.env.example`.
-
-Several tests are *tripwires* asserting the rule sets themselves are intact — the failure mode of a
-guard is not a false alarm, it is passing silently forever.
-
-```bash
-pnpm typecheck && pnpm test      # 350 tests, 20 files
-```
-
-Seven `scripts/verify-*` diagnostics answer the questions you cannot answer by reading code — model
-reachability, live prompts vs the fallback, tool resolution, whether a span really reaches Langfuse,
-memory extraction, knowledge retrieval, and three real turns end to end. None of them needs a phone
-call. See [DEPLOY.md](DEPLOY.md#verify-before-you-spend-anything).
+**→ [ARCHITECTURE.md](ARCHITECTURE.md)** has the request path in detail, the capability matrix, the source
+layout, the five boundaries enforced by tests, and what a trace actually contains.
 
 ## Running it
 
@@ -163,6 +150,7 @@ that produce a green-looking stack and a silent phone call.
 
 | | |
 |---|---|
+| [**ARCHITECTURE.md**](ARCHITECTURE.md) | The moving parts: request path, capability matrix, source layout, the boundaries tests enforce, trace anatomy |
 | [**DEPLOY.md**](DEPLOY.md) | Run it, containerise it, point real phone traffic at it |
 | [**docs/HANDOFF.md**](docs/HANDOFF.md) | The deep record: what was built and *measured* task by task, where reality contradicted the plan, the latency waterfall, and the honest limits |
 | [**`.env.example`**](.env.example) | The real configuration documentation — every entry says what breaks when it is absent |
