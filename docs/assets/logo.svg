@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 180" width="620" height="180" role="img" aria-labelledby="logoTitle logoDesc">
+  <title id="logoTitle">tac-langfuse</title>
+  <desc id="logoDesc">One AI agent reachable by voice, SMS and a browser, with every turn traced.</desc>
+
+  <!-- Badge: Twilio red (#F22F46) reads on both light and dark README backgrounds. -->
+  <rect x="8" y="24" width="132" height="132" rx="34" fill="#F22F46"/>
+
+  <!-- Conversation bubble with a tail: the channel-agnostic turn. -->
+  <path fill="#FFFFFF" d="M48 52h44a16 16 0 0 1 16 16v28a16 16 0 0 1-16 16H72l-18 16a3 3 0 0 1-5-2.4V112h-1a16 16 0 0 1-16-16V68a16 16 0 0 1 16-16z"/>
+
+  <!-- Span waterfall inside the bubble: voice, text and trace in one glyph. -->
+  <rect x="52" y="74" width="7" height="16" rx="3.5" fill="#F22F46"/>
+  <rect x="65" y="66" width="7" height="32" rx="3.5" fill="#F22F46"/>
+  <rect x="78" y="71" width="7" height="22" rx="3.5" fill="#F22F46"/>
+  <rect x="91" y="63" width="7" height="38" rx="3.5" fill="#F22F46"/>
+
+  <!-- Wordmark. Muted grey for the second half so the lockup survives both colour schemes. -->
+  <text x="170" y="98" font-family="'Inter','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="62" font-weight="700" letter-spacing="-1.5">
+    <tspan fill="#F22F46">tac</tspan><tspan fill="#8A94A6">-langfuse</tspan>
+  </text>
+  <text x="172" y="132" font-family="'Inter','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="17" font-weight="600" letter-spacing="2.8" fill="#8A94A6">VOICE · SMS · BROWSER · TRACED</text>
+</svg>

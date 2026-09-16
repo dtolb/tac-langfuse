@@ -4,8 +4,9 @@ A **Twilio demo scaffold**: one AI agent reachable by voice, SMS and a browser, 
 prompts, versioned tool selection, and per-turn tracing. Node 24 runs the TypeScript directly —
 **there is no build step** for the agent.
 
-`README.md` is the front door for a human cloning it. This file is the part you need before changing
-anything.
+`README.md` is the front door for a human cloning it — what the scaffold shows, not how to run it.
+`DEPLOY.md` is the operator's guide (configuration, both run modes, containers, the Twilio side, the
+diagnostics). This file is the part you need before changing anything.
 
 ## Read first
 
