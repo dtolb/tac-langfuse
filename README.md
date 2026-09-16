@@ -11,7 +11,7 @@ versioned tool selection, and every turn traced.**
 [![Langfuse](https://img.shields.io/badge/Langfuse-self--hosted%20v4-0A0A0A)](https://langfuse.com)
 [![Tests](https://img.shields.io/badge/tests-350%20passing-F22F46)](ARCHITECTURE.md#proof-not-claims)
 
-[What it shows](#what-it-shows) · [Capabilities](#capabilities) ·
+[What it shows](#what-it-shows) · [Capabilities](#capabilities) · [Tools](#tools) ·
 [How it fits together](#how-it-fits-together) · [Architecture](ARCHITECTURE.md) ·
 [Deploy](DEPLOY.md) · [Deep record](docs/HANDOFF.md)
 
@@ -34,40 +34,33 @@ mature implementations have and proofs-of-concept never do.
 
 ## What it shows
 
-### 1. Telemetry you can argue with
+**1. Telemetry you can argue with**
 
-Every turn is a Langfuse trace: prompt fetch, tool selection, the model call, each tool execution,
-first-token latency. A voice trace is **tiled** — `turn.voice` covers prompt-received → last-token-sent,
-`caller.turn` covers every instant between two turns, and the two alternate with 0 ms of gap. So "the
-demo felt slow" becomes a waterfall, and "is it us or the model?" is one attribute
-(`gen_ai.client.operation.time_to_first_chunk`) rather than an investigation.
+- Every turn is one Langfuse trace: prompt fetch, tool selection, model call, each tool, first-token latency.
+- Voice traces are **tiled** — `turn.voice` and `caller.turn` alternate with 0 ms of gap, so the root span is fully accounted for.
+- "Is it us or the model?" is one attribute, not an investigation.
 
-Measured across 33 generations: the framework costs **84 ms**. Everything else is model time.
+**2. Prompts that ship without a deploy**
 
-### 2. Prompts that ship without a deploy
+- Prompt, model and tool list live in Langfuse, versioned together.
+- Changing behaviour is a revision labelled `production` — live in ~20 s, no redeploy.
+- Langfuse down? Compiled-in defaults take over and report their version as `fallback`, so a degraded demo is visible rather than silently different.
 
-Prompts, and the model + tool list that go with them, live in Langfuse. Changing the agent's behaviour
-is a prompt revision labelled `production`, live in about 20 seconds, with no redeploy and no code
-review. When Langfuse is unreachable the compiled-in defaults take over and honestly report their
-version as `fallback`, so a degraded demo is visible rather than silently different.
+**3. Tool selection as data**
 
-### 3. Tool selection as data
+- Which tools the agent has, and how each is *described*, is versioned with the prompt.
+- A three-way resolver reconciles the prompt's list against a compiled-in catalog and the live credentials.
+- Descriptions are load-bearing: one long one is the difference between the knowledge base being used and being ignored.
 
-Which tools the agent has — and how each one is *described*, which is the part that actually decides
-whether the model calls it — is versioned alongside the prompt, resolved through a three-way resolver
-against a compiled-in catalog. Tool descriptions turn out to be load-bearing: one long description is
-the difference between the knowledge base being used and being ignored.
+**4. A core that provably does not know about Twilio**
 
-### 4. A core that provably does not know about Twilio
-
-`/bench` streams a complete agent turn in the browser with **no Twilio credentials at all**. That is not
-a claim about import strings — the Twilio SDK and `twilio-agent-connect` may only be imported from
-`server/twilio/`, a rule a test enforces, so the bench is a *runtime* proof that voice, SMS and the
-browser are three adapters over one agent.
+- `/bench` streams a full agent turn with **no Twilio credentials at all**.
+- The Twilio SDK and `twilio-agent-connect` may only be imported from `server/twilio/` — enforced by a test.
+- So the bench is a *runtime* proof that voice, SMS and the browser are three adapters over one agent.
 
 ## Capabilities
 
-| | |
+| Capability | What it does |
 |---|---|
 | **Voice** | Inbound calls over ConversationRelay — streaming STT/TTS, barge-in on real audio, and the agent can hang up by itself |
 | **SMS** | Inbound texts through Conversation Orchestrator, answered by the same agent code |
@@ -78,9 +71,27 @@ browser are three adapters over one agent.
 | **Versioned prompts** | Prompt + model + tool list in Langfuse, with compiled-in fallback |
 | **Twilio-free bench** | A full streaming turn in a browser with no credentials |
 
-Six tools ship with it: `lookup_order`, `get_store_hours`, `end_call`, `retrieve_profile_memory`,
-`search_knowledge`, `handoff`. The first two are credential-free fakes, so the demo is interesting
-before any Twilio setup exists.
+Each is independent — see the [capability matrix](ARCHITECTURE.md#capabilities-and-what-each-one-costs)
+for what its absence costs.
+
+## Tools
+
+| Tool | Needs | Offered on | What it does |
+|---|---|---|---|
+| `lookup_order` | nothing | voice · text | Looks up a demo order by number. A credential-free fake |
+| `get_store_hours` | nothing | voice · text | Opening hours for a named store; returns the real locations for anything else. Also a fake |
+| `search_knowledge` | Knowledge Base | voice · text | Answers policy questions — returns, refunds, shipping, warranty — from whole written articles |
+| `retrieve_profile_memory` | Memory store | text | Searches the caller's *past* conversations directly, beyond what the injected context already carries |
+| `end_call` | voice | voice | Hangs up. `requires: 'voice'`, so on a text-only process it degrades instead of silently doing nothing |
+| `handoff` | Studio flow + softphone | voice · text | Snapshots the transcript and the reason, then transfers the caller to a human |
+
+The first two work before any Twilio setup exists, which is what makes a fresh clone interesting. The
+last four appear only once their capability does — a tool the credentials cannot support is absent from
+the list rather than present and failing.
+
+Which tools a given turn actually offers is the **prompt's** call, not the catalog's:
+`demo-agent-voice` names five and deliberately omits `retrieve_profile_memory`, `demo-agent-text` names
+four. Both lists are editable in Langfuse without touching code.
 
 ## How it fits together
 
@@ -148,7 +159,7 @@ that produce a green-looking stack and a silent phone call.
 
 ## Learn more
 
-| | |
+| Document | What's in it |
 |---|---|
 | [**ARCHITECTURE.md**](ARCHITECTURE.md) | The moving parts: request path, capability matrix, source layout, the boundaries tests enforce, trace anatomy |
 | [**DEPLOY.md**](DEPLOY.md) | Run it, containerise it, point real phone traffic at it |

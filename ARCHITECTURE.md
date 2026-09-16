@@ -102,9 +102,12 @@ tests/              integration-weighted, plus tripwires on the guards
 Three pages: `/` (landing), `/bench` (drive a turn with no credentials), `/softphone` (where a handed-off
 caller lands — open it *before* the call, or the transfer rings nothing).
 
-Six tools ship with it: `lookup_order`, `get_store_hours`, `end_call`, `retrieve_profile_memory`,
-`search_knowledge`, `handoff`. The first two are credential-free fakes, so the demo is interesting before
-any Twilio setup exists.
+The six tools are tabulated in [README.md](README.md#tools). Their definitions live in
+`server/agent/tools/catalog.ts`, except `search_knowledge` and `retrieve_profile_memory`, which are built
+from a live TAC handle in `server/twilio/builtin-tools.ts` — so they are absent from the process-wide
+catalog *by construction* and present only in the augmented one `bootTac` builds. That distinction is why
+the tool preflight logs them at debug rather than as errors: reporting them on every bare-laptop run
+would train you to ignore the line that does matter, a genuine typo in a checked-in prompt.
 
 ## Proof, not claims
 
