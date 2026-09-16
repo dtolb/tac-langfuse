@@ -2024,8 +2024,25 @@ live-stack run above is the real proof.
 the diagnostic. Talking over the agent on the next call is all it takes; until then treat that one branch
 as unverified.
 
+## OTEL injection surface + agent-builder survey, researched 2026-09-16 — DOCUMENTATION ONLY, nothing run
+
+Two public pages were published from this work: `/tac-otel-instrumentation` and `/tac-agent-builder-options` on `pages-4296.twil.io`. Full provenance, all 18 research files, and the record-then-verdict pairs are in `docs/research/2026-09-16-otel-and-agent-builders/` — read its `README.md` first. **Nothing in that survey was executed against a candidate.** Every builder verdict is source reading at a named commit plus published docs; no container was started and no call was placed. Do not act on a recommendation there without running the spike it names.
+
+Three findings that change how this repo's own code should be read:
+
+**`onMessageReady` is NOT the streaming path, and this corrects the obvious reading of TAC.** It is the non-streaming auto-send convenience: return a string and TAC sends one frame with `last: true`; return `null`/`void` and it sends nothing. Streaming happens through **`VoiceChannel.sendStreamingResponse(conversationId, stream, { signal })`**, a *public* method taking an `AsyncIterable<string>` and doing one synchronous `ws.send` per chunk. A turn span designed around the callback measures the wrong interval on voice. This is also why an external agent runtime *could* feed ConversationRelay: the seam is a method you call back into, and it does not care whether the iterable is fed by a library or a socket.
+
+**Two properties of TAC's private state that bear on any added network hop, both read from the shipped bundle.** Prompt frames are chained — turn N+1 is dispatched as `previousPrompt.then(() => handlePromptMessage(...))` — so it cannot start until turn N's handler resolves. That head-of-line property is exactly where a remote call would land. And `retrieveMemoryIfEnabled` is awaited *before* the prompt handler fires, so TAC's own recall is serial and upstream of anything the handler controls. **Corollary: the repo's `memory.recall` span does not measure TAC's recall** — it measures composing the memory block from the payload plus a profile lookup, which is why it genuinely runs concurrent with `prompt.fetch`. Anyone reading the waterfall and concluding TAC's platform recall is concurrent has mislabelled it.
+
+**No candidate accepts a W3C `traceparent`; twelve were checked.** Mastra does in process, none over HTTP. TAC 2.2.0 has zero matches for `@opentelemetry`, `AsyncLocalStorage` or `traceparent`, so every `GENERATION` span comes from the AI SDK **in this process**, and `gen_ai.client.operation.time_to_first_chunk` is a literal string inside that package rather than anything Twilio ships. Moving the model call out deletes the instrument the latency section above depends on. Two related traps recorded there: the spec's *span* attribute for the same measurement is `gen_ai.response.time_to_first_chunk` (the SDK emits the *metric* name as a span attribute), and the GenAI conventions have moved out of the main semconv repo with no tagged release, so cite the development schema URL rather than a version.
+
+⚠ **Requirement-shaped asymmetry worth knowing before any agent-runtime change:** `MessageReadyCallback` returns `Promise<string | null | void>` with **no streaming sink at all**, and its `abortSignal` is *optional* where the voice `prompt` payload's is *required*. Token-level attributes on SMS and chat are not available at any price, and a first-token number on a messaging turn would be a fabrication.
+
+`.otel-check/` in the repo root (if still present) holds nine TypeScript files that compile clean against the real 2.2.0 types — the verification behind the published code blocks. It is scratch, not part of the build.
+
 ## Gaps and honest limits
 
+- **The 2026-09-16 agent-builder survey is documentation-only.** Twelve candidates, no execution. Its own open-items section is the authority on what is unproven; the largest single gap is that no candidate's in-process or over-the-wire time to first delta was measured, so none can be compared against the 84 ms preamble ceiling.
 - **Latency: no longer deferred, and now measured properly — see "Latency, investigated 2026-09-15"
   above, which supersedes this bullet.** T9's finding (preamble 46 ms; cost is in sequential model
   round-trips, not `runTurn`) was re-confirmed with the native `time_to_first_chunk` attribute. What T9

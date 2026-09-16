@@ -1,0 +1,2509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Injecting OpenTelemetry into Twilio Agent Connect: the extension surface, five code layers, and what stays invisible</title>
+<meta name="description" content="Agent Connect ships no telemetry of its own. Where the real injection points are, why the streaming seam is a public method you call rather than a callback you are handed, five layers of instrumentation code, and the three quantities no span in this process can measure.">
+<link rel="icon" href="data:image/x-icon;base64,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vf/Hqc3/2sbf/+7l8f/59vr//fz9//bx+P/cyeP/uZXJ/5Jbrf+DQ6P/fTuh/306ov98OaT/fDmm/3s4p/97N6n/ejeq/no2rPp6Nq60eTWwb5JYY5iSV2XMkVZm/5BVZ/+QVGn/j1Rr/49TbP+OUm7/jlFv/45Rcv+gbYr/vZqv/+nd5f/59vj//v3+//n2+P/n2uT/zrTJ/66EqP+ZZJT/jE+H/4dIhP+GR4b/hkaH/4VGif+FRYv/hUWN/4pNk/+ZZKP/sIa5/9G51//p3uz/+vj7//7+/v/28fj/4NDm/6yCv/+PVar/fjyf/307of99OqL/fDmk/3w5pv97OKf/ezep/3o3qv97N6zMeTWumZNZYrqSV2PckVZk/5FWZv+QVWf/kFRp/49Ua/+PU2z/j1Nv/5Rbd/+3kKX/387Y//fy9f/+/f3/+fb4/+LT3v+/nrf/nmuT/5BWhv+LToL/iEqC/4dJg/+HSIT/hkeG/4ZGh/+FRon/hUWL/4VGjf+HSZH/jVGY/51rqf/Cosr/59rq//r4+//9/P3/8+31/9K73P+nebv/gkKg/348oP99O6H/fTqi/3w5pP98Oab/ezin/3s3qf96N6rdezetupNZYNKTWGHokldj/5FWZP+RVmb/kFVn/5BUaf+PVGv/k1ly/6Z2jP/Os8D/8+3w//z7/P/38/b/5tnh/7+etf+ldZf/l2CK/6NymP+rf6P/rYGm/6FwnP+TWo//iEqG/4hKiP+UXJX/oXCk/6uAr/+meKz/nGik/5FYnP+jdK7/wqLK/+ne7P/59vr/+/n8/+zi7/+/n83/k1ur/4FBoP9+PJ//fTuh/306ov98OaT/fDmm/3s4p/97OKnpezir0pNZXuWTWV/yklhh/5JXY/+RVmT/kVZm/5BVZ/+QVGn/mGJ3/7yYp//i0tn//v3+//79/v/r4Ob/zLHB/59sjP+YYof/pnaY/8apv//WwdL/2cXW/8aowf+oe6P/kFaM/5NakP+sgaz/yq7K/9nG2//Tu9X/vp3D/5tmo/+RWJz/nWup/9G51//u5fH//v3+//z6/P/Xwt//qXy7/4dJov9/PJ7/fjyf/307of99OqL/fDmk/3w5pv97OKfyezep5ZRaXfCTWV74k1lf/5JYYf+SV2P/kVZk/5FWZv+SWGr/oW+B/9K5w//u5un//v3+//r4+f/Wwcz/rYKb/5Naff+neZf/y7DC/+3j6v/38vb/9/L2//Do7v/Kr8b/qHqj/66Eq//QuM//8+zz//fz9//28fb/6N3p/76cwv+caKT/jVGY/7CGuf/ax9///fv9//79/v/m2uv/wqLO/49Vpv+AP53/fzye/348n/99O6H/fTqi/3w5pP98Oab4fDmo8JRbW/eUWlz7k1le/5NZX/+SWGH/kldj/5FWZP+YYXD/rYGP/+HR1//38vT//Pr7/+7l6v/EpbX/m2aC/5FWeP+ziqP/3s3Y//j19////////v7+//37/P/ax9f/upW0/8Ghvv/g0N///v3+///////+/v7/9fD2/9K61P+md6z/h0mR/5lko//Hqs3/8+31//37/f/x6vP/1b/c/5llrf+ERZ7/fz2c/388nv9+PJ//fTuh/306ov98OaT7fDmm95VbWfyUW1v+lFpc/5NZXv+TWV//klhh/5JXY/+eanb/uZOd/+zi5f/8+vv/+fb3/+DQ1/+1jaD/kFVz/5BVdf+3kaf/5Nbe//n3+P////////////79/v/fztv/waG8/8mtxf/k1+P//v7+////////////9/P3/9nE2v+rf6//hUaN/4pNk/+2kL3/5trp//r3+//49fn/49To/6V2tf+KTaH/gD6b/389nP9/PJ7/fjyf/307of99OqL+fDmk/JVcV/6VW1n/lFtb/5RaXP+TWV7/k1lf/5JYYf+kc33/w6Oq//Hq7P/+/v7/9vHz/9K5w/+rfpH/jlJu/45ScP+ug5r/1sDN//by9f///////v3+//r3+f/Uvc7/sYeo/7iSsf/ax9j//Pv8//7+/v/+/f7/8+zz/8mtyv+hcKT/hUWL/4VFjf+rf7L/2MTc//fz+P/8+/3/6uDt/6+GvP+PVqT/gD+Z/4A+m/9/PZz/fzye/348n/99O6H/fTqi/pZdVv+VXFf/lVtZ/5RbW/+UWlz/k1le/5NZX/+oeYH/yq6z//Tu8P/+/v7/9O7v/8mstv+mdoj/j1Ns/45Sbv+fa4X/t5Gm/9fCzv/j1d7/5dfg/9fD0f+4kq3/nGiP/6Bulf+8mbb/2sfY/+XX5P/g0N//0LjP/6yBrP+UXJX/hUaJ/4VFi/+kdar/zrXS//Xw9v/+/f7/7ubx/7eSwv+UXab/gT+X/4A/mf+APpv/fz2c/388nv9+PJ//fTuh/5ZeVP+WXVb/lVxX/5VbWf+UW1v/lFpc/5NZXv+rfoP/zrS4//Xw8f/+/v7/8uvt/8Ojrf+icYL/j1Rr/49TbP+SV3L/nGeB/7eRpf/GqLn/yq2//7WNp/+eao3/jE96/41Rfv+gbpX/uJOx/8qtxf/Cob7/roSr/5NakP+ISoj/hkaH/4VGif+gbqT/yKvL//Tu9f/+/v7/8erz/7yZxf+XYab/gUCW/4E/l/+AP5n/gD6b/389nP9/PJ7/fjyf/5deU/+WXlT/ll1W/5VcV/+VW1n/lFtb/5RaXP+sf4L/z7W4//Xw8f/+/v7/8uvt/8OjrP+jcoH/kFRp/49Ua/+RVm//mWN8/7GHnP+/na//wqK1/66Dnf+aZYf/jE94/4xPev+caI//sYio/8KivP+6lrX/qHqj/5BWjP+ISob/hkeG/4ZGh/+gb6P/yKvK//Tu9f/+/v7/8ery/72axP+XYqX/gkGU/4FAlv+BP5f/gD+Z/4A+m/9/PZz/fzye/5hfUf+XXlP/ll5U/5ZdVv+VXFf/lVtZ/5RbW/+qfH7/zLCy//Xv8P/+/v7/9O3v/8mrsv+mdoP/kFVn/5BUaf+daX3/s4qc/9G5xP/ezNX/387X/9G5x/+0jKT/mmWH/55qjf+4k63/1L7P/9/O2//ax9f/yq/G/6h7o/+TWo//h0iE/4ZHhv+kdaX/zbPP//Xw9v/+/f7/7+fx/7mUwP+WX6L/gkGT/4JBlP+BQJb/gT+X/4A/mf+APpv/fz2c/5hgUP6YX1H/l15T/5ZeVP+WXVb/lVxX/5VbWf+nd3f/xqep//Ps7P/+/v7/9vHy/9G4vf+sf4n/kVZm/5BVZ/+tgZD/0rnD//Tu8f/+/f7//fz9//j09v/Rucf/roSe/7SNpv/Xw9H/+vf5//79/v/9+/z/8Oju/8aowf+hcJz/h0mD/4dIhP+qfqr/18HX//fy9//9+/3/7OLt/7OLuf+TW57/g0KR/4JBk/+CQZT/gUCW/4E/l/+AP5n/gD6b/plhTvyYYFD+mF9R/5deU/+WXlT/ll1W/5VcV/+icG7/vZmZ/+7l5f/9+/v/+PX1/97Mz/+1jZX/k1lm/5Raav+5k5//49TZ//n29////////v7+//38/f/fztf/wqK0/8mtvv/k1t///v3+///////+/v7/9vL2/9nE1f+sgab/iEqC/4xPh/+1j7T/5Nbk//r3+v/69/r/5djm/6l9r/+OVJf/g0OP/4NCkf+CQZP/gkGU/4FAlv+BP5f+gD+Z/JlhTPeZYU77mGBQ/5hfUf+XXlP/ll5U/5ZdVv+daGT/somH/+XX1//49PT/+/r6/+3j5P/EpKn/nGhy/5Vcaf+3kZv/4tLX//n29/////////////79/f/dy9T/v52v/8aouf/j1N3/////////////////9/L2/9bA0f+rfqP/i06C/5lklP/Fp8P/8erx//z7/P/z7fP/2cXa/59tpP+KTZH/hESO/4NDj/+DQpH/gkGT/4JBlP+BQJb7gT+X95piS/CZYUz4mWFO/5hgUP+YX1H/l15T/5ZeVP+ZYVv/qHl1/9fCwf/x6ur//v39//n29v/Wv8L/rYGI/5hga/+vhI7/07vC//Do6//59vf/+fb3//Tu8P/RucT/sYec/7eQpf/Xws7/9vL1//n3+P/49ff/7ePq/8apv/+jcpj/kFaG/66DqP/YxNb/+/r7//79/v/q3+r/yKzJ/5VemP+GR4z/hESM/4REjv+DQ4//g0KR/4JBk/+CQZT4gUCW8JpjSeWaYkvymWFM/5lhTv+YYFD/mF9R/5deU/+WXlT/oGxm/8Skof/m2Nj///////79/f/p3d3/yq2x/6Fudv+fbHb/sYeQ/9O7wv/i09j/5Nbb/9K5w/+zipv/mWN8/5xngf+3kaX/1sDN/+TW3//fzdj/y7DC/6Z2mP+XYIr/nmuT/860yf/s4uv//v3+//38/f/cydv/somx/45Tj/+FRon/hUWL/4REjP+ERI7/g0OP/4NCkf+CQZPygkGU5ZtkSNKaY0rpmmJL/5lhTP+ZYU7/mGBQ/5hfUf+XXlP/m2Vc/7CEf//Uvbv/9vLy//39/f/28fH/49XW/76an/+oeYD/n2x2/6+Ejv+3kZz/uZSg/62BkP+daX3/kVZv/5JXcv+fa4X/roOa/7iSqP+ziqP/p3mX/5hih/+ldZf/v563/+fa5P/49Pf//Pr8//Dp8P/IqsX/nWma/4pMif+GRof/hUaJ/4VFi/+ERIz/hESO/4NDj/+DQ5HogkKT0pxlR7qbY0jdmmNJ/5piS/+ZYUz/mWFO/5hgUP+YX1H/mGBV/55qYf/Bn5v/5tnY//n29f/9/f3/9/P0/97Nzv++mp//oW52/5hga/+VXGn/lFpq/5BVZ/+QVGn/j1Rr/49TbP+OUm7/jlJw/5BVdf+RVnj/k1p9/59sjf+/nrX/4tPe//n2+P/+/f3/9vH1/9vI2P+xiKz/jFCI/4dJhf+GR4b/hkaH/4VGif+FRYv/hESM/4REjv+DQ4/cg0ORupxlRJmcZUfMm2NI/5pjSf+aYkv/mWFM/5lhTv+YYFD/mF9R/5hgVP+rfnb/yKqm/+7l5P/7+fn//fz8//fz8//j1NX/yq2x/62BiP+caHL/k1lm/5FWZv+QVWf/kFRp/49Ua/+PU2z/jlJu/5BVc/+bZoL/roKb/82ywv/m2eH/+fb4//79/v/59vj/59vk/7mUsv+bZpP/iEmB/4dJg/+HSIT/hkeG/4ZGh/+FRon/hUWL/4REjP+ERI7MhESQmJ1mRG+cZUW0m2RG+ptjSP6aY0n/mmJL/5lhTP+ZYU7/mGBQ/5hfUf+famD/r4R9/9K5tv/q397/+/n5//39/f/28fH/6d3d/9a/wv/EpKn/tY2V/6x/if+mdoP/o3KB/6Jxgv+mdoj/q36R/7WNoP/EpbX/18HN/+vg5v/38/b//v39//n2+P/k1d//xqe+/6Btlf+PVIX/iEp//4hJgf+HSYP/h0iE/4ZHhv+GRof/hUaJ/oVFi/qFRYy0hEWOb51nQkScZkOYnGVF7ptkRvybY0j/mmNJ/5piS/+ZYUz/mWFO/5hgUP+YX1H/nGdc/7KJgv/Subb/7uXl//n29f/9/f3//v39//n29v/t4+T/3s3Q/9G4vf/Jq7L/w6Os/8Ojrf/JrLb/0rnD/+DQ1//u5er/+vj5//79/v/8+/z/9/P1/+nd5f/Hqb3/o3KV/45TgP+JTHz/iUt+/4hKf/+ISYH/h0mD/4dIhP+GR4b/hkaH/IZGie6FRYuYhUWNRJ9qQx6dZ0J1nGZD1JxlRfabZEb/m2NI/5pjSf+aYkv/mWFM/5lhTv+YYFD/mWFT/5xnXP+vhH3/yKun/+bZ2P/28vL//v7+//79/f/7+vr/+PX1//bx8v/07e//8uvt//Lr7f/07u//9vHz//n29//8+vv//v3+//79/v/z7fD/387Y/72ar/+icZH/j1R9/4tOev+KTHv/iUx8/4lLfv+ISn//iEmB/4dJg/+HSIT/h0iG9oZHiNSGRol1h0mNHqJu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////////+vf6/+PV4//Krsv/vZq//72awf/MstH/5tnp//v5/P///////////+ne7v+darT/fjug/306ov98OaX/ezin/3s3qf96Nqz/eTWu83g0sU6SWGSQkVZm/5BVaP+PVGr/jlJt/45Rb/+NUHL/qHmW//Hq7////////v7+/+PU4P+sgaf/jlKJ/4dIhf+GRoj/hUWK/4REjP+MUZf/r4W4/+fb6////////////+nd7f+VXq7/fjug/306ov98OaX/ezin/3s3qf96Nqz/ejavkJJYYcKSV2P/kVZm/5BVaP+PVGr/jlJt/5dge//j1Nz///////7+/v/WwdD/lV2I/4lLfv+ISoD/h0mD/4dIhf+GRoj/hUWK/4REjP+DQ4//lF2h/9zK4f///////////9W/3v+ERaH/fjug/306ov98OaX/ezin/3s3qf96NqzDk1lf4pJYYf+SV2P/kVZm/5BVaP+PVGr/vpyr//79/v//////4dHa/5Vdgv+UW4T/xae+/9fC1P+1jrD/ikyF/4xPiv+6lrv/18LY/72awf+JS5T/lF2h/+fb6///////+/j7/6p+vP9/PZ3/fjug/306ov98OaX/ezin/3s4quKUWlzzk1le/5JYYf+SV2P/kVZm/5Zecf/l19z///////j09v+rfpf/jE90/8yxw/////////////n2+f+sgaf/t5G0//37/f///////v3+/7yZwf+DQ4//r4W4//z6/P//////1sDe/4NCnf9/PZ3/fjug/306ov98OaX/ezin85VbWvyUWlz/k1le/5JYYf+SV2P/qXuH//j09f//////3szU/5FWc/+RV3f/49Td/////////////////8Slvv/Ptsz/////////////////1cDX/4REjP+MUZf/5tnp///////w6fP/klqn/38+m/9/PZ3/fjug/306ov98OaX8llxX/5VbWv+UWlz/k1le/5JYYf+6lp3//v7+///////EpbH/jlJt/45Rb//Krr3//v7+///////49Pf/q3+h/7WOrv/7+fv///////37/f+6lrv/hUWK/4REjP/MstH///////v5/P+jdLP/gD+Y/38+m/9/PZ3/fjug/306ov+WXVX/llxX/5VbWv+UWlz/k1le/8Slqv///////v7+/7iRnv+PVGr/jlJt/5Vdef/AnrD/0bnI/7GHo/+MT3r/jlKA/7WOrv/QuM3/t5G0/4xPiv+GRoj/hUWK/72awf///////v7+/66Fuv+BQJb/gD+Y/38+m/9/PZ3/fjug/5dfUv+WXVX/llxX/5VbWv+UWlz/xaap///////+/f3/t5Gb/5BVaP+PVGr/k1ly/7WOof/Gp7j/p3mV/4tOd/+MT3r/q3+h/8Smv/+sgaf/ikyF/4dIhf+GRoj/vZq////////+/v7/r4a5/4JBlP+BQJb/gD+Y/38+m/9/PZ3/mGBQ/5dfUv+WXVX/llxX/5VbWv++mpv////////////EpKr/kVZm/5BVaP/EpLD//Pv8///////07vL/qHmW/7GHo//49Pf///////n2+f+1j7H/h0mD/4dIhf/Krsv///////z6/P+nea//g0KR/4JBlP+BQJb/gD+Y/38+m/+ZYU38mGBQ/5dfUv+WXVX/llxX/66Dgf/59vb//////9zJy/+TWWX/lVxr/+PU2f/////////////////Fp7f/0LjH/////////////////9bB0v+ISoD/jlKJ/+PU4///////8+30/5hinv+DQ4//g0KR/4JBlP+BQJb/gD+Y/JpiS/OZYU3/mGBQ/5dfUv+WXVX/nWlk/+ne3f//////9vLy/6p8g/+SV2P/1L3D/////////////Pr7/7WOof+/nbD//v7+////////////xae+/4lLfv+sgaf/+vf6///////cydz/iUuO/4REjP+DQ4//g0KR/4JBlP+BQJbzm2NJ4ppiS/+ZYU3/mGBQ/5dfUv+WXVX/yKmn////////////3MrL/5hgaP+fbHf/1L3D/+TW2//EpLD/k1ly/5Vdef/Krr3/5Nbe/8yxw/+UW4T/lV2I/+PU4P///////fv9/7SNs/+GRoj/hUWK/4REjP+DQ4//g0KR/4JBlOKbZEfDmmNJ/5piS/+ZYU3/mGBQ/5dfUv+icGj/6t/e///////9/f3/0Le6/5hgaP+SV2P/lVxr/5BVaP+PVGr/jlJt/45Rb/+RV3f/jE90/5Vdgv/WwdD////////////ezdz/j1SK/4dIhf+GRoj/hUWK/4REjP+DQ4//g0KRwpxmRZCbZEb/mmNJ/5piS/+ZYU3/mGBQ/5dfUv+2joj/9/Ly///////9/Pz/3MrL/6p8g/+TWWX/kVZm/5BVaP+PVGr/jlJt/5FWc/+rf5f/4dHb//7+/v//////8env/6Nzm/+ISoD/h0mD/4dIhf+GRoj/hUWK/4REjP+ERI+QnWZBTpxlRPObZEb/mmNJ/5piS/+ZYU3/mGBQ/5dfUv+/m5b/9/Ly////////////9vLy/9zJzP/EpKr/t5Gb/7iRnv/EpbH/3szU//j09v////////////Hq7/+ug6L/ikx7/4lLfv+ISoD/h0mD/4dIhf+GRoj/hUWK84REjE6faUEUnWdCxJxlRP+bZEb/mmNJ/5piS/+ZYU3/mGBQ/5dfUv+2joj/6+Df//7+/v/////////////////+/f3//v7+//////////////////79/f/k1d3/qHmW/4tOd/+LTXn/ikx7/4lLfv+ISoD/h0mD/4dIhf+GR4jEhkiLFAAAAACdZz9lnWZB+5xlRP+bZEb/mmNJ/5piS/+ZYU3/mGBQ/5dfUv+icGj/yKmn/+rf3v/69/f//v7+/////////////v7+//j09v/l193/vpyr/5dge/+NUHL/jE90/4tOd/+LTXn/ikx7/4lLfv+ISoD/h0mD+4dIhWYAAAAAAAAAAKBsQRGdZz+3nWZB/5xlRP+bZEb/mmNJ/5piS/+ZYU3/mGBQ/5dfUv+WXVX/nWlk/66Dgf++mpv/xaap/8Slqv+7lp7/qXuH/5Zecf+PVGr/jlJt/45Rb/+NUHL/jE90/4tOd/+LTXn/ikx7/4lLfv+ISoC3ik2FEQAAAAAAAAAAAAAAAJ9pPTSeaD/anWZB/5xlRP+bZEb/mmNJ/5piS/+ZYU3/mGBQ/5dfUv+WXVX/llxX/5VbWv+UWlz/k1le/5JYYf+SV2P/kVZm/5BVaP+PVGr/jlJt/45Rb/+NUHL/jE90/4tOd/+LTXn/ikx82YlMfjQAAAAAAAAAAAAAAAAAAAAAAAAAAJ9qP0SeaD/anWZB/5xlRP+bZEb/mmNJ/5piS/+ZYU3/mGBQ/5dfUv+WXVX/llxX/5VbWv+UWlz/k1le/5JYYf+SV2P/kVZm/5BVaP+PVGr/jlJt/45Rb/+NUHL/jE90/4xPd9qMT3tEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJ5oPTOeaD+4nWZB+5xlRP+bZEb/mmNJ/5piS/+ZYU3/mGBQ/5dfUv+WXVX/llxX/5VbWv+UWlz/k1le/5JYYf+SV2P/kVZm/5BVaP+PVGr/jlJt/45Rb/uNUXK4jE90MwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKBsQRGdZz9lnWdCxZxlRPSbZEb/mmNJ/5piS/+ZYU3/mGBQ/5dfUv+WXVX/llxX/5VbWv+UWlz/k1le/5JYYf+SV2P/kVZm/5BVaPSQVGvEjlJtZZBVchEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACga0QTnWZBTpxmRZGbZEfDm2NJ4ppiS/OZYU38mGBQ/5dfUv+WXVX/llxX/5VbWvyUWlzzk1lf4pNYYcOSWGSRkVZmTpNZbBMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/gAAf/gAAB/wAAAP4AAAB8AAAAOAAAABgAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAGAAAABwAAAA+AAAAfwAAAP+AAAH/4AAH8oAAAAEAAAACAAAAABACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACNUYkEhkeJT4REjbSDQpLpgT+X+389nP99O6H/fDmm+3s3q+l5NbC0eDO1T3w6vQQAAAAAAAAAAAAAAACNUXwRiUt+sYdIg/6GRoj/hESN/4JCkv+BP5f/fz2c/307of98Oab/ejar/3k0sP53MrWxeDS7EQAAAACTWnYEjFB0sYtNef+JS37/h0iD/4ZGiP+KTJL/ll+j/5Rcp/+ERKD/fTuh/3w5pv96Nqv/eTSw/3cytbF8Or0EkFRqUI5Sb/6MT3T/i015/49Uhf/Hqsb/8+30//79/v/+/f7/8er0/8Cfzv+CQqX/fDmm/3o2q/95NLD+eDO1T5FXZbSPVGr/jlJv/5NZfP/k1d//+PT3/8Wnw/+kdab/pHSq/8apzv/59vr/28nj/4JCpf98Oab/ejar/3k1sLSTWWDokVZl/49Uav/Os8D/9/P2/6V1l/+rf6P/k1qP/5Rclv+meKz/o3Ov//n2+v+/ns7/fTuh/3w5pv97N6vplFtb+5NYYP+YYW//9/L0/8Wltf+ziqP//////9rH1//g0N///v7+/6Z3rP/Hqs7/8er0/4REoP99O6H/fDmm+5ZdVv+UW1v/qHqA//7+/v+mdoj/n2yF/+PV3v+4kq3/vJm2/+DQ3/+UXJb/pHSq//79/v+UXKf/fz2c/307of+YX1H/ll1W/6p8ff/+/v7/pneD/51pff/ezNX/tIyk/7iTrf/ax9f/k1qP/6R1pv/+/f7/ll+j/4E/l/9/PZz/mWFM+5hfUf+eaWP/+PT0/8Skqf+3kZv//////93L1P/j1N3//////6t+o//Fp8P/8+3z/4pMkv+CQpL/gT+X+5tkR+mZYUz/mF9R/9W+u//28fH/qHl//7iRm/+daX3/n2yF/7OKo/+ldZf/+PT3/8eqxv+GRoj/hESN/4NCkuidZkO0m2RH/5lhTP+fa17/6t/e//bx8f/EpKn/pneD/6Z2iP/FpbX/9/P2/+TV3/+PVIX/h0iD/4ZGiP+ERI20n2k+T5xmQv6bZEf/mWFM/59rXv/Vvrv/+PX1//7+/v/+/v7/9/L0/86zwP+TWXz/i015/4lLfv+HSIP+hkeIUKRyQgSeaT2xnGZC/5tkR/+ZYUz/mF9R/55pY/+qfH3/qXqA/5hhb/+PVGr/jlJv/4xPdP+LTXn/iUt+sY1RiQQAAAAAom48EZ5pPbGcZkL+m2RH/5lhTP+YX1H/ll1W/5RbW/+TWGD/kVZl/49Uav+OUm/+jFB0sY1RfBEAAAAAAAAAAAAAAACkckIEn2k+T51mQ7SbZEfpmWFM+5hfUf+WXVb/lFtb+5NZYOmRV2W0kFVrT5NadgQAAAAAAAAAAMADAACAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAEAAMADAAA=">
+<style>
+  :root{
+    --field:#ECF1F3;
+    --paper:#FFFFFF;
+    --ink:#14283A;
+    --muted:#5A6B7A;
+    --line:#C6D2D9;
+    --edge:#A8B7C0;
+
+    /* Semantic trio. Blue is the Twilio platform, magenta is the code in this repo,
+       green is observability. Callers and the model provider stay neutral grey so the
+       three accents keep meaning. */
+    --plat:#2E6FA3;
+    --app:#C42B72;
+    --obs:#2E7D5B;
+    --neutral:#5A6B7A;
+
+    --code:#0E1B27;
+    --codeink:#D8E4EC;
+    --codemuted:#6E879A;
+
+    --display:"Avenir Next","Futura","Century Gothic","Trebuchet MS",sans-serif;
+    --body:"Helvetica Neue",Helvetica,Arial,sans-serif;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--field);color:var(--ink);
+    font-family:var(--body);font-size:16px;line-height:1.55;
+    background-image:
+      repeating-linear-gradient(0deg, transparent 0 79px, rgba(46,111,163,.06) 79px 80px),
+      repeating-linear-gradient(90deg, transparent 0 79px, rgba(46,111,163,.06) 79px 80px);
+    padding:0 0 80px;
+    overflow-wrap:break-word;
+  }
+  .wrap{max-width:1280px;margin:0 auto;padding:0 clamp(16px,4vw,24px)}
+
+  /* hero */
+  header{padding:clamp(34px,6vw,52px) 0 6px}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.22em;color:var(--plat);text-transform:uppercase}
+  h1{
+    font-family:var(--display);font-weight:600;
+    font-size:clamp(30px,5.4vw,52px);letter-spacing:-.02em;line-height:1.06;
+    margin:10px 0 14px;max-width:19ch;
+  }
+  .thesis{max-width:66ch;color:var(--muted);font-size:17px}
+  .thesis strong{color:var(--ink);font-weight:600}
+  .thesis + .thesis{margin-top:10px}
+  .facts{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0 0}
+  .fact{
+    font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+    background:var(--paper);border:1px solid var(--line);padding:5px 10px;color:var(--muted);
+  }
+  .fact b{color:var(--ink);font-weight:600}
+
+  /* section chrome */
+  section{margin:48px 0 0}
+  section > h2{
+    font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;
+    color:var(--muted);padding-bottom:9px;border-bottom:1px solid var(--line);margin-bottom:22px;
+    display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;
+  }
+  section > h2 b{color:var(--ink);font-weight:600}
+  section > h2 .num{font-family:var(--mono);color:var(--plat)}
+  .bulk{margin-left:auto;display:flex;gap:6px}
+  .bulk button{
+    font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    background:var(--paper);border:1px solid var(--line);color:var(--muted);
+    padding:3px 8px;cursor:pointer;
+  }
+  .bulk button:hover{border-color:var(--ink);color:var(--ink)}
+  .lede-sm{font-size:14.5px;color:var(--muted);margin:0 0 16px;max-width:78ch}
+  .lede-sm b{color:var(--ink);font-weight:600}
+
+  /* legend */
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:0 0 14px}
+  .legend span{
+    font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);display:flex;align-items:center;gap:6px;
+  }
+  .legend i{width:9px;height:9px;border-radius:50%;display:inline-block}
+
+  /* topology: the panel scrolls at a min-width floor, the 9px labels never shrink */
+  .topo{background:var(--paper);border:1px solid var(--line);padding:6px 10px 2px;overflow-x:auto}
+  .topo svg{display:block;width:100%;min-width:980px;height:auto}
+  .nlabel{font-family:var(--body);font-size:13px;fill:var(--ink)}
+  .nsub{font-family:var(--mono);font-size:9px;letter-spacing:.07em;fill:var(--muted);text-transform:uppercase}
+  .elabel{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;fill:var(--muted)}
+  .glabel{font-family:var(--mono);font-size:9px;letter-spacing:.16em;fill:var(--muted);text-transform:uppercase}
+  .node{cursor:pointer}
+  .node rect{fill:var(--paper);stroke-width:1.5}
+  .node:hover rect{fill:#F7FAFB}
+  .node:focus{outline:none}
+  .node:focus-visible rect{stroke-width:3}
+  .node.sel rect{stroke-width:3;fill:#F2F7F9}
+  .edge{stroke:var(--edge);stroke-width:1.4;fill:none}
+  .edge.dash{stroke-dasharray:5 4}
+  .gbox{stroke:var(--line);stroke-width:1;stroke-dasharray:2 6;fill:none}
+
+  .hint{
+    font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);margin:10px 0 0;
+  }
+
+  /* ladders */
+  .lblock{margin:0 0 30px}
+  .lblock > h3{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--ink);margin:0 0 4px;
+  }
+  .lblock > .sub{font-size:13.5px;color:var(--muted);margin:0 0 6px}
+  .lanes{
+    display:grid;grid-template-columns:repeat(5,1fr);
+    position:sticky;top:0;z-index:6;
+    background:var(--field);padding:12px 0 11px;border-bottom:1px solid var(--line);
+  }
+  .lane{display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center}
+  .lane .dot{width:9px;height:9px;border-radius:50%}
+  .lane span{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink)}
+  .dot.plat{background:var(--plat)} .dot.app{background:var(--app)}
+  .dot.obs{background:var(--obs)}   .dot.neutral{background:var(--neutral)}
+
+  .ladder{position:relative;padding:8px 0 4px}
+  .rails{position:absolute;inset:0;pointer-events:none;z-index:0}
+  .rails i{position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
+
+  .spanwrap{position:relative}
+  .spanmark{position:absolute;left:0;top:10px;bottom:10px;width:30px;pointer-events:none;z-index:2}
+  .spanmark i{position:absolute;left:26px;top:0;bottom:0;border-left:2px dashed var(--obs)}
+  .spanmark em{
+    position:absolute;left:0;top:0;font-style:normal;white-space:nowrap;
+    writing-mode:vertical-rl;line-height:1;
+    font-family:var(--mono);font-size:9px;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--obs);
+  }
+  .ladder .detail{margin-left:40px}
+
+  .step{position:relative;z-index:1}
+  .row{
+    position:relative;display:flex;align-items:center;width:100%;padding:17px 0;
+    background:none;border:0;cursor:pointer;font:inherit;color:inherit;text-align:left;
+  }
+  .row::before{
+    content:"";position:absolute;top:50%;transform:translateY(-50%);
+    left:var(--from);right:calc(100% - var(--to));height:1.5px;background:var(--wc,var(--line));
+  }
+  .row::after,.row .head2{
+    content:"";position:absolute;top:50%;transform:translateY(-50%);z-index:2;
+    width:0;height:0;border-top:5px solid transparent;border-bottom:5px solid transparent;
+  }
+  .row[data-dir="r"]::after,.row[data-dir="b"]::after{
+    left:calc(var(--to) - 8px);border-left:8px solid var(--wc,var(--line));
+  }
+  .row[data-dir="l"]::after,.row[data-dir="b"] .head2{
+    left:var(--from);border-right:8px solid var(--wc,var(--line));
+  }
+  .wlabel{
+    position:relative;z-index:1;background:var(--paper);border:1px solid var(--line);
+    width:clamp(150px, calc(20vw - 44px), 216px);flex:0 0 auto;padding:7px 11px 9px;
+    margin-left:calc((var(--from) + var(--to)) / 2);transform:translateX(-50%);
+    display:flex;flex-direction:column;align-items:stretch;gap:1px;
+    transition:border-color .14s,box-shadow .14s;
+  }
+  .wlabel .hdr{display:flex;align-items:center;justify-content:space-between}
+  .wlabel .n{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--muted)}
+  .wlabel .t{font-size:13.5px;line-height:1.3}
+  .wlabel .chev{font-size:9px;color:var(--muted);transition:transform .16s}
+  .row:hover .wlabel{border-color:var(--wc,var(--ink));box-shadow:0 1px 0 var(--wc,var(--ink))}
+  .row:focus-visible .wlabel{outline:2px solid var(--wc,var(--ink));outline-offset:2px}
+  .step.open .wlabel{border-color:var(--wc,var(--ink));box-shadow:inset 0 0 0 1px var(--wc,var(--ink))}
+  .step.open .wlabel .chev{transform:rotate(90deg)}
+  .step.open .row{--wc:var(--acc)}
+
+  /* Stacked ladder. Neither the rails nor the hop labels reflow, so below the floor the
+     lane colour moves to a left border and every hop becomes a full-width panel. */
+  @media (max-width:820px){
+    .lanes,.rails{display:none}
+    .row{padding:8px 0}
+    .row::before,.row::after,.row .head2{display:none}
+    .wlabel{width:100%;margin-left:0;transform:none;border-left:3px solid var(--acc,var(--line))}
+    .ladder .detail{margin-left:0}
+    .spanmark{display:none}
+  }
+
+  /* detail panels */
+  .detail{
+    background:var(--paper);border:1px solid var(--line);border-left:3px solid var(--acc,var(--line));
+    padding:18px 20px 20px;margin:0 0 12px;
+  }
+  .detail .what{font-size:15px;margin-bottom:9px}
+  .detail .why{font-size:14px;color:var(--muted)}
+  .detail .why b{color:var(--ink);font-weight:600}
+  .detail .why + .why{margin-top:7px}
+  .node-detail dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;font-size:14px}
+  .node-detail dt{
+    font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--muted);padding-top:3px;
+  }
+  .node-detail dd{color:var(--ink)}
+  @media (max-width:600px){
+    .node-detail dl{grid-template-columns:1fr;gap:2px}
+    .node-detail dd{margin-bottom:8px}
+  }
+
+  /* cards */
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:14px}
+  .card{
+    background:var(--paper);border:1px solid var(--line);border-top:3px solid var(--acc);
+    padding:16px 17px 18px;display:flex;flex-direction:column;
+  }
+  .card h4{font-family:var(--display);font-size:16px;font-weight:600;margin-bottom:3px}
+  .card .api{font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:var(--muted);margin-bottom:11px;display:block}
+  .card ul{list-style:disc;padding-left:18px;font-size:13.5px;color:var(--ink);margin-bottom:14px}
+  .card li{margin-bottom:6px;line-height:1.45}
+  .card li:last-child{margin-bottom:0}
+  .card li strong{font-weight:600}
+  .card .when{
+    font-family:var(--mono);font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;
+    color:var(--ink);border-top:1px dashed var(--line);padding-top:9px;margin-top:auto;
+  }
+
+  /* callout */
+  .callout{
+    background:var(--paper);border:1px solid var(--line);
+    border-left:3px solid var(--acc,var(--line));padding:15px 18px 16px;margin:18px 0 0;
+  }
+  .callout .dtitle{
+    font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ink);margin-bottom:9px;
+  }
+  .callout p{font-size:14px}
+  .callout p + p{margin-top:8px}
+  .callout ul{list-style:disc;padding-left:19px;font-size:13.5px;color:var(--ink)}
+  .callout li{margin-bottom:5px;line-height:1.5}
+  .callout li:last-child{margin-bottom:0}
+  .callout li strong{font-weight:600}
+
+  pre{
+    background:var(--code);color:var(--codeink);font-family:var(--mono);font-size:12px;line-height:1.65;
+    padding:13px 15px;overflow-x:auto;margin:14px 0 0;border-radius:2px;
+  }
+  pre b{color:#8FD1A8;font-weight:400}
+  pre i{color:var(--codemuted);font-style:normal}
+  pre u{color:#F0B37E;text-decoration:none}
+
+  /* tables: the wrapper scrolls, never the page */
+  .tablewrap{overflow-x:auto;margin:0 0 4px}
+  table{width:100%;min-width:600px;border-collapse:collapse;background:var(--paper);border:1px solid var(--line)}
+  th{
+    font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+    text-align:left;color:var(--muted);padding:11px 14px;border-bottom:1px solid var(--line);font-weight:400;
+  }
+  td{padding:12px 14px;border-bottom:1px solid var(--line);font-size:13.5px;vertical-align:top}
+  tr:last-child td{border-bottom:0}
+  td:first-child{width:27%;font-weight:600}
+  table.wide-first td:first-child{width:34%}
+  td code,p code,li code,dd code,.detail code,.callout code,th code{
+    font-family:var(--mono);font-size:12px;background:var(--field);
+    border:1px solid var(--line);padding:1px 4px;border-radius:2px;
+  }
+  td b.warn{color:var(--app)}
+
+  /* footer */
+  footer{margin:52px 0 0;border-top:1px solid var(--line);padding-top:18px}
+  footer p{font-size:13px;color:var(--muted);max-width:78ch}
+  footer p + p{margin-top:7px}
+  footer b{color:var(--ink);font-weight:600}
+
+  @media (prefers-reduced-motion:reduce){*{transition:none !important}html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Twilio Agent Connect &middot; OpenTelemetry &middot; GenAI conventions</p>
+    <h1>Instrumenting a library that ships no telemetry</h1>
+    <p class="thesis">Grepping the shipped Agent Connect 2.2.0 bundle for <code>opentelemetry</code>,
+    <code>AsyncLocalStorage</code>, <code>trace.getTracer</code> and <code>traceparent</code> returns
+    <strong>zero matches</strong>, and the upstream repository has never carried an issue or pull request
+    mentioning OpenTelemetry, tracing, spans or metrics. The total timing surface the library hands you is
+    three numbers, none of which it measured of itself. Everything else you trace, you time from the
+    outside.</p>
+    <p class="thesis">The correction to make before designing a single span: <strong>the response callback
+    is not the streaming path.</strong> <code>onMessageReady</code> returns a string and the library sends
+    it as one finished frame. Streaming happens because
+    <code>VoiceChannel.sendStreamingResponse</code> is a public method you call back into with your own
+    <code>AsyncIterable&lt;string&gt;</code>. The seam is not a callback you are handed. Design a turn span
+    around the callback and the voice half of your instrumentation measures the wrong interval.</p>
+    <p class="thesis">Scope. This page is about the injection surface, the code, and the limits. The
+    system architecture, the hop-by-hop anatomy of a turn, the twelve-row latency table and the eighteen
+    Agent Connect assumption-against-reality findings are already published at
+    <a href="https://pages-4296.twil.io/agent-scaffold-architecture">agent-scaffold-architecture</a> and
+    are not restated here. The decision to move the agent core out to a visual agent builder, which is
+    what puts most of this instrumentation at risk, is argued at
+    <a href="https://pages-4296.twil.io/tac-agent-builder-options">tac-agent-builder-options</a>. Read
+    section 04 below before that one, because this is the cost side of that trade.</p>
+    <div class="facts">
+      <span class="fact"><b>0</b> telemetry lines in the library</span>
+      <span class="fact"><b>3</b> timings it reports at all</span>
+      <span class="fact"><b>5</b> code layers</span>
+      <span class="fact"><b>2 of 5</b> executed, not just compiled</span>
+      <span class="fact"><b>0 ms</b> gap in the tiled timeline</span>
+      <span class="fact"><b>65%</b> of one call in a blended span</span>
+    </div>
+  </header>
+  <!-- ============ 01 THE INJECTION SURFACE ============ -->
+  <section id="surface">
+    <h2><span class="num">01</span> <b>The injection surface</b> &middot; the seam is not a callback</h2>
+
+    <p class="lede-sm">The three numbers the library reports of its own accord are
+    <code>durationUntilInterruptMs</code> parsed out of the ConversationRelay interrupt frame, a memory
+    query time echoed from the platform in one debug log, and the call, machine-detection and recording
+    durations that arrive as strings on webhook forms. None of them is a duration the library measured of
+    itself. This section is about where the outside of the library actually is.</p>
+
+    <div class="callout" style="--acc:var(--app)">
+      <p class="dtitle">The correction to make first</p>
+      <p>The obvious reading is that <code>onMessageReady</code> is the response path, so a turn span
+      should open when that callback fires and close when it returns. That reading is wrong for voice, and
+      it is the single most expensive misconception to hold while designing spans.</p>
+      <p><code>onMessageReady</code> returns <code>Promise&lt;string | null | void&gt;</code>. The
+      dispatcher checks <code>typeof response === "string"</code> and, if so, calls
+      <code>channel.sendResponse(...)</code>, which writes one frame carrying <code>last: true</code>.
+      That is a non-streaming convenience. Return <code>null</code> or <code>void</code> and the library
+      sends nothing at all. There is no token sink in the callback parameters and no writable to hand
+      tokens to.</p>
+      <p>Streaming happens because <code>VoiceChannel.sendStreamingResponse</code> is public. The
+      signature below was read from the shipped type declarations of
+      <code>twilio-agent-connect@2.2.0</code>.</p>
+    </div>
+
+    <pre class="wide">sendStreamingResponse(
+  conversationId: ConversationId,
+  stream: AsyncIterable&lt;string&gt;,
+  options?: { signal?: AbortSignal },
+): Promise&lt;string&gt;;</pre>
+
+    <p class="lede-sm">You supply the <code>AsyncIterable&lt;string&gt;</code>. Inside, the library
+    iterates it and performs one synchronous <code>ws.send</code> per chunk, writes the
+    <code>{ type: "text", token: "", last: true }</code> marker after the loop only if at least one token
+    went out and the signal did not fire, and resolves with the accumulated text.</p>
+
+    <p class="lede-sm">Three consequences follow for anyone instrumenting a turn. The turn boundary you
+    want is the instant the prompt payload reaches your handler paired with the instant that
+    <code>last: true</code> marker leaves the socket, and both instants are yours to stamp, because you
+    own the first line of the handler and you own the iterable. Because the per-chunk send is synchronous
+    inside the library's own <code>for await</code>, the moment your generator yields its first non-empty
+    text delta is within microseconds of the moment the frame hits the socket, which is what makes a
+    server-side first-audio proxy meaningful at all. And the streaming path is voice-only by
+    construction: the messaging and chat path is <code>MessageReadyCallback</code>, whose parameters carry
+    <code>memory</code> rather than the voice payload's <code>userMemory</code> and whose
+    <code>abortSignal</code> is optional where the voice payload's is required. There is no streaming sink
+    for SMS or chat, so token-level attributes on those channels are not available at any price.</p>
+
+    <h3 style="font-family:var(--display);font-size:19px;font-weight:600;margin:34px 0 8px">Every
+    extension point 2.2.0 exposes</h3>
+
+    <p class="lede-sm">Signatures below were read from the shipped 2.2.0 type declarations and
+    implementation bundle. <code>BaseChannel.on</code> is not an EventEmitter: it is a
+    <code>switch</code> that assigns into one of a fixed set of single slots, its callback is typed
+    <code>(...args: any[]) =&gt; void</code> so nothing about the payload is typechecked at your call site,
+    and an unrecognised event string falls through with no default and is silently dropped. Registering a
+    channel with the top-level object calls <code>on</code> for <code>error</code>,
+    <code>messageReceived</code>, <code>prompt</code>, <code>interrupt</code> and
+    <code>conversationEnded</code>, so those five slots are taken from you if you register, and taking
+    them back afterwards silently stops the top-level callbacks firing for that channel. The four slots
+    the library never claims are <code>setup</code>, <code>conversationStarted</code>,
+    <code>webSocketConnected</code> and <code>webSocketDisconnected</code>.</p>
+
+    <div class="wide tablewrap">
+      <table class="wide-first" style="min-width:900px">
+        <thead>
+          <tr><th>Extension point</th><th>Signature or payload</th><th>Span or attribute it can produce</th><th>What it structurally cannot see</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>voiceChannel.on('setup')</code></td>
+            <td><code>{ callSid, from, to, customParameters }</code></td>
+            <td>Trace-level correlation keys, including a call identifier suitable for
+            <code>gen_ai.conversation.id</code>. The earliest point a conversation root could open.</td>
+            <td>Nothing about turns. It fires before any prompt and cannot tell you whether a conversation
+            record exists yet.</td>
+          </tr>
+          <tr>
+            <td><code>voiceChannel.on('webSocketConnected')</code></td>
+            <td><code>{ conversationId }</code>, fired from two distinct sites, direct connect and
+            orchestrated adoption</td>
+            <td>The open boundary of a call-level span.</td>
+            <td>Which of the two sites fired it, without inspecting state yourself.</td>
+          </tr>
+          <tr>
+            <td><code>voiceChannel.on('webSocketDisconnected')</code></td>
+            <td><code>{ conversationId }</code></td>
+            <td>The close boundary of a call-level span, and on voice this is the signal that actually
+            arrives: in orchestrated operation a hangup fires no <code>conversationEnded</code> at all.</td>
+            <td>Why the socket closed. Caller hangup, transport failure and shutdown are
+            indistinguishable here.</td>
+          </tr>
+          <tr>
+            <td><code>voiceChannel.on('prompt')</code></td>
+            <td><code>{ conversationId, transcript, abortSignal, userMemory?, session? }</code>, awaited by
+            the library</td>
+            <td>Turn span start, a zero-duration transcript event, and the closing edge of a back-dated
+            caller-side span.</td>
+            <td>Speech-to-text arrival, frame parse, stream-task setup and the platform memory recall, all
+            of which happen before your first line runs. Also <code>lang</code> and
+            <code>agentSpeaking</code>, which the inbound schema parses and the handler then does not
+            forward in 2.2.0.</td>
+          </tr>
+          <tr>
+            <td><code>voiceChannel.sendStreamingResponse(...)</code></td>
+            <td><code>(ConversationId, AsyncIterable&lt;string&gt;, options?) =&gt; Promise&lt;string&gt;</code></td>
+            <td>A bot-output span anchored at the first non-empty delta and closed at the end-of-turn
+            marker, plus a server-side time-to-first-audio proxy.</td>
+            <td>Speech synthesis and playback. ConversationRelay exposes neither over the socket, so the
+            audible half of the turn is invisible from this process.</td>
+          </tr>
+          <tr>
+            <td><code>voiceChannel.on('interrupt')</code></td>
+            <td><code>{ conversationId, utteranceUntilInterrupt?, durationUntilInterruptMs? }</code>, not
+            awaited, and with no <code>session</code></td>
+            <td>A barge-in event and the correct turn boundary on an interrupted turn.</td>
+            <td>Any ambient trace context. The library dispatches this from its own socket handler, so a
+            span started here with no explicit parent becomes the root of a second trace.</td>
+          </tr>
+          <tr>
+            <td><code>tac.onMessageReady(cb)</code></td>
+            <td>Returns <code>Promise&lt;string | null | void&gt; | string | null | void</code>; params
+            carry <code>memory</code>, <code>session</code>, <code>channel</code> and an optional
+            <code>abortSignal</code></td>
+            <td>The entire messaging or chat turn span, opened on entry and closed when your promise
+            settles.</td>
+            <td>Any token-level timing. There is no streaming sink on this path, so first-token latency on
+            SMS and chat is not measurable.</td>
+          </tr>
+          <tr>
+            <td><code>messagingChannel.on('messageReceived')</code></td>
+            <td><code>{ conversationId, profileId, message, author, userMemory }</code></td>
+            <td>An inbound-message event.</td>
+            <td>Nothing, if you registered the channel: this is one of the five slots registration
+            takes.</td>
+          </tr>
+          <tr>
+            <td><code>tac.onInterrupt(cb)</code></td>
+            <td>Same payload as the channel-level interrupt, plus <code>session</code></td>
+            <td>Same as the channel-level interrupt.</td>
+            <td>The same blindness to ambient context.</td>
+          </tr>
+          <tr>
+            <td><code>tac.onConversationEnded(cb)</code></td>
+            <td><code>{ session: ConversationSession }</code></td>
+            <td>The close boundary of a messaging conversation span.</td>
+            <td>The voice hangup, for the orchestrated reason above.</td>
+          </tr>
+          <tr>
+            <td><code>voiceChannel.onInboundCallTwiml(cb)</code></td>
+            <td><code>(req: TwiMLRequest) =&gt; Promise&lt;TwiMLOptions&gt;</code></td>
+            <td>Nothing timed, but this is where you inject per-call transport facts.</td>
+            <td>Anything after the call connects.</td>
+          </tr>
+          <tr>
+            <td><code>onCallStatus</code>, <code>onAmd</code>, <code>onRecording</code></td>
+            <td><code>(event) =&gt; Promise&lt;void&gt; | void</code> for each event type</td>
+            <td>Platform-reported durations as attributes on a call-level span.</td>
+            <td>Anything sub-turn. Registration is load-bearing rather than observational: with no handler
+            registered the library omits the matching status callback parameter when it creates a call, so
+            the platform has nowhere to post.</td>
+          </tr>
+          <tr>
+            <td><code>TACOptions.logger</code></td>
+            <td><code>type Logger = pino.Logger</code>, consumed as
+            <code>options.logger ?? createLogger({ name: 'tac' })</code></td>
+            <td>A log bridge. Every channel derives from it by <code>.child(...)</code>, so one root
+            logger reaches channel logging.</td>
+            <td>This is the only zero-patch route to structured output and it is undocumented upstream.
+            Supplying your own instance drops the library's own scrubbing log hook unless you reinstall
+            it; the scrubbing helpers are exported so that you can.</td>
+          </tr>
+          <tr>
+            <td><code>TACTool</code> and <code>defineTool</code></td>
+            <td><code>defineTool&lt;TParams,TResult&gt;(name, description, parameters, implementation)</code></td>
+            <td>Tool spans, but only if you build them.</td>
+            <td>There is no <code>onToolCall</code>, no middleware and no tool context plumbing. The
+            exported <code>ToolContext</code> type has no consumer in the bundle. The library never
+            invokes a tool, so instrument by wrapping each tool or at your model runtime.</td>
+          </tr>
+          <tr>
+            <td><code>voiceChannel.getWebsocket(id)</code></td>
+            <td>Returns the live socket or <code>null</code></td>
+            <td>Every outbound frame, including the end-of-turn marker, if you wrap <code>send</code> on
+            that instance.</td>
+            <td>It looks private and is not. Wrapping an instance method is still a patch, just not a
+            patch on the library's prototype.</td>
+          </tr>
+          <tr>
+            <td><code>startStreamTask</code>, <code>cancelStreamTask</code>,
+            <code>completeStreamTask</code>, <code>hasActiveStreamTask</code></td>
+            <td>All public on <code>VoiceChannel</code></td>
+            <td>Turn-boundary bookkeeping, observable and drivable.</td>
+            <td>The queue that serialises prompts, which is separate state.</td>
+          </tr>
+          <tr>
+            <td><code>handlePromptMessage</code></td>
+            <td>Private. Prototype patch only.</td>
+            <td>The only place per-turn start is observable strictly upstream of your handler, including
+            the memory recall your handler waits behind.</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><code>handleInterruptMessage</code>, <code>handleWebSocketDisconnect</code></td>
+            <td>Private. Prototype patch only.</td>
+            <td>The instant the stream task is cancelled, before your callback runs, and socket teardown
+            ordering.</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><code>handleMessageReady</code>, <code>setupChannelEventListeners</code></td>
+            <td>Private. Prototype patch only.</td>
+            <td>The dispatch decision that turns your returned string into a single frame.</td>
+            <td>The constructor is private, so the class cannot be usefully subclassed. The static factory
+            is the only door.</td>
+          </tr>
+          <tr>
+            <td><code>promptQueues</code>, <code>streamTasks</code>, <code>webSocketConnections</code>,
+            <code>voiceCallbacks</code></td>
+            <td><code>private readonly</code> fields on <code>VoiceChannel</code></td>
+            <td>Head-of-line queue depth and per-turn task identity.</td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout" style="--acc:var(--plat)">
+      <p class="dtitle">Two properties of private state that change how you read your own traces</p>
+      <p>Prompt frames are chained. Turn N plus one is dispatched as
+      <code>previousPrompt.then(() =&gt; this.handlePromptMessage(...))</code>, so it cannot start until
+      turn N's handler resolves, which makes your prompt-receipt timestamp a floor rather than the
+      caller's stop.</p>
+      <p>The memory recall is awaited before your handler is called. On a voice configuration that recalls
+      once per conversation, a platform round trip therefore lands in whatever span covers the interval
+      before turn one, never inside turn one.</p>
+    </div>
+    <h3 style="font-family:var(--display);font-size:19px;font-weight:600;margin:34px 0 8px">The span
+    model, and where the specification runs out</h3>
+
+    <p class="lede-sm">Nothing in the trees below is specification-named except the subtree the model SDK
+    creates, and that is not an oversight. The GenAI conventions moved out of the main semantic-conventions
+    repository into
+    <a href="https://github.com/open-telemetry/semantic-conventions-genai">semantic-conventions-genai</a>,
+    whose manifest reads <code>schema_url: https://opentelemetry.io/schemas/gen-ai-dev/1.42.0-dev</code>
+    and <code>stability: development</code>. There is no tagged release, so there is no citable stable
+    version, only a commit or that development schema URL. Every <code>gen_ai.*</code> attribute, span,
+    metric, event and enum value in its tables is badged Development. The only Stable attributes on a
+    GenAI span are borrowed from core conventions: <code>error.type</code>, <code>server.address</code>
+    and <code>server.port</code>.</p>
+
+    <p class="lede-sm">For voice specifically there is no merged convention for speech to text, text to
+    speech, audio latency, barge-in or realtime sessions. The entire merged voice surface is audio token
+    usage and <code>speech</code> as a well-known value of <code>gen_ai.output.type</code>. Two open pull
+    requests propose the rest.
+    <a href="https://github.com/open-telemetry/semantic-conventions-genai/pull/390">PR 390</a> proposes
+    <code>speech_to_text</code> and <code>text_to_speech</code> operations plus
+    <code>gen_ai.agent.invocation.end_reason</code>, which is the standard-track name for the barge-in
+    outcome. <a href="https://github.com/open-telemetry/semantic-conventions-genai/pull/394">PR 394</a>
+    argues that a live session streams user audio continuously while the server streams incremental
+    output, so a generation cannot be represented by the client-timed inference span, and proposes a
+    <code>generate_live_content</code> span anchored at first output, an opt-in
+    <code>gen_ai.user_input.client</code> span bounded by voice-activity events, and a long-lived session
+    modelled as events correlated by <code>gen_ai.conversation.id</code> rather than wrapped in a span.
+    Neither is merged. Read the voice span names below as one working shape that happens to converge with
+    an unmerged proposal, not as conformance.</p>
+
+    <p class="lede-sm">For multi-turn grouping the specification offers exactly one mechanism, the
+    attribute <code>gen_ai.conversation.id</code>. There is no conversation span, no cross-turn
+    parent-child convention, and no use of the general <code>session.id</code> attribute. A call-level root
+    span is therefore an extension, and a reader who wants only specification-blessed grouping should
+    stamp the call identifier on every turn's spans and stop there.</p>
+
+    <pre class="wide">conversation.voice                    <i>call-level root, extension, no spec equivalent</i>
+│  input: { conversationId }
+│  closed with: closedBecause, turns.count, turns.aborted,
+│               caller.turn_total_ms, turn.ttfa_p50_ms, turn.ttfa_max_ms
+│
+├─ <b>caller.turn</b>                        <i>parented to the ROOT, not to the turn</i>
+│    back-dated to the previous bot-output boundary, ended at prompt receipt
+│    metadata: durationMs, and a "covers" string naming the blend
+│
+└─ <b>turn.voice</b>                         <i>opened at prompt receipt, closed at the output boundary</i>
+     input.userText, metadata.channel
+     metadata: prompt.name, prompt.version, prompt.label, model,
+               tools.offered, tools.unknown
+     metadata: turn.ttft_ms, turn.ttft_model_ms      <i>written at first non-empty delta</i>
+     output: { text, toolCalls }
+     metadata: tools.called, turn.total_ms, turn.total_model_ms, turn.aborted
+     metadata: turn.ttfa_ms, turn.ending             <i>written last, at the boundary</i>
+     level: ERROR plus statusMessage on a throw, which the wrapper must set itself
+     │
+     ├─ asr.final          <i>zero-duration event at prompt receipt: transcriptChars, lang</i>
+     ├─ prompt.fetch       output { name, version, label }, metadata.durationMs
+     ├─ memory.recall      output { chars }, metadata.durationMs, metadata.profileMs
+     ├─ prompt.compose     output { systemChars, messages, historyMessages }
+     ├─ tools.resolve      output { resolved[], unknown[], unavailable[] }
+     ├─ llm.stream         <u>a TIMER, not a parent. See below</u>
+     ├─ invoke_agent {model}     <i>created by the model SDK, parented to turn.voice</i>
+     │    └─ chat {model}        <i>one per provider call</i>
+     │         └─ execute_tool {name}
+     ├─ tts.interrupted    <i>event at interrupt receipt, barge-in only:</i>
+     │                     durationUntilInterruptMs, utteranceUntilInterrupt
+     └─ tts.send           <i>back-dated child, first delta to boundary:</i>
+                           durationMs, ending</pre>
+
+    <div class="callout" style="--acc:var(--obs)">
+      <p class="dtitle">A naming note that will cost you an afternoon backwards</p>
+      <p><code>prompt.fetch</code> and <code>memory.recall</code> do not measure the platform's own
+      recall. The platform recall was already awaited upstream of your handler.
+      <code>memory.recall</code> here measures composing the memory block out of the payload you were
+      handed, plus a profile lookup that is a real network call when uncached. Those two steps genuinely
+      run concurrently because they are your work, in your handler, behind one <code>Promise.all</code>.
+      Anyone reading a waterfall and concluding the platform recall is concurrent with the prompt fetch
+      has mislabelled the platform's serial recall, which sits in the preceding interval.</p>
+      <p>Where the specification does have something to say, use it. <code>gen_ai.prompt.name</code> and
+      <code>gen_ai.prompt.version</code> are real attributes, Conditionally Required when a named prompt
+      template is used, so a versioned-prompt story maps onto the specification directly rather than
+      needing a private key.</p>
+    </div>
+
+    <pre class="wide">conversation.sms
+└─ <b>turn.sms</b>                      <i>opened on callback entry, closed when the promise settles</i>
+     the same interior steps: prompt.fetch, memory.recall, prompt.compose,
+     tools.resolve, llm.stream, and the invoke_agent subtree</pre>
+
+    <p class="lede-sm">Absent by construction rather than by omission on the messaging tree: no
+    <code>asr.final</code>, no caller-side span, no text-to-speech spans, no time to first audio and no
+    turn-ending classification, because none of those signals exists on a path whose only output is one
+    finished string. A first-token attribute on a messaging turn would be a fabrication.</p>
+
+    <h3 style="font-family:var(--display);font-size:19px;font-weight:600;margin:34px 0 8px">What the model
+    SDK gives you free, and what the wrapper must set</h3>
+
+    <p class="lede-sm">This split is the spine of the work. The AI SDK's OpenTelemetry integration emits
+    GenAI-convention spans, and the free column below is from its own
+    <a href="https://ai-sdk.dev/docs/ai-sdk-core/telemetry">telemetry documentation</a> as shipped with the
+    installed version. Anything keyed on the older <code>ai.*</code> span names finds nothing.</p>
+
+    <div class="wide tablewrap">
+      <table style="min-width:820px">
+        <thead>
+          <tr><th>Span or attribute</th><th>Who sets it</th><th>Notes and caveats</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>invoke_agent {modelId}</code>, kind INTERNAL</td><td>free</td><td>Covers the whole
+          operation including every step and tool call.</td></tr>
+          <tr><td><code>chat {modelId}</code>, kind CLIENT, one per provider call</td><td>free</td><td>Nested
+          under <code>invoke_agent</code>.</td></tr>
+          <tr><td><code>execute_tool {toolName}</code>, kind INTERNAL</td><td>free</td><td>Nested under the
+          step span, and only for tools the model runtime executes. A tool the Agent Connect layer hands
+          you is a schema, and the library never invokes it.</td></tr>
+          <tr><td><code>gen_ai.operation.name</code>, <code>gen_ai.provider.name</code>,
+          <code>gen_ai.request.model</code></td><td>free</td><td>The first two are the only Required
+          attributes on an inference span.</td></tr>
+          <tr><td><code>gen_ai.agent.name</code></td><td>free, from the <code>functionId</code> you
+          pass</td><td>This is the one place your channel label reaches a specification attribute, so set
+          <code>functionId</code> per channel.</td></tr>
+          <tr><td><code>gen_ai.request.temperature</code>, <code>max_tokens</code>, <code>top_p</code>,
+          <code>top_k</code>, <code>frequency_penalty</code>, <code>presence_penalty</code>,
+          <code>stop_sequences</code>, <code>seed</code></td><td>free when you send them</td><td>If you
+          pass no provider options these arrive empty, and an empty request-parameter set is a finding
+          rather than a bug.</td></tr>
+          <tr><td><code>gen_ai.response.finish_reasons</code>, <code>gen_ai.response.id</code>,
+          <code>gen_ai.response.model</code></td><td>free</td><td></td></tr>
+          <tr><td><code>gen_ai.usage.input_tokens</code>, <code>output_tokens</code>,
+          <code>cache_read.input_tokens</code>, <code>cache_creation.input_tokens</code></td><td>free</td>
+          <td>The cache attributes are what let you separate a cold first turn from warm follow-ons.</td></tr>
+          <tr><td><code>gen_ai.client.operation.duration</code>, in seconds</td><td>free</td><td></td></tr>
+          <tr><td><code>gen_ai.client.operation.time_to_first_chunk</code>, in seconds</td><td>free</td>
+          <td><b class="warn">Right name, right unit, wrong signal.</b> The specification defines that
+          exact string as a histogram metric; its span attribute for the identical measurement is
+          <code>gen_ai.response.time_to_first_chunk</code>. For specification-clean spans, alias the value
+          across with no conversion. The SDK's legacy mode emits the same measurement in milliseconds under
+          a different key, so moving between its two modes changes units by a thousand.</td></tr>
+          <tr><td><code>gen_ai.client.operation.time_per_output_chunk</code>, in seconds</td><td>free</td>
+          <td></td></tr>
+          <tr><td><code>gen_ai.system_instructions</code>, <code>gen_ai.input.messages</code>,
+          <code>gen_ai.output.messages</code>, <code>gen_ai.tool.definitions</code>,
+          <code>gen_ai.tool.call.arguments</code>, <code>gen_ai.tool.call.result</code></td><td>free when
+          input and output recording is on</td><td>The specification's default is that instrumentations
+          should not capture these and should offer an opt-in. If you turn them on, prompts and completions
+          leave your process in full, and any scrubbing you wrote for your own spans does not cover them.
+          Say that accurately in your own documentation rather than implying the traces are clean.</td></tr>
+          <tr><td><code>gen_ai.execute_tool.duration</code>, in seconds</td><td>free</td><td></td></tr>
+          <tr><td>Call-level root span, its boundaries and its close reason</td><td>wrapper</td><td>No
+          specification equivalent exists. The only grouping mechanism is a flat conversation id
+          attribute.</td></tr>
+          <tr><td><code>gen_ai.conversation.id</code></td><td>wrapper</td><td>Conditionally Required when
+          readily available, and it is: the call identifier arrives on the <code>setup</code> payload.</td></tr>
+          <tr><td>Turn span, its name, its start instant and its end instant</td><td>wrapper</td><td>On
+          voice both instants are yours. On messaging only the start is.</td></tr>
+          <tr><td>Caller-side span and its back-dating</td><td>wrapper</td><td>Uncovered by the
+          specification today. The closest proposal is the unmerged user-input span in PR 394.</td></tr>
+          <tr><td>Transcript-received event and transcript size</td><td>wrapper</td><td></td></tr>
+          <tr><td>Prompt fetch, memory composition, prompt composition and tool resolution
+          steps</td><td>wrapper</td><td>These are your preamble. Measured as a ceiling of 84 ms across 33
+          generations in one day with one caller and one model, which makes it a bound on your own overhead
+          and not a benchmark of anything.</td></tr>
+          <tr><td>Time to first token, on the first non-empty text delta</td><td>wrapper</td><td>Do not
+          reuse the SDK's first-chunk number for this. A turn that opens with a tool call streams
+          tool-argument chunks with nothing audible for hundreds of milliseconds, so the SDK's first chunk
+          and the caller's first word are different events.</td></tr>
+          <tr><td>Two time origins under two attribute prefixes, one turn-relative and one
+          stream-relative</td><td>wrapper</td><td>Mixing them under one prefix makes first-token-later-than-total
+          reachable, and it happens on a prompt-cache miss.</td></tr>
+          <tr><td>Server-side time-to-first-audio proxy</td><td>wrapper</td><td>Name it honestly as a floor.
+          It cannot see synthesis or the media leg.</td></tr>
+          <tr><td>Bot-output span, back-dated from the first delta to the output
+          boundary</td><td>wrapper</td><td></td></tr>
+          <tr><td>Turn-ending classification, including the barge-in case</td><td>wrapper</td><td>The
+          standard-track name for this is proposed in PR 390 and is not merged.</td></tr>
+          <tr><td>Error status on the turn span</td><td>wrapper</td><td>If you keep the span open past your
+          callback so you can end it yourself, the tracing helper's own error marking no longer runs, and
+          status writes after end are dropped in silence. A turn whose prompt fetch threw exported an unset
+          status where the helper's own ending would have exported an error status with a message.</td></tr>
+          <tr><td>Tool spans for tools the library supplies</td><td>wrapper</td><td>Wrap each tool around
+          its own <code>implementation</code>, or instrument at the model runtime. There is no hook.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="font-family:var(--display);font-size:19px;font-weight:600;margin:34px 0 8px">The tiling
+    property, which is what makes a voice trace worth opening</h3>
+
+    <p class="lede-sm">A voice trace is worth having only if the timeline accounts for the call. The first
+    version of this instrumentation did not. On one real call of 57.5 seconds with six turns, the spans
+    covered 12.2 seconds and left 45.3 seconds unexplained. That reads to anyone opening the trace as
+    proof the instrumentation does not work, when in fact every span was correct and the intervals between
+    them belonged to nobody.</p>
+
+    <p class="lede-sm">The shape that fixes it is two span families that alternate. A turn span covers
+    prompt receipt to the end-of-turn marker leaving the socket. A caller-side span covers every instant
+    between two turns, back-dated to the previous output boundary and closed at the next prompt receipt.
+    On one real call after the change, the root covered 42675 milliseconds with 86 observations across six
+    turns, and the gap between every consecutive root child was zero milliseconds across all eleven
+    boundaries. That is one call, one caller, one direction, so read it as a proof that the shape closes
+    rather than as a distribution.</p>
+
+    <p class="lede-sm">Two residuals survive and both are explainable rather than swept up. At the head,
+    turn one is back-dated by one millisecond, because the prompt-receipt timestamp is captured before the
+    root span is created lazily, and that sign is the correct one. At the tail, 2394 milliseconds separate
+    the last end-of-turn marker from socket close, which is the final reply still playing plus the hangup,
+    and nothing running in this process can see inside it.</p>
+
+    <div class="callout" style="--acc:var(--app)">
+      <p class="dtitle">The two relationships that are not what they look like</p>
+      <p>The caller-side span hangs off the call-level root, not off the turn it precedes. It ends where
+      the turn begins, so nesting it under the turn would draw a child that starts before and ends at its
+      parent's start. Because voice turns are minutes of independent WebSocket frames with no async
+      context held open across them, the caller-side span also re-extracts the serialised trace parent
+      from the root rather than inheriting the ambient context, even though the ambient context at that
+      moment is the turn span.</p>
+      <p>The model-stream span sits in the tree above the model SDK's <code>invoke_agent</code> span and
+      looks like its parent. It is not. Starting an observation without making it the active context
+      creates the span but does not enter it, so <code>invoke_agent</code> names the turn span as its
+      parent, exactly as the prompt-fetch step does. That was verified by reading the recorded parent span
+      identifiers, not by looking at the rendered waterfall, which draws something that reads as nesting.
+      The model-stream span is a timer running alongside the model call. Do not draw or assert containment
+      between them, and if you publish the tree, publish it this way, because an earlier revision of this
+      project's own notes had it wrong.</p>
+      <p>One more relationship, stated because it is a negative result rather than a shape: the
+      time-to-first-audio proxy landed within zero to three milliseconds of time to first token on all six
+      turns of that call. That is not a measurement of audio. It proves that nothing queues between the
+      model and the socket, which follows from the library's synchronous per-chunk send, and it remains
+      blind to synthesis and playback, which is the part the caller hears.</p>
+    </div>
+  </section>
+  <!-- ============ 02 THE CODE ============ -->
+  <section id="code">
+    <h2><span class="num">02</span> <b>Five layers of code</b> &middot; and which of them actually ran</h2>
+
+    <p class="lede-sm">The order matters. Layer 1 must run before anything imports the library, layer 3 is
+    the one readers get wrong, and layer 5 exists only because a barge-in closes a turn from a different
+    callback than the one that opened it. Two facts govern all five, and both are readable in the shipped
+    bundle rather than in any document: the bundle contains no OpenTelemetry code at all, so every span
+    below is created by the host application, and the library never invokes a tool, because
+    <code>TACTool.implementation</code> is read only in the class constructor and inside the optional
+    Agents-SDK adapter's <code>execute</code>.</p>
+
+    <div class="callout" style="--acc:var(--obs)">
+      <p class="dtitle">What verified means on this page</p>
+      <p>Every block below compiled under <code>strict</code>,
+      <code>exactOptionalPropertyTypes</code> and <code>noUncheckedIndexedAccess</code>, and the compiler
+      was re-run to confirm exit code 0. Compiling is not running. Each layer says which of the two it got,
+      and the difference is load-bearing for layers 1, 2 and 4. Two layers are executed and three are
+      compiled, and the split is not arbitrary: the parts drivable without a phone call, meaning context
+      propagation and the barge-in boundary bookkeeping, are the parts whose failure modes are silent, and
+      therefore the parts where running the code buys something. The compiled-only parts, meaning provider
+      registration, callback decoration and tool wrapping, are the parts where a wrong answer announces
+      itself immediately as no spans at all, a callback that stops firing, or a tool that throws.</p>
+    </div>
+
+    <h3 style="font-family:var(--display);font-size:19px;font-weight:600;margin:34px 0 8px">Layer 1.
+    Exporter and provider, and why registration order beats every other setup question</h3>
+
+    <pre class="wide">import { trace } from '@opentelemetry/api';
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+
+const endpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+
+if (endpoint === undefined || endpoint === '') {
+  process.stderr.write('[otel] no OTLP endpoint configured, tracing disabled\n');
+} else {
+  const exporter = new OTLPTraceExporter({
+    url: endpoint,
+    headers: process.env.OTEL_EXPORTER_OTLP_HEADERS === undefined
+      ? {}
+      : Object.fromEntries(
+          process.env.OTEL_EXPORTER_OTLP_HEADERS.split(',').map((pair) =&gt; {
+            const eq = pair.indexOf('=');
+            return [pair.slice(0, eq).trim(), pair.slice(eq + 1).trim()];
+          }),
+        ),
+    timeoutMillis: 5_000,
+  });
+
+  const sdk = new NodeSDK({
+    serviceName: process.env.OTEL_SERVICE_NAME ?? 'tac-agent',
+    spanProcessors: [new BatchSpanProcessor(exporter)],
+  });
+
+  sdk.start();
+  process.stderr.write(`[otel] exporting spans to ${endpoint}\n`);
+
+  process.once('beforeExit', () =&gt; {
+    void sdk.shutdown().catch(() =&gt; undefined);
+  });
+}
+
+export async function flushTelemetry(): Promise&lt;void&gt; {
+  const provider = trace.getTracerProvider() as {
+    getDelegate?: () =&gt; { forceFlush?: () =&gt; Promise&lt;void&gt; };
+  };
+  await provider.getDelegate?.()?.forceFlush?.();
+}</pre>
+
+    <p class="lede-sm">Load this file with <code>node --import ./telemetry.ts ./index.ts</code>, not with an
+    <code>import './telemetry.ts'</code> at the top of your entry point. ECMAScript modules hoist and
+    evaluate all imports of a module before its body runs, so a top-of-file import still evaluates
+    interleaved with the modules it is supposed to have patched first. The preload is the only placement
+    that guarantees the provider exists before the library, the AI client and any HTTP instrumentation are
+    loaded. This is a property of module evaluation order rather than anything specific to Agent
+    Connect.</p>
+
+    <p class="lede-sm">The <code>flushTelemetry</code> shape is not decoration.
+    <code>trace.getTracerProvider()</code> returns a <code>ProxyTracerProvider</code>, which has no
+    <code>forceFlush</code> of its own, so the natural-looking
+    <code>trace.getTracerProvider().forceFlush?.()</code> is an optional call on a method that does not
+    exist and therefore a silent no-op. The symptom is an empty backend with no error anywhere, which reads
+    as a backend problem. Reaching the delegate is what actually flushes, and it flushes without tearing
+    the provider down, so spans ended after the flush still export.</p>
+
+    <p class="lede-sm">Register <code>beforeExit</code> and resist adding a <code>SIGTERM</code> handler
+    here. A preload's signal listener runs before the application's own, because Node dispatches listeners
+    in registration order, so a <code>SIGTERM</code> handler calling <code>sdk.shutdown()</code> races the
+    application's own graceful close. In the scaffold this was measured as a loss: whichever side won, the
+    conversation root spans were ended after the provider had been torn down, and a span ended on a dead
+    provider is dropped in silence. Flush from the application's shutdown path instead, and order it so the
+    roots are ended before the flush rather than after.</p>
+
+    <div class="callout" style="--acc:var(--app)">
+      <p class="dtitle">Layer 1 was typechecked, not executed</p>
+      <p>In the verification workspace <code>@opentelemetry/exporter-trace-otlp-http</code> was not a direct
+      dependency; it was present only transitively, so the compiler resolved it through a path alias and an
+      attempt to actually run the file failed at module resolution. Install
+      <code>@opentelemetry/api</code>, <code>@opentelemetry/sdk-node</code>,
+      <code>@opentelemetry/sdk-trace-base</code> and
+      <code>@opentelemetry/exporter-trace-otlp-http</code> explicitly before you expect this to boot. Treat
+      the endpoint, the batching and the flush path as compiled and reasoned, and prove them against your
+      own collector.</p>
+    </div>
+
+    <h3 style="font-family:var(--display);font-size:19px;font-weight:600;margin:34px 0 8px">Layer 2.
+    Decorating the callbacks without touching their return contracts</h3>
+
+    <p class="lede-sm">There are three application-level callbacks and every one of them is a single-slot
+    setter rather than a subscription. Registering twice replaces the first registration silently, and
+    registering a channel causes the library's own internal forwarders to take the <code>error</code>,
+    <code>messageReceived</code>, <code>prompt</code>, <code>interrupt</code> and
+    <code>conversationEnded</code> slots. Setting your own listener on one of those five after registering
+    a channel therefore stops the corresponding application callback firing at all, with no error. Decide
+    once whether the library owns a channel's events or you do.</p>
+
+    <pre class="wide">import { SpanStatusCode } from '@opentelemetry/api';
+import type {
+  ConversationEndedCallback,
+  InterruptCallback,
+  MessageReadyCallback,
+} from 'twilio-agent-connect';
+import {
+  createConversationTraceRegistry,
+  startSpanUnder,
+  withTurnSpan,
+  type ConversationTraceRegistry,
+} from './trace-context.ts';
+
+export interface TracedCallbacks {
+  readonly registry: ConversationTraceRegistry;
+  messageReady(inner: MessageReadyCallback): MessageReadyCallback;
+  interrupt(inner: InterruptCallback): InterruptCallback;
+  conversationEnded(inner: ConversationEndedCallback): ConversationEndedCallback;
+}
+
+export function createTracedCallbacks(
+  options: { agentName?: string; registry?: ConversationTraceRegistry } = {},
+): TracedCallbacks {
+  const agentName = options.agentName ?? 'tac-agent';
+  const registry = options.registry ?? createConversationTraceRegistry();
+
+  return {
+    registry,
+
+    messageReady(inner) {
+      return async (params) =&gt; {
+        registry.sweep();
+        const root = registry.ensure(params.conversationId, `conversation.${params.channel}`, {
+          'gen_ai.agent.name': agentName,
+          'tac.channel': params.channel,
+        });
+
+        return withTurnSpan(
+          `turn.${params.channel}`,
+          root.traceparent,
+          async (span) =&gt; {
+            span.setAttributes({
+              'gen_ai.operation.name': 'invoke_agent',
+              'gen_ai.agent.name': agentName,
+              'gen_ai.conversation.id': params.conversationId,
+              'tac.channel': params.channel,
+              'tac.turn.author': params.author,
+              'tac.turn.input_chars': params.message.length,
+              'tac.turn.has_memory': params.memory !== undefined,
+              'tac.turn.has_profile': params.profileId !== undefined,
+            });
+
+            const result = await inner(params);
+
+            if (typeof result === 'string') {
+              span.setAttributes({
+                'tac.turn.output_chars': result.length,
+                'tac.turn.auto_sent': result !== '',
+              });
+            } else {
+              span.setAttribute('tac.turn.auto_sent', false);
+            }
+            span.setAttribute('tac.turn.aborted', params.abortSignal?.aborted ?? false);
+            return result;
+          },
+          { attributes: { 'gen_ai.conversation.id': params.conversationId } },
+        );
+      };
+    },
+
+    interrupt(inner) {
+      return async (params) =&gt; {
+        const traceparent = registry.traceparentFor(params.conversationId);
+        const at = Date.now();
+        const event = startSpanUnder(
+          traceparent,
+          'tts.interrupted',
+          {
+            'gen_ai.conversation.id': params.conversationId,
+            'tac.interrupt.duration_until_interrupt_ms': params.durationUntilInterruptMs ?? -1,
+            'tac.interrupt.utterance_chars': params.utteranceUntilInterrupt?.length ?? 0,
+          },
+          at,
+        );
+        event.end(at);
+        await inner(params);
+      };
+    },
+
+    conversationEnded(inner) {
+      return async (params) =&gt; {
+        try {
+          await inner(params);
+        } catch (err) {
+          registry.update(params.session.conversationId, {
+            'conversation.error': err instanceof Error ? err.message : String(err),
+          });
+          throw err;
+        } finally {
+          registry.end(params.session.conversationId, {
+            'tac.channel': params.session.channel,
+          });
+        }
+      };
+    },
+  };
+}</pre>
+
+    <p class="lede-sm">The return contract is the whole difficulty of this layer.
+    <code>MessageReadyCallback</code> returns
+    <code>Promise&lt;string | null | void&gt; | string | null | void</code>, and those three cases mean
+    three different things. <code>handleMessageReady</code> checks
+    <code>typeof response === 'string'</code> and, when it is, calls the channel's
+    <code>sendResponse</code>, which emits one frame with <code>last: true</code>. Return
+    <code>null</code> or <code>void</code> and the library sends nothing, which is what you want when your
+    own code is streaming tokens back through the channel. So a decorator must pass the inner value through
+    untouched and must never normalise <code>void</code> into <code>null</code>. The block above narrows
+    with <code>typeof result === 'string'</code> purely to read a length off the string, and returns
+    <code>result</code> unchanged on every path.</p>
+
+    <p class="lede-sm">Notice what is missing from the decorator: it does not swallow errors. It cannot
+    usefully do so, because the library already catches anything thrown out of these three callbacks and
+    only logs it. A throw inside your handler is therefore invisible to the caller and to the transport,
+    and if you do not mark the span yourself the failed turn exports as a successful one. The optional
+    chain on <code>params.abortSignal</code> is not defensive habit either: on the message-ready callback
+    that signal is optional in the declared type, where on the voice prompt payload it is required.</p>
+
+    <div class="callout" style="--acc:var(--app)">
+      <p class="dtitle">Layer 2 was typechecked, not executed</p>
+      <p>The three signatures, including the <code>string | null | void</code> union and the optional
+      <code>abortSignal</code>, come from the installed type declarations, and the compiler accepted the
+      decorators as drop-in replacements. Whether the library's auto-send behaves as the type suggests when
+      handed each of the three return values was not exercised against a live channel.</p>
+    </div>
+
+    <h3 style="font-family:var(--display);font-size:19px;font-weight:600;margin:34px 0 8px">Layer 3. Context
+    propagation, which is a serialised traceparent and not AsyncLocalStorage</h3>
+
+    <p class="lede-sm">This is the layer that decides whether you get one trace per conversation or one
+    trace per turn, and the failure mode is quiet enough to survive review. A voice conversation is minutes
+    of independent WebSocket frames. There is no async call stack spanning them, so there is no
+    <code>AsyncLocalStorage</code> context to hold open across a turn boundary; anything that tries becomes
+    a context you have to keep alive for the length of a phone call. The mechanism that works is the W3C
+    trace context: start the conversation root, immediately <code>propagation.inject</code> its span
+    context into a carrier, keep the resulting <code>traceparent</code> string in a registry keyed by
+    conversation id, and rehydrate it with <code>propagation.extract</code> at the start of every turn.
+    <code>AsyncLocalStorage</code> still matters, but only inside a turn, where it carries context from
+    your handler down into whatever library produces the model spans.</p>
+
+    <pre class="wide">import {
+  context,
+  propagation,
+  trace,
+  SpanKind,
+  SpanStatusCode,
+  type Attributes,
+  type Span,
+} from '@opentelemetry/api';
+
+export const tracer = trace.getTracer('tac-otel', '0.1.0');
+
+export const TRACEPARENT_KEY = 'traceparent';
+
+export interface ConversationTrace {
+  readonly traceparent: string | undefined;
+  readonly span: Span;
+}
+
+export function startConversationSpan(name: string, attributes: Attributes = {}): ConversationTrace {
+  const span = tracer.startSpan(name, { kind: SpanKind.INTERNAL, attributes });
+  const carrier: Record&lt;string, string&gt; = {};
+  propagation.inject(trace.setSpan(context.active(), span), carrier);
+  return { traceparent: carrier[TRACEPARENT_KEY], span };
+}
+
+export function parentContextFrom(traceparent: string | undefined) {
+  return traceparent === undefined
+    ? context.active()
+    : propagation.extract(context.active(), { [TRACEPARENT_KEY]: traceparent });
+}
+
+export interface TurnSpanOptions {
+  readonly startTimeMs?: number;
+  readonly endOnExit?: boolean;
+  readonly attributes?: Attributes;
+}
+
+export async function withTurnSpan&lt;T&gt;(
+  name: string,
+  traceparent: string | undefined,
+  fn: (span: Span) =&gt; Promise&lt;T&gt;,
+  options: TurnSpanOptions = {},
+): Promise&lt;T&gt; {
+  const parentCtx = parentContextFrom(traceparent);
+  const span = tracer.startSpan(
+    name,
+    {
+      kind: SpanKind.INTERNAL,
+      ...(options.startTimeMs !== undefined &amp;&amp; { startTime: options.startTimeMs }),
+      ...(options.attributes !== undefined &amp;&amp; { attributes: options.attributes }),
+    },
+    parentCtx,
+  );
+
+  try {
+    return await context.with(trace.setSpan(parentCtx, span), () =&gt; fn(span));
+  } catch (err) {
+    span.setStatus({
+      code: SpanStatusCode.ERROR,
+      message: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  } finally {
+    if (options.endOnExit !== false) span.end();
+  }
+}
+
+export function startSpanUnder(
+  traceparent: string | undefined,
+  name: string,
+  attributes: Attributes = {},
+  startTimeMs?: number,
+): Span {
+  return tracer.startSpan(
+    name,
+    { kind: SpanKind.INTERNAL, attributes, ...(startTimeMs !== undefined &amp;&amp; { startTime: startTimeMs }) },
+    parentContextFrom(traceparent),
+  );
+}
+
+export function childOfSpan(
+  parent: Span,
+  name: string,
+  attributes: Attributes = {},
+  startTimeMs?: number,
+): Span {
+  return tracer.startSpan(
+    name,
+    { kind: SpanKind.INTERNAL, attributes, ...(startTimeMs !== undefined &amp;&amp; { startTime: startTimeMs }) },
+    trace.setSpan(context.active(), parent),
+  );
+}</pre>
+
+    <p class="lede-sm">The registry that holds the carrier has to be bounded and swept, because neither
+    channel gives a reliable end signal for every case. The version below evicts by idle time and by count,
+    and ends the root span on the way out so that a conversation which simply stops talking still exports a
+    root whose duration covers its children.</p>
+
+    <pre class="wide">interface Entry {
+  readonly trace: ConversationTrace;
+  lastSeenAt: number;
+}
+
+export interface ConversationTraceRegistry {
+  ensure(conversationId: string, name: string, attributes?: Attributes): ConversationTrace;
+  traceparentFor(conversationId: string): string | undefined;
+  update(conversationId: string, attributes: Attributes): void;
+  end(conversationId: string, attributes?: Attributes): void;
+  sweep(nowMs?: number): void;
+}
+
+export function createConversationTraceRegistry(
+  options: { idleTtlMs?: number; maxConversations?: number } = {},
+): ConversationTraceRegistry {
+  const idleTtlMs = options.idleTtlMs ?? 15 * 60_000;
+  const maxConversations = options.maxConversations ?? 200;
+  const entries = new Map&lt;string, Entry&gt;();
+
+  const close = (id: string, entry: Entry, attributes: Attributes): void =&gt; {
+    entry.trace.span.setAttributes(attributes);
+    entry.trace.span.end();
+    entries.delete(id);
+  };
+
+  return {
+    ensure(conversationId, name, attributes = {}) {
+      const existing = entries.get(conversationId);
+      if (existing !== undefined) {
+        existing.lastSeenAt = Date.now();
+        return existing.trace;
+      }
+      const started = startConversationSpan(name, {
+        'gen_ai.conversation.id': conversationId,
+        ...attributes,
+      });
+      entries.set(conversationId, { trace: started, lastSeenAt: Date.now() });
+      while (entries.size &gt; maxConversations) {
+        const oldest = entries.entries().next();
+        if (oldest.done === true) break;
+        close(oldest.value[0], oldest.value[1], { 'conversation.closed_because': 'evicted' });
+      }
+      return started;
+    },
+
+    traceparentFor: (conversationId) =&gt; entries.get(conversationId)?.trace.traceparent,
+
+    update(conversationId, attributes) {
+      entries.get(conversationId)?.trace.span.setAttributes(attributes);
+    },
+
+    end(conversationId, attributes = {}) {
+      const entry = entries.get(conversationId);
+      if (entry === undefined) return;
+      close(conversationId, entry, { 'conversation.closed_because': 'ended', ...attributes });
+    },
+
+    sweep(nowMs = Date.now()) {
+      for (const [id, entry] of entries) {
+        if (nowMs - entry.lastSeenAt &gt; idleTtlMs) {
+          close(id, entry, { 'conversation.closed_because': 'idle' });
+        }
+      }
+    },
+  };
+}</pre>
+
+    <p class="lede-sm">Two design choices there are worth stating because the obvious alternatives fail.
+    Keep the carrier in your own registry rather than in the library's session metadata: the session
+    survives until the conversation is marked closed upstream, while your registry sweeps on a TTL and ends
+    the root span, so reading from session metadata after a sweep rehydrates turn N plus one as a child of
+    a root that has already ended and already exported, and the result is a root whose duration does not
+    cover its children. And observe that <code>startConversationSpan</code> injects the carrier and then
+    deliberately does not hold the root span active, because holding it active for the length of a call is
+    exactly the context lifetime you were trying to avoid.</p>
+
+    <div class="callout" style="--acc:var(--app)">
+      <p class="dtitle">The failure mode: a trace that looks complete and is not</p>
+      <p>Get this layer wrong and you do not get an error. You get spans carrying the right names, the right
+      attributes and the right durations, in a viewer that renders each one as a plausible root. Two
+      distinct mistakes produce that, and both were measured.</p>
+      <p>The first is starting a span from a callback with no ambient context. The interrupt callback is the
+      clearest case, because the library dispatches it from its own WebSocket message handler with nothing
+      on the stack from your prompt handler. A bare <code>tracer.startSpan</code> there becomes the root of
+      a brand new trace, so every barge-in mints a second trace for the same call. In an executed run, one
+      conversation that created its root correctly and then started one span the correct way and one span
+      the naive way exported two distinct trace ids, with the naive span reported as
+      <code>parent=ROOT</code>. The fix is <code>startSpanUnder</code>, which extracts the serialised
+      parent explicitly rather than trusting the ambient context.</p>
+      <p>The second is a span whose parent was never ended. In the same run a span was started under a
+      correctly extracted parent and never ended, and the exporter received three spans; the unended one was
+      absent entirely. An unended span does not arrive late and does not arrive as an open interval. It does
+      not arrive. That is the trap, because the trace you are looking at is complete for every span you can
+      see, and the missing one leaves no trace of its absence.</p>
+      <p>A third variant catches people who verify with a test harness. A bare
+      <code>BasicTracerProvider</code> with no context manager makes <code>context.with</code> a no-op, so
+      the propagation you are testing silently does nothing. When the scaffold's voice telemetry suite was
+      first assembled that way, one simulated call reported six trace ids. Install a context manager and a
+      propagator in the harness, and assert on the count of distinct trace ids rather than eyeballing the
+      shape.</p>
+    </div>
+
+    <pre class="wide">import { context, propagation, trace } from '@opentelemetry/api';
+import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
+import { W3CTraceContextPropagator } from '@opentelemetry/core';
+
+const exporter = new InMemorySpanExporter();
+const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+trace.setGlobalTracerProvider(provider);
+context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
+propagation.setGlobalPropagator(new W3CTraceContextPropagator());</pre>
+
+    <p class="lede-sm">One more property changes what a turn boundary means. Turn N plus one is chained
+    behind turn N: the voice channel keeps a per-conversation promise queue and, on each inbound prompt
+    frame, does <code>previousPrompt.then(() =&gt; this.handlePromptMessage(...))</code> before storing the
+    resulting promise back under the same conversation id. That was read in the installed bundle and the
+    queue map is written in exactly that one place. Your prompt listener's returned promise is therefore
+    the turn boundary, so a listener that returns <code>void</code> and starts work in the background lets
+    turn N plus one begin while turn N is still streaming and the serialisation evaporates. Any latency you
+    add inside the handler is added to the head of the line for the next turn, not just to this one. And
+    the instant you record as the start of a turn is a floor rather than the caller's stop, because the
+    prompt handler awaits its memory retrieval before invoking your callback.</p>
+
+    <div class="callout" style="--acc:var(--obs)">
+      <p class="dtitle">Layer 3 was executed</p>
+      <p>Both harness programs ran to completion with exit code 0. The correct path produced one distinct
+      trace id across a two-turn conversation with every span parented as intended, and the two failure
+      modes reproduced as described. The import paths in the harness block are the one thing changed from
+      the verified files: the workspace resolved
+      <code>@opentelemetry/context-async-hooks</code> and <code>@opentelemetry/core</code> through
+      transitive paths because neither was a direct dependency, and they were rewritten to package names
+      after confirming both packages export the symbols shown. Install both explicitly.</p>
+    </div>
+
+    <h3 style="font-family:var(--display);font-size:19px;font-weight:600;margin:34px 0 8px">Layer 4. A tool
+    decorator that leaves tool authoring alone</h3>
+
+    <p class="lede-sm">There is no tool middleware to hook. The library exposes no <code>onToolCall</code>,
+    no tool context plumbing, and it never calls a tool implementation on the dispatch path at all.
+    <code>toOpenAIFormat</code> and <code>toAnthropicFormat</code> emit schema only, so the model runtime
+    is what invokes your function. That leaves one clean seam: rebuild each <code>TACTool</code> around its
+    own implementation.</p>
+
+    <pre class="wide">import { SpanKind, SpanStatusCode, context, trace } from '@opentelemetry/api';
+import { TACTool, defineTool, type JSONSchema, type ToolFunction } from 'twilio-agent-connect';
+import { tracer } from './trace-context.ts';
+
+export function traceTool&lt;TParams, TResult&gt;(tool: TACTool&lt;TParams, TResult&gt;): TACTool&lt;TParams, TResult&gt; {
+  const inner: ToolFunction&lt;TParams, TResult&gt; = tool.implementation;
+
+  const traced: ToolFunction&lt;TParams, TResult&gt; = async (params: TParams): Promise&lt;TResult&gt; =&gt; {
+    const span = tracer.startSpan(
+      `execute_tool ${tool.name}`,
+      {
+        kind: SpanKind.INTERNAL,
+        attributes: {
+          'gen_ai.operation.name': 'execute_tool',
+          'gen_ai.tool.name': tool.name,
+          'gen_ai.tool.type': 'function',
+        },
+      },
+      context.active(),
+    );
+
+    const startedAt = Date.now();
+    try {
+      return await context.with(trace.setSpan(context.active(), span), () =&gt; inner(params));
+    } catch (err) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      span.setAttribute('error.type', err instanceof Error ? err.name : 'unknown');
+      throw err;
+    } finally {
+      span.setAttribute('tac.tool.duration_ms', Date.now() - startedAt);
+      span.end();
+    }
+  };
+
+  return new TACTool&lt;TParams, TResult&gt;(tool.name, tool.description, tool.parameters, traced);
+}
+
+export function defineTracedTool&lt;TParams = unknown, TResult = unknown&gt;(
+  name: string,
+  description: string,
+  parameters: JSONSchema,
+  implementation: ToolFunction&lt;TParams, TResult&gt;,
+): TACTool&lt;TParams, TResult&gt; {
+  return traceTool(defineTool&lt;TParams, TResult&gt;(name, description, parameters, implementation));
+}</pre>
+
+    <p class="lede-sm">Nothing about how a tool is authored changes. <code>defineTracedTool</code> has the
+    same four-parameter shape as <code>defineTool</code>, so existing definitions swap the factory name and
+    are done, and <code>traceTool</code> handles the tools you did not author, since the platform factories
+    all return a <code>TACTool</code> and are therefore all wrappable. The generic parameters flow through
+    so a typed implementation stays typed.</p>
+
+    <p class="lede-sm">The attribute names come from the GenAI conventions rather than anything
+    vendor-specific. <code>execute_tool</code> is the specified span name form, and
+    <code>gen_ai.operation.name</code> plus <code>gen_ai.tool.name</code> are its two required attributes,
+    with <code>gen_ai.tool.type</code> recommended and <code>function</code> a well-known value. Two
+    caveats. You are targeting an untagged development registry that changes week to week. And if you have
+    a conversation id available at tool-execution time, <code>gen_ai.conversation.id</code> on a tool span
+    became conditionally required only very recently, which is a good illustration of how much of this
+    surface is still moving. Set <code>gen_ai.tool.name</code> at span creation rather than afterwards, as
+    the block does: the conventions mark the agent name on tool spans as sampling-relevant, meaning a
+    sampler may read it, and a sampler runs when the span is created.</p>
+
+    <div class="callout" style="--acc:var(--app)">
+      <p class="dtitle">Layer 4 was typechecked, not executed</p>
+      <p>The compiler accepted reading <code>tool.implementation</code> and reconstructing the class through
+      its public four-argument constructor with the generics preserved. Nothing here has been run against a
+      model runtime actually dispatching a tool call, so the timing attribute and the error path are
+      compiled rather than observed.</p>
+    </div>
+
+    <h3 style="font-family:var(--display);font-size:19px;font-weight:600;margin:34px 0 8px">Layer 5.
+    Barge-in, where the span boundary and the span close live in different callbacks</h3>
+
+    <p class="lede-sm">The naive version ends the turn span in the interrupt handler, and it costs you
+    exactly the attributes you care about on the one ending that is ordinary operation on a phone call. The
+    interrupt handler runs promptly after the stream task is cancelled, while your prompt handler is still
+    waiting for its stream to drain, and the attributes describing the turn's result are written after that
+    drain completes. Once a span has ended, <code>setAttribute</code> and <code>setStatus</code> return
+    early rather than throwing. So the naive version loses the output, the called-tools list and the
+    model-relative total duration, and it loses them in silence. In the scaffold this showed up as a
+    barged-in turn that exported with no output text and no tool list. Ending the span in your own handler
+    rather than letting a wrapper end it also transfers error marking to you: a turn whose prompt fetch
+    threw exported with an unset status where the wrapper's own ending had exported an error status with a
+    message.</p>
+
+    <p class="lede-sm">The mechanism has three pieces. A registry both callbacks can reach, because the
+    interrupt arrives on its own frame and cannot see the prompt handler's closure. An interrupt handler
+    that parks a boundary and closes nothing. And a prompt handler whose <code>finally</code> closes the
+    span after the drain, preferring the parked boundary if one exists.</p>
+
+    <pre class="wide">import type { Attributes, Span } from '@opentelemetry/api';
+import { childOfSpan } from './trace-context.ts';
+
+export type TurnEnding = 'last-token' | 'interrupt' | 'no-output' | 'evicted';
+
+export interface TurnClose {
+  readonly atMs: number;
+  readonly aborted: boolean;
+  readonly ending: TurnEnding;
+}
+
+interface LiveTurn {
+  readonly span: Span;
+  readonly promptAt: number;
+  firstTokenAt: number | null;
+  recordedClose: TurnClose | null;
+}
+
+interface Entry {
+  live: LiveTurn | null;
+  lastBotOutputAt: number | null;
+  turns: number;
+  aborted: number;
+  callerTurnMs: number;
+  readonly ttfaMs: number[];
+}
+
+export interface VoiceTimeline {
+  beginTurn(conversationId: string, span: Span, atMs: number): number | null;
+  markFirstToken(conversationId: string, atMs: number, ownerSpan: Span): void;
+  liveTurn(conversationId: string): Span | null;
+  recordBoundary(conversationId: string, close: TurnClose): void;
+  completeTurn(conversationId: string, close: TurnClose, ownerSpan: Span): void;
+  markBotOutput(conversationId: string, atMs: number): void;
+  forget(conversationId: string): Attributes | undefined;
+}
+
+export function createVoiceTimeline(): VoiceTimeline {
+  const entries = new Map&lt;string, Entry&gt;();
+
+  const blank = (): Entry =&gt; ({
+    live: null,
+    lastBotOutputAt: null,
+    turns: 0,
+    aborted: 0,
+    callerTurnMs: 0,
+    ttfaMs: [],
+  });
+
+  const closeLive = (live: LiveTurn, close: TurnClose): { atMs: number; ttfaMs: number | null; aborted: boolean } =&gt; {
+    const effective = live.recordedClose ?? close;
+    const atMs = Math.max(effective.atMs, live.promptAt);
+    const ttfaMs = live.firstTokenAt === null ? null : Math.max(0, live.firstTokenAt - live.promptAt);
+
+    if (live.firstTokenAt !== null) {
+      const tts = childOfSpan(
+        live.span,
+        'tts.send',
+        { 'tac.tts.started_because': 'first text token sent' },
+        live.firstTokenAt,
+      );
+      tts.setAttributes({
+        'tac.tts.duration_ms': atMs - live.firstTokenAt,
+        'tac.turn.ending': effective.ending,
+      });
+      tts.end(atMs);
+    }
+
+    live.span.setAttributes({
+      'tac.turn.ttfa_ms': ttfaMs ?? -1,
+      'tac.turn.total_ms': atMs - live.promptAt,
+      'tac.turn.aborted': effective.aborted,
+      'tac.turn.ending': effective.ending,
+    });
+    live.span.end(atMs);
+    return { atMs, ttfaMs, aborted: effective.aborted };
+  };
+
+  const complete = (entry: Entry, close: TurnClose): void =&gt; {
+    const live = entry.live;
+    if (live === null) return;
+    const closed = closeLive(live, close);
+    entry.live = null;
+    entry.turns += 1;
+    if (closed.aborted) entry.aborted += 1;
+    if (closed.ttfaMs !== null) entry.ttfaMs.push(closed.ttfaMs);
+    entry.lastBotOutputAt = Math.max(entry.lastBotOutputAt ?? 0, closed.atMs);
+  };
+
+  return {
+    beginTurn(conversationId, span, atMs) {
+      let entry = entries.get(conversationId);
+      if (entry === undefined) {
+        entry = blank();
+        entries.set(conversationId, entry);
+      }
+      complete(entry, { atMs, aborted: true, ending: 'no-output' });
+      entry.live = { span, promptAt: atMs, firstTokenAt: null, recordedClose: null };
+
+      const boundary = entry.lastBotOutputAt;
+      if (boundary === null || boundary &gt;= atMs) return null;
+      entry.callerTurnMs += atMs - boundary;
+      return boundary;
+    },
+
+    markFirstToken(conversationId, atMs, ownerSpan) {
+      const live = entries.get(conversationId)?.live;
+      if (live === undefined || live === null) return;
+      if (live.span !== ownerSpan) return;
+      if (live.firstTokenAt === null) live.firstTokenAt = atMs;
+    },
+
+    liveTurn: (conversationId) =&gt; entries.get(conversationId)?.live?.span ?? null,
+
+    recordBoundary(conversationId, close) {
+      const entry = entries.get(conversationId);
+      const live = entry?.live;
+      if (entry === undefined || live === undefined || live === null) return;
+      if (live.recordedClose !== null) return;
+      live.recordedClose = close;
+      entry.lastBotOutputAt = Math.max(entry.lastBotOutputAt ?? 0, Math.max(close.atMs, live.promptAt));
+    },
+
+    completeTurn(conversationId, close, ownerSpan) {
+      const entry = entries.get(conversationId);
+      if (entry === undefined || entry.live === null) return;
+      if (entry.live.span !== ownerSpan) return;
+      complete(entry, close);
+    },
+
+    markBotOutput(conversationId, atMs) {
+      const entry = entries.get(conversationId);
+      if (entry === undefined) return;
+      entry.lastBotOutputAt = Math.max(entry.lastBotOutputAt ?? 0, atMs);
+    },
+
+    forget(conversationId) {
+      const entry = entries.get(conversationId);
+      if (entry === undefined) return undefined;
+      complete(entry, { atMs: Date.now(), aborted: true, ending: 'no-output' });
+      const stats: Attributes = {
+        'tac.turns.count': entry.turns,
+        'tac.turns.aborted': entry.aborted,
+        'tac.caller_turn.total_ms': entry.callerTurnMs,
+      };
+      entries.delete(conversationId);
+      return stats;
+    },
+  };
+}</pre>
+
+    <p class="lede-sm">Three details in there are not stylistic. <code>recordBoundary</code> returns early
+    when a boundary is already parked, so the first interrupt wins and a second interrupt frame changes
+    nothing. It also moves <code>lastBotOutputAt</code> immediately rather than waiting for the close, so
+    that a next prompt arriving before the straggling handler's <code>finally</code> still measures the
+    caller gap from the interrupt instant. And <code>completeTurn</code> and <code>markFirstToken</code>
+    both take the owning span and compare it by identity against the live turn, because the registry is
+    keyed by conversation id and a handler can outlive the next turn's start. When the scaffold was
+    exercised with two overlapping handlers on one id, the straggler's <code>finally</code> closed the
+    wrong turn: the second turn exported at ten milliseconds carrying the first turn's timing, and its own
+    close silently did nothing. The identity check is what makes a late <code>finally</code> a no-op
+    instead of corruption.</p>
+
+    <p class="lede-sm">The wiring side follows, with the local payload interfaces spelled out because
+    <code>on</code> types its callback as accepting any arguments and therefore typechecks nothing at the
+    call site.</p>
+
+    <pre class="wide">import { SpanStatusCode } from '@opentelemetry/api';
+import type {
+  ConversationId,
+  ConversationSession,
+  TACMemoryResponse,
+  VoiceChannel,
+} from 'twilio-agent-connect';
+import { startSpanUnder, withTurnSpan, type ConversationTraceRegistry } from './trace-context.ts';
+import type { TurnEnding, VoiceTimeline } from './voice-timeline.ts';
+
+const WS_OPEN = 1;
+
+interface PromptPayload {
+  conversationId: ConversationId;
+  transcript: string;
+  abortSignal: AbortSignal;
+  userMemory?: TACMemoryResponse;
+  session?: ConversationSession;
+}
+
+interface InterruptPayload {
+  conversationId: ConversationId;
+  utteranceUntilInterrupt: string | undefined;
+  durationUntilInterruptMs: number | undefined;
+}
+
+export interface AgentTurn {
+  readonly tokens: AsyncIterable&lt;string&gt;;
+  readonly done: Promise&lt;{ aborted: boolean }&gt;;
+}
+
+export interface VoiceAgent {
+  runTurn(input: {
+    conversationId: string;
+    userText: string;
+    memory: TACMemoryResponse | null;
+    profileId: string | null;
+    abortSignal: AbortSignal;
+  }): Promise&lt;AgentTurn&gt;;
+}
+
+async function* markFirstTokenAt(
+  tokens: AsyncIterable&lt;string&gt;,
+  onFirstToken: (atMs: number) =&gt; void,
+): AsyncGenerator&lt;string, void, undefined&gt; {
+  let stamped = false;
+  for await (const chunk of tokens) {
+    if (!stamped &amp;&amp; chunk !== '') {
+      stamped = true;
+      onFirstToken(Date.now());
+    }
+    yield chunk;
+  }
+}
+
+export function instrumentVoiceChannel(
+  voiceChannel: VoiceChannel,
+  agent: VoiceAgent,
+  registry: ConversationTraceRegistry,
+  timeline: VoiceTimeline,
+): void {
+  <i>// Returns the promise: the channel's per-conversation prompt queue uses it as the turn</i>
+  <i>// boundary, so a fire-and-forget handler lets turn N+1 start while turn N is streaming.</i>
+  voiceChannel.on('prompt', (data: PromptPayload): Promise&lt;void&gt; =&gt;
+    handleVoicePrompt(data, voiceChannel, agent, registry, timeline));
+
+  voiceChannel.on('interrupt', (data: InterruptPayload) =&gt; {
+    const interruptAt = Date.now();
+    const live = timeline.liveTurn(data.conversationId);
+    if (live === null) return;
+
+    const event = startSpanUnder(
+      registry.traceparentFor(data.conversationId),
+      'tts.interrupted',
+      {
+        'tac.interrupt.duration_until_interrupt_ms': data.durationUntilInterruptMs ?? -1,
+        'tac.interrupt.utterance_chars': data.utteranceUntilInterrupt?.length ?? 0,
+      },
+      interruptAt,
+    );
+    event.end(interruptAt);
+
+    timeline.recordBoundary(data.conversationId, {
+      atMs: interruptAt,
+      aborted: true,
+      ending: 'interrupt',
+    });
+  });
+
+  voiceChannel.on('webSocketDisconnected', (data: { conversationId: ConversationId }) =&gt; {
+    const stats = timeline.forget(data.conversationId);
+    if (stats !== undefined) registry.update(data.conversationId, stats);
+    registry.end(data.conversationId);
+  });
+}
+
+async function handleVoicePrompt(
+  data: PromptPayload,
+  voiceChannel: VoiceChannel,
+  agent: VoiceAgent,
+  registry: ConversationTraceRegistry,
+  timeline: VoiceTimeline,
+): Promise&lt;void&gt; {
+  const promptAt = Date.now();
+  const { conversationId, transcript, abortSignal } = data;
+
+  registry.sweep();
+  const root = registry.ensure(conversationId, 'conversation.voice', { 'tac.channel': 'voice' });
+
+  let boundaryAt: number | null = null;
+  let ending: TurnEnding = 'no-output';
+  let turnAborted = false;
+
+  await withTurnSpan(
+    'turn.voice',
+    root.traceparent,
+    async (span) =&gt; {
+      const priorBotOutputAt = timeline.beginTurn(conversationId, span, promptAt);
+
+      try {
+        span.setAttributes({
+          'gen_ai.operation.name': 'invoke_agent',
+          'gen_ai.conversation.id': conversationId,
+          'tac.channel': 'voice',
+          'tac.turn.input_chars': transcript.length,
+        });
+
+        if (priorBotOutputAt !== null) {
+          const gap = startSpanUnder(
+            root.traceparent,
+            'caller.turn',
+            {
+              'tac.caller_turn.duration_ms': promptAt - priorBotOutputAt,
+              'tac.caller_turn.covers':
+                'bot playback + caller speech + ASR endpointing (+ memory recall on turn 1)',
+            },
+            priorBotOutputAt,
+          );
+          gap.end(promptAt);
+        }
+
+        const asrFinal = startSpanUnder(
+          root.traceparent,
+          'asr.final',
+          { 'tac.asr.transcript_chars': transcript.length },
+          promptAt,
+        );
+        asrFinal.end(promptAt);
+
+        const { tokens, done } = await agent.runTurn({
+          conversationId,
+          userText: transcript,
+          memory: data.userMemory ?? null,
+          profileId: data.session?.profileId ?? null,
+          abortSignal,
+        });
+
+        const spokenPromise = voiceChannel.sendStreamingResponse(
+          conversationId,
+          markFirstTokenAt(tokens, (atMs) =&gt; timeline.markFirstToken(conversationId, atMs, span)),
+          { signal: abortSignal },
+        );
+
+        let spoken = '';
+        try {
+          spoken = await spokenPromise;
+        } catch {
+          spoken = '';
+        }
+
+        const markerSent =
+          spoken !== '' &amp;&amp;
+          !abortSignal.aborted &amp;&amp;
+          voiceChannel.getWebsocket(conversationId)?.readyState === WS_OPEN;
+        if (markerSent) {
+          boundaryAt = Date.now();
+          ending = 'last-token';
+        }
+
+        const result = await done;
+        turnAborted = result.aborted;
+        span.setAttribute('tac.turn.output_chars', spoken.length);
+      } catch (err) {
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      } finally {
+        timeline.completeTurn(
+          conversationId,
+          { atMs: boundaryAt ?? Date.now(), aborted: turnAborted, ending },
+          span,
+        );
+      }
+    },
+    { startTimeMs: promptAt, endOnExit: false },
+  );
+}</pre>
+
+    <p class="lede-sm">The <code>markerSent</code> condition mirrors the channel's own end-of-turn test,
+    and it has to. <code>sendStreamingResponse</code> sends its final <code>last: true</code> marker only
+    when the signal is not aborted, at least one token went out, and the socket is still open, and it
+    accumulates each chunk into its return value before writing it to the socket. Both of its loop exits
+    fall through to returning that accumulation, so a barged-in turn returns a non-empty partial string.
+    Checking only for a non-empty return therefore records a normal ending for a marker the channel never
+    sent, which is the bug this three-part condition replaces.</p>
+
+    <div class="callout" style="--acc:var(--plat)">
+      <p class="dtitle">The abort behaviour that means you can forget to wire an abort and not notice</p>
+      <p>The streaming send breaks its <code>for await</code> when the signal is aborted, and the interrupt
+      handler cancels the stream task and, if any tokens had already gone out, sends the
+      <code>last: true</code> finalisation itself before invoking your interrupt callback. All of that was
+      read in the installed bundle. Together they mean your local prompt handler does return on a barge-in
+      even with no abort wiring at all, because the signal the send falls back to when you omit
+      <code>options.signal</code> is the active stream task's own controller signal.</p>
+      <p>That is a comfortable-looking property and it hides a real cost. If you have added a network hop
+      inside the turn, the thing that keeps running is your upstream request, and the risk of an
+      unforwarded abort is a runaway generation you are still paying for rather than a stuck queue you
+      would notice. Forward the signal into your outbound request, not because the local loop needs it, but
+      because nothing else stops the remote side.</p>
+    </div>
+
+    <div class="callout" style="--acc:var(--obs)">
+      <p class="dtitle">Layer 5 splits on verification</p>
+      <p>The timeline is executed. A two-turn simulated conversation ran to completion with exit code 0,
+      one distinct trace id, the first turn closing with a normal ending and the second closing at the
+      parked interrupt boundary rather than at the handler's own instant, and a second parked boundary
+      correctly ignored.</p>
+      <p>The wiring module is typechecked only. It has not been run against a live channel. The signatures
+      of <code>sendStreamingResponse</code> and <code>getWebsocket</code> were re-verified against the
+      shipped type declarations before either call was presented. <b class="warn">The barge-in branch has
+      not been observed on real traffic:</b> both real calls in the record show zero aborted turns and no
+      interrupt event, so the interrupt path is proven by harness and diagnostic rather than by a caller
+      talking over the agent.</p>
+    </div>
+
+    <h3 style="font-family:var(--display);font-size:19px;font-weight:600;margin:34px 0 8px">What this
+    instrumentation measured, with the caveats attached</h3>
+
+    <p class="lede-sm">On one real call the conversation root was fully tiled by alternating caller-gap and
+    turn spans with zero milliseconds between every consecutive pair, across eleven boundaries. That is a
+    single call, a single caller and a single direction, so it demonstrates that the tiling closes rather
+    than establishing a distribution. The caller-gap spans accounted for 65 percent of that call, and that
+    figure must never be read as how long the caller talked. The per-turn token-streaming spans ran between
+    150 and 804 milliseconds across the six turns of that same one call, which is what shows the 65 percent
+    is not your streaming. The first-audio proxy landed within zero to three milliseconds of the model's
+    first-token time on all six turns.</p>
+
+    <p class="lede-sm">If you want a number for what this instrumentation costs, the framework preamble
+    ahead of the model stream measured at most 84 milliseconds. That is a ceiling from the worst single
+    turn observed, with the range running from 0 to 84 across every turn measured on one day with one
+    caller and one model, and it is only meaningful alongside the statement that everything else in a turn
+    is model time. For comparison, a healthy turn with no tool call ran 586 to 801 milliseconds of model
+    time to first chunk, again over a handful of turns on one day with one caller and one model rather than
+    a benchmark. The full latency waterfall and the twelve-row component table are on
+    <a href="https://pages-4296.twil.io/agent-scaffold-architecture">agent-scaffold-architecture</a>.</p>
+  </section>
+  <!-- ============ 03 WHAT IT CANNOT SEE ============ -->
+  <section id="limits">
+    <h2><span class="num">03</span> <b>What it cannot see</b> &middot; and how it fails silently</h2>
+
+    <p class="lede-sm">Everything above is measured by a Node process that receives text frames over a
+    WebSocket and sends text frames back. Three quantities a voice engineer actually wants sit on the other
+    side of that boundary, and no amount of span work in this process will produce them.</p>
+
+    <div class="cards">
+      <div class="card" style="--acc:var(--plat)">
+        <h4>Speech synthesis time</h4>
+        <span class="api">no acknowledgement exists on the socket</span>
+        <ul>
+          <li>ConversationRelay accepts <code>text</code> frames and turns them into audio inside Twilio.
+          The protocol's application-to-Twilio message set contains no acknowledgement of any kind, so the
+          moment a token becomes sound is never reported back.</li>
+          <li>Twilio does measure it. The Voice Insights ConversationRelay event
+          <code>tts_latency</code> is defined as the time from receiving a text sentence to the start of
+          audio synthesis.</li>
+          <li>That definition is also the only public hint that tokens are aggregated to sentence
+          boundaries before synthesis, and a hint is all it is. No protocol page states an aggregation
+          rule.</li>
+        </ul>
+        <p class="when">Treat sentence buffering as an inference from a metric definition</p>
+      </div>
+      <div class="card" style="--acc:var(--plat)">
+        <h4>Audio playback time</h4>
+        <span class="api">subscribable in TwiML, discarded before your callback</span>
+        <ul>
+          <li>The <code>&lt;ConversationRelay&gt;</code> verb exposes an <code>events</code> attribute
+          whose documented values include <code>speaker-events</code> and <code>tokens-played</code>, which
+          sounds like the missing signal.</li>
+          <li>It is not reachable through the library as shipped. In 2.2.0 the inbound validator is a union
+          of exactly the setup, prompt and interrupt schemas; a frame that fails the union is debug-logged
+          and dropped, and a frame that parses with an unrecognised type reaches a default branch that logs
+          and returns. Those two strings appear in the bundle only inside a documentation comment on the
+          TwiML field.</li>
+          <li>2.3.0 widens that union by one member, for keypad digits, and nothing else.</li>
+        </ul>
+        <p class="when">Subscribing today delivers frames the library discards</p>
+      </div>
+      <div class="card" style="--acc:var(--plat)">
+        <h4>Recognition endpointing</h4>
+        <span class="api">a platform decision you observe only as its outcome</span>
+        <ul>
+          <li>Twilio owns transcription end to end. The application influences it only through TwiML at
+          call setup, through the provider and model choices, hints, and the endpointing knobs
+          <code>speechTimeout</code> at 600 to 5000 ms with a default of <code>auto</code>, plus
+          <code>eotThreshold</code> and <code>partialPrompts</code> on one provider model.</li>
+          <li>Raw audio never reaches the application, so the interval between the caller falling silent
+          and the prompt frame arriving is invisible.</li>
+          <li>Two further delays hide beneath even that floor, both visible in the shipped bundle: the
+          prompt handler awaits memory retrieval before invoking your callback, and prompt frames for one
+          conversation are serialised through a private promise chain.</li>
+        </ul>
+        <p class="when">The first honest timestamp is prompt-callback entry, and it is a floor</p>
+      </div>
+    </div>
+
+    <div class="callout" style="--acc:var(--app)">
+      <p class="dtitle">The tempting mistake, which this design made before catching it</p>
+      <p>A server-side proxy for time to first audio, anchored on the first non-empty text delta leaving
+      the socket, landed within 0 to 3 milliseconds of time to first token on all six turns of the one
+      instrumented call: 2667 against 2664, 484 against 481, 1201 against 1201, 1655 against 1654, 547
+      against 546, and 3499 against 3498, all in milliseconds, from one call with one caller in one
+      direction.</p>
+      <p>That agreement is real and worth having, because it proves a negative:
+      <code>sendStreamingResponse</code> performs a synchronous <code>ws.send</code> inside its own
+      <code>for await</code> loop, so nothing queues between the model stream and the socket. What it does
+      not prove is anything about audio. The two numbers agree precisely because they measure the same
+      event twice on the same side of the boundary. <b class="warn">Presenting that proxy as time to first
+      audio publishes a figure that excludes synthesis, network transit and playback,</b> which is the
+      entire part a caller hears.</p>
+      <p>To get the real numbers a reader has to leave this process. Voice Insights publishes the
+      ConversationRelay event family, which includes <code>stt_latency</code> and <code>tts_latency</code>
+      with a <code>latency_ms</code> field, <code>first_token_received</code> documented as marking the end
+      of application latency, <code>final_token_received</code> with token and word totals, and start and
+      end events for both agent speech and customer speech. Those events are emitted at the carrier edge,
+      so a query not scoped to that edge returns nothing at all. The alternative, mark events on a Media
+      Streams connection, means adopting a different TwiML verb and leaving the managed relay path, so it
+      is a replacement rather than an addition.</p>
+    </div>
+
+    <p class="lede-sm">Where the protocol documentation is simply silent, this page says so rather than
+    estimating. No public page fetched during this work states a deadline for the application to send its
+    first text frame after a prompt, a WebSocket idle or ping timeout, any time-to-first-token target, the
+    numeric maximum call duration behind error 64104, or the numeric concurrency limit behind 64109. No
+    page states whether tokens already sent but not yet spoken are discarded when a barge-in arrives; the
+    only observable contract is <code>utteranceUntilInterrupt</code>, the text the caller actually heard,
+    from which the truncation point is inferred. Absence of documentation is not absence of a limit, and
+    none of those gaps is filled with a guess here.</p>
+
+    <h3 style="font-family:var(--display);font-size:19px;font-weight:600;margin:34px 0 8px">One span family
+    is a blend, and reading it as caller speech will mislead you</h3>
+
+    <p class="lede-sm">The tiled timeline alternates two span families with no gap between them. The family
+    covering everything between the end of one bot response and the arrival of the next prompt was 27622 ms
+    of a 42675 ms root span on the instrumented call, which is 65 percent of the call. That is a single
+    call with a single caller in one direction, and it is the largest number this design produces, which
+    makes it the most likely to be quoted badly.</p>
+
+    <p class="lede-sm">It cannot be read as how long the caller talked. Four distinct things live inside it.
+    The bot's own audio is still playing at the start of it, because playback continues past the last token
+    this process sent, as the 2394 ms tail above shows. The caller then speaks. Recognition endpointing adds
+    its configured silence window after the caller stops, which by default the application does not even
+    choose. And on the first turn of a conversation the library's memory retrieval round trip lands inside
+    it too, because retrieval is awaited before the prompt handler is invoked and voice runs retrieval once
+    per conversation, so that network call sits in the preceding interval rather than in the turn it
+    serves.</p>
+
+    <p class="lede-sm">Local token streaming, by contrast, was 150 to 804 ms per turn on that same call,
+    which is the measurement that establishes the 65 percent is not this process being slow. The honest
+    description of the blended span is a coverage device: it exists so that the sum of the root's children
+    equals the root, which turns the question of where the time went from an investigation into a
+    subtraction. It is not a caller-behaviour metric, and any dashboard that averages it is averaging four
+    unrelated things.</p>
+
+    <p class="lede-sm">Worth knowing for anyone designing this from scratch rather than copying it: the
+    OpenTelemetry GenAI conventions arrive at the same shape independently in an open, unmerged proposal.
+    <a href="https://github.com/open-telemetry/semantic-conventions-genai/pull/394">PR 394</a> argues that a
+    live session streaming audio in both directions cannot be represented by a single client-timed inference
+    span, models the session as events correlated by <code>gen_ai.conversation.id</code> rather than as a
+    span, and proposes an opt-in span for user input bounded by voice-activity events. A separate proposal,
+    <a href="https://github.com/open-telemetry/semantic-conventions-genai/pull/390">PR 390</a>, introduces an
+    end-reason attribute intended to capture barge-in as a turn outcome. Neither is merged, so this is
+    convergent prior art rather than conformance, and both should be re-checked before anyone builds on
+    them.</p>
+    <h3 style="font-family:var(--display);font-size:19px;font-weight:600;margin:34px 0 8px">Failure
+    modes</h3>
+
+    <p class="lede-sm">Broken telemetry rarely announces itself. The characteristic symptom is a trace that
+    looks complete, because the span that went missing is one nobody counts. Every row below was hit during
+    this work.</p>
+
+    <div class="wide tablewrap">
+      <table class="wide-first" style="min-width:900px">
+        <thead>
+          <tr><th>Assumption</th><th>Reality</th><th>Symptom you would actually see</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>A span created with a plain OpenTelemetry tracer reaches the backend.</td>
+            <td>The vendor span processor filters by span type, admitting spans from its own tracer, spans
+            carrying a <code>gen_ai.</code> attribute, and spans from instrumentors it recognises.
+            Everything else is dropped on export.</td>
+            <td>The turn span is absent while the model spans beneath it arrive, so the trace renders as a
+            set of orphans and looks like a parenting bug rather than a dropped export.</td>
+          </tr>
+          <tr>
+            <td>Custom attributes can be set at the top level of a span.</td>
+            <td>The vendor attribute builder destructures a fixed key set and discards the rest silently.
+            Custom keys must nest under a metadata field.</td>
+            <td>The attribute is set without error, the span arrives, and the field is simply not there.
+            Nothing logs.</td>
+          </tr>
+          <tr>
+            <td>Setting a metadata value to null records a null.</td>
+            <td>The serialiser keeps a key only if the serialised value is truthy, so null and empty string
+            vanish while false and zero survive.</td>
+            <td>A field meaning "measured, and the answer is nothing" is indistinguishable from a field that
+            was never written.</td>
+          </tr>
+          <tr>
+            <td>A span that is created will be exported.</td>
+            <td>A span that is never ended is never exported at all.</td>
+            <td>The child spans arrive and their parent does not, so the trace has a hole exactly where the
+            summary attributes live.</td>
+          </tr>
+          <tr>
+            <td>Flushing the tracer provider before exit works.</td>
+            <td>The globally registered provider is a proxy with no flush method, so the obvious call is an
+            optional-chained no-op. The flush has to go through the delegate.</td>
+            <td>Short-lived processes and scripts produce an empty backend with no error on either side.</td>
+          </tr>
+          <tr>
+            <td>A signal handler in the preloaded instrumentation module can shut the SDK down.</td>
+            <td>A preload's signal listener runs before the application's own, so provider teardown races
+            the code that ends the root spans, and a span ended on a torn-down provider is dropped in
+            silence.</td>
+            <td>Roots go missing on clean shutdown but not in development, which reads as an export problem
+            rather than an ordering problem.</td>
+          </tr>
+          <tr>
+            <td>The barge-in handler is the right place to close the turn span.</td>
+            <td>The interrupt callback fires immediately after the stream task is cancelled, while the
+            turn's own completion still needs the stream drain, and attribute writes after a span ends
+            return early without error.</td>
+            <td><b class="warn">A barged-in turn appears with no output text, no tool list and no total,</b>
+            on the one turn ending that is ordinary operation for a phone call.</td>
+          </tr>
+          <tr>
+            <td>The barge-in handler at least inherits the ambient trace context.</td>
+            <td>The library dispatches that callback from its own WebSocket message handler, so there is no
+            active context to inherit.</td>
+            <td>Every barge-in produces a second, single-span trace, and the call's own trace looks like the
+            interrupt never happened.</td>
+          </tr>
+          <tr>
+            <td>Taking ownership of when a span ends is free.</td>
+            <td>The vendor helper sets error status and then ends the span, so a caller that ends it first
+            loses the status.</td>
+            <td>A turn whose prompt fetch threw exports with an unset status and no message, and error-rate
+            panels read clean while callers heard a failure.</td>
+          </tr>
+          <tr>
+            <td>The prompt-version link is carried on telemetry metadata, as in older recipes for this
+            model SDK.</td>
+            <td>The current major version has no metadata field on its telemetry options at all, and the
+            link object must be a plain object with a numeric version rather than the JSON string the
+            prompt client's serialiser returns. Neither half errors.</td>
+            <td>The prompt version's metrics view stays empty, which reads as a problem with the tracing
+            backend.</td>
+          </tr>
+          <tr>
+            <td>A hand-set prompt link on any span will be picked up.</td>
+            <td>The backend computes the prompt name and version only for generation-type observations and
+            writes null for others.</td>
+            <td>The attribute is present and correct on the wire and absent in the product, verified by
+            inspecting the datastore directly.</td>
+          </tr>
+          <tr>
+            <td>Starting an observation makes it the active span, so nesting follows the code.</td>
+            <td>The vendor's start helper creates an observation without activating it, so a span opened
+            alongside a model call does not contain it.</td>
+            <td>A published waterfall diagram shows the wrong tree, and the reader who copies it cannot
+            reproduce it.</td>
+          </tr>
+          <tr>
+            <td>A test with an in-memory exporter proves the pipeline.</td>
+            <td>An in-memory exporter sees spans the real processor's filters would drop, and a bare tracer
+            provider without an async context manager makes context activation a silent no-op.</td>
+            <td>Tests pass, and the first live run reports six trace identifiers for one call.</td>
+          </tr>
+          <tr>
+            <td>The tracing backend's absence of trace data means no traces were recorded.</td>
+            <td>In this configuration the public read endpoints for traces return 404 because the read API
+            is disabled, not because the store is empty.</td>
+            <td>An automated verification step reports zero traces while the traces are plainly visible in
+            the user interface.</td>
+          </tr>
+          <tr>
+            <td>The instrumentation is running because the code is committed.</td>
+            <td>The container image copies source at build time rather than mounting it, so a code change
+            reaches production only on rebuild.</td>
+            <td><b class="warn">A real call placed against an image built hours earlier comes back missing
+            every new span,</b> which reads as proof the instrumentation does not work rather than proof the
+            code was never deployed. Check the image build time against the commit before anything
+            else.</td>
+          </tr>
+          <tr>
+            <td>Restarting the container picks up the changed configuration.</td>
+            <td>A restart re-runs the container with its original environment block, so the change silently
+            does not take. Recreation is required.</td>
+            <td>The variable is set on disk, the process disagrees, and every hypothesis you form next is
+            about the wrong layer.</td>
+          </tr>
+          <tr>
+            <td>A running process picks up the fix.</td>
+            <td>This runtime does not hot-reload code, though prompt edits fetched from the tracing backend
+            do land live within a cache interval.</td>
+            <td>A verification run reports the old behaviour because the process predates the fix by an
+            hour, and the fix gets reverted as ineffective.</td>
+          </tr>
+          <tr>
+            <td>Awaiting anything between the turn function resolving and the token drain is harmless.</td>
+            <td>The budget is one macrotask. One resolved-promise await still wins; two lose, and so does
+            any await that itself awaits.</td>
+            <td>Time to first token and turn total report null while the caller hears the entire answer,
+            because the timing span closed before the stream drained.</td>
+          </tr>
+          <tr>
+            <td>A per-conversation timeline can be keyed by conversation identifier alone.</td>
+            <td>A handler can outlive the start of the next turn, and orchestrated conversations reuse one
+            identifier per caller profile.</td>
+            <td>The straggling handler closes the wrong turn: one turn exports with a 10 ms duration
+            carrying the previous turn's timings, and its own close silently no-ops.</td>
+          </tr>
+          <tr>
+            <td>The model SDK's span and attribute names are stable across its major versions.</td>
+            <td>The current version emits GenAI-convention span names, so anything keyed on the previous
+            version's names finds nothing. Its legacy mode also reports time to first chunk in milliseconds
+            where the current mode reports seconds.</td>
+            <td>A dashboard silently matches zero spans, or a latency chart is wrong by a factor of one
+            thousand with no error anywhere.</td>
+          </tr>
+          <tr>
+            <td><code>gen_ai.client.operation.time_to_first_chunk</code> is a span attribute in the
+            specification.</td>
+            <td>The specification defines that exact name, in seconds, as a metric histogram. The span
+            attribute for the identical measurement is
+            <code>gen_ai.response.time_to_first_chunk</code>. The model SDK emits the metric name as a span
+            attribute, so the name and unit are right and the signal is wrong.</td>
+            <td>A conformant query against the specification's span attribute returns nothing, and a metrics
+            pipeline expecting a histogram receives none.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="lede-sm">Two of those rows deserve emphasis because they are indistinguishable from a code
+    defect and they cost real time. Instrumentation that was never deployed reads exactly like
+    instrumentation that does not work: the trace arrives, the call succeeded, and the new spans are simply
+    absent. Instrumentation running in a process older than the fix reads the same way. Before forming any
+    hypothesis about the tracing code, compare the running process or image against the commit that
+    introduced the change.</p>
+
+    <p class="lede-sm">One caveat on the whole specification column. The GenAI conventions moved out of the
+    main semantic-conventions repository into
+    <a href="https://github.com/open-telemetry/semantic-conventions-genai">their own repository</a>, whose
+    manifest declares <code>stability: development</code> and a <code>gen-ai-dev</code> schema URL, with no
+    tagged release. Every <code>gen_ai.*</code> attribute, span, metric and event is badged Development;
+    the only stable attributes on a GenAI span are borrowed from core conventions. The registry changed on
+    the day it was read for this work. Nothing here should be treated as a stable target.</p>
+  </section>
+  <!-- ============ 04 UPSTREAM ============ -->
+  <section id="upstream">
+    <h2><span class="num">04</span> <b>Does this belong upstream</b> &middot; and what the join costs</h2>
+
+    <p class="lede-sm">Yes, and the argument does not require the maintainers to adopt an observability
+    opinion.</p>
+
+    <p class="lede-sm">Every span in this design is reconstructed from the outside, out of four callback
+    entry instants plus the resolution of one streaming method. That reconstruction exists for one
+    structural reason: the library dispatches consumer callbacks with no trace context attached. The shipped
+    2.2.0 bundle contains zero occurrences of <code>opentelemetry</code> in either its JavaScript or its
+    type declarations, and its total self-reported timing surface is three items, none of which is a
+    duration it measured of itself. The interrupt callback in particular is dispatched straight from the
+    WebSocket message handler, which is why a barge-in roots its own trace unless the consumer parents it
+    explicitly by a span context captured earlier.</p>
+
+    <div class="callout" style="--acc:var(--obs)">
+      <p class="dtitle">The smallest change that would remove the need for wrapping</p>
+      <p>A dependency on <code>@opentelemetry/api</code> alone, with one internal span per inbound prompt
+      and per interrupt, and the corresponding callbacks dispatched inside that span's active context. The
+      API package is designed for exactly this: with no SDK registered in the host application it returns
+      non-recording spans, so a library can create them unconditionally at effectively no cost and with no
+      opinion about exporters.</p>
+      <p>Consumers would then get nesting instead of reconstruction, the interrupt callback would stop
+      rooting its own trace, and per-turn boundaries would become observable without anyone reading the
+      bundle to learn that prompts are serialised through a private promise chain. A slightly larger version
+      of the same change would also close the playback gap by widening the inbound message union so that
+      TwiML-subscribed playback and speaker events reach a handler instead of a dropped-frame debug log.</p>
+    </div>
+
+    <p class="lede-sm">The honest counterweight is that the surface this design already leans on carries no
+    stability guarantee. The callback types are exported and are not tagged internal, and the project's own
+    conventions treat the internal tag as the marker for members consumers should not call, so not being
+    tagged is a deliberate signal. Version discipline exists in practice; the keypad-digit addition reasons
+    in semantic-versioning terms in its own release note. But no written policy backs any of it. Grepping
+    the contributing guide, the readme and the development guide for stability, semantic versioning,
+    breaking changes, public API or deprecation language turns up nothing on the subject, and no
+    <code>@public</code>, <code>@stable</code> or <code>@experimental</code> tags are in use. The published
+    API reference the readme points at returns 404 and serves an organisation-wide redirect stub, which is
+    <a href="https://github.com/twilio/twilio-agent-connect-typescript/issues/93">an open issue</a>, so a
+    reader cannot even check what the reference claims. Building on these hooks is a reasonable bet on
+    intentionally exported surface, not an integration against a contract.</p>
+
+    <div class="wide tablewrap">
+      <table style="min-width:700px">
+        <thead>
+          <tr><th>Maintenance signal</th><th>What was observed</th><th>How to read it</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Repository</td>
+            <td><a href="https://github.com/twilio/twilio-agent-connect-typescript">Public, MIT licensed,
+            created January 2026</a>, 14 stars and 9 forks at the time of reading.</td>
+            <td>Young and small. Nothing here is a long-lived API by age.</td>
+          </tr>
+          <tr>
+            <td>Release cadence</td>
+            <td>2.0.0 within about two months of 1.0.0, and 2.3.0 in its fifth month.</td>
+            <td>Fast majors. A wrapper should expect to be revisited per major.</td>
+          </tr>
+          <tr>
+            <td>Commit shape</td>
+            <td>Roughly twenty non-dependabot commits across two and a half months, clustered on release
+            days, from effectively two maintainers plus one occasional contributor.</td>
+            <td>Active but bursty. Sixteen pull requests are open, about half from automated dependency
+            tooling.</td>
+          </tr>
+          <tr>
+            <td>Issue history</td>
+            <td>Discussions disabled, no roadmap, no changelog, and only three issues ever filed, all
+            documentation nits.</td>
+            <td>A search across issues and pull requests for OpenTelemetry, tracing, metrics, spans and two
+            tracing vendor names returns zero hits, but in a three-issue repository that is close to no
+            signal at all. <b class="warn">Absence of demand is not evidence of a decision against.</b></td>
+          </tr>
+          <tr>
+            <td>Product analytics pull request</td>
+            <td><a href="https://github.com/twilio/twilio-agent-connect-typescript/pull/95">One open pull
+            request</a> adds vendor-facing analytics emitting conversation and websocket lifecycle events,
+            with an opt-out environment variable. Its emit functions are exported but tagged internal.</td>
+            <td>An explicit statement that they are not a consumer extension point. The one thing in it that
+            would reach a subclass is the messaging send path refactored into a template method.</td>
+          </tr>
+          <tr>
+            <td>A private staging repository</td>
+            <td>Its public description says it holds a voice-provider foundation and a live-model port, and
+            that it merges into the public TypeScript SDK.</td>
+            <td>That is precisely the path this tracing design wraps, which makes the voice-specific parts of
+            any wrapper the least safe thing to depend on. The claim rests on a name and a description
+            only.</td>
+          </tr>
+          <tr>
+            <td>Observed version drift</td>
+            <td>2.2.0 to 2.3.0 was one additive pull request adding a keypad-digit callback, plus a
+            behaviour-preserving extraction of the conversation-initialisation block. Nothing on the prompt
+            path changed.</td>
+            <td>Reassuring by comparison. A 2.2.0-shaped design still holds at 2.3.0. In 2.2.0 keypad
+            digits fail inbound validation and are dropped with a debug log.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="font-family:var(--display);font-size:19px;font-weight:600;margin:34px 0 8px">The join to the
+    companion page</h3>
+
+    <div class="callout" style="--acc:var(--app)">
+      <p class="dtitle">The most useful instrument here is the one that leaves with the model call</p>
+      <p>The single instrument that turns the question of whether it is us or the model into one query rather
+      than an investigation is emitted by the model SDK running inside this process. A grep of the shipped
+      Agent Connect bundle for <code>@opentelemetry</code>, <code>AsyncLocalStorage</code>,
+      <code>trace.getTracer</code> and <code>traceparent</code> returns nothing, so every generation span and
+      every <code>gen_ai.*</code> attribute on it, including the time-to-first-chunk value, comes from the
+      model SDK's telemetry integration registered here at process start.</p>
+      <p>Move the model call out into a separate agent runtime and that instrument leaves with it. Unless the
+      replacement runtime accepts a W3C <code>traceparent</code> on its streaming request and continues the
+      trace, one trace covering a whole call becomes two trees with no shared identifier, and the number both
+      of these pages lean on is produced by a library that no longer runs where the spans are assembled.
+      <b class="warn">Whether any of the candidate agent builders propagates an inbound
+      <code>traceparent</code> is an open question</b> and is not settled anywhere in this work.</p>
+      <p>The companion page in this pair, on replacing the agent core with a visual agent builder, is where
+      that trade is argued:
+      <a href="https://pages-4296.twil.io/tac-agent-builder-options">tac-agent-builder-options</a>. Read this
+      section first, because it is the cost side of that decision and it is easy to discover afterwards
+      instead.</p>
+    </div>
+  </section>
+  <!-- ============ 05 OPEN ITEMS ============ -->
+  <section id="open">
+    <h2><span class="num">05</span> <b>Open items</b> &middot; every claim that rests on reading</h2>
+
+    <p class="lede-sm">This page mixes three kinds of evidence and they are not interchangeable. Some claims
+    were measured on real traffic. Some were compiled against real declared types and never run. Some were
+    read out of a shipped bundle or a documentation page and reasoned about. Each row below says which, so a
+    reader can decide what to trust and what to re-check.</p>
+
+    <h3 style="font-family:var(--display);font-size:19px;font-weight:600;margin:34px 0 8px">Numbers, and how
+    thin the sample is</h3>
+
+    <div class="wide tablewrap">
+      <table class="wide-first" style="min-width:760px">
+        <thead>
+          <tr><th>Claim</th><th>What it rests on</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>The tiling result: a 42675 ms root, 86 observations, six turns, zero-millisecond gaps across
+            eleven boundaries, a 27622 ms blended span at 65 percent of the call, 150 to 804 ms per-turn
+            streaming, a one-millisecond head residual and a 2394 ms tail.</td>
+            <td><b class="warn">One call, one caller, one direction.</b> An existence proof that the shape
+            closes, not a distribution. The 57.5 s, 12.2 s and 45.3 s before-figures come from one earlier
+            call.</td>
+          </tr>
+          <tr>
+            <td>The 84 ms preamble ceiling, and the claim that time to first chunk accounts for the
+            generation span almost exactly.</td>
+            <td>33 generations from a single day, a single caller and a single model. A ceiling from the
+            worst single turn, with a range of 0 to 84 ms. Not a benchmark.</td>
+          </tr>
+          <tr>
+            <td>The zero-to-three-millisecond agreement between the first-audio proxy and time to first
+            token.</td>
+            <td>Six turns of that one call.</td>
+          </tr>
+          <tr>
+            <td>The barge-in branch of the span model and of the instrumentation.</td>
+            <td><b class="warn">Unproven on live traffic.</b> Both measured real calls recorded zero aborted
+            turns and no interrupt event, so the park-the-boundary mechanism is evidenced by a test suite, a
+            harness run and a diagnostic script. One call in which somebody talks over the agent would close
+            it.</td>
+          </tr>
+          <tr>
+            <td>The parent-identifier claims, including that the model-stream span does not contain
+            <code>invoke_agent</code>.</td>
+            <td>The tracing backend in use exposes no public read API, so shapes were verified in the
+            datastore and the user interface rather than through a read endpoint. That matters because an
+            in-memory span exporter cannot exercise the real export pipeline's filtering.</td>
+          </tr>
+          <tr>
+            <td>The measured attribute loss in the naive barge-in version, and the overlapping-handler
+            corruption that motivates the owner-span identity check.</td>
+            <td>Transcribed from recorded measurements rather than reproduced in this pass. The underlying
+            mechanism, that attribute and status writes return early after a span ends, is specified API
+            behaviour that was not re-demonstrated.</td>
+          </tr>
+          <tr>
+            <td>The read endpoints for traces returning 404 because the read API is disabled.</td>
+            <td>One deployment configuration observed in this work. It is not a general property of the
+            product.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="font-family:var(--display);font-size:19px;font-weight:600;margin:34px 0 8px">Code that
+    compiled and did not run</h3>
+
+    <div class="wide tablewrap">
+      <table class="wide-first" style="min-width:760px">
+        <thead>
+          <tr><th>Layer or claim</th><th>What it rests on</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Layer 1, the exporter and provider.</td>
+            <td>Never executed. The OTLP exporter package was not a direct dependency of the verification
+            workspace, so the compiler resolved it through a path alias and running the file failed at
+            module resolution. Endpoint construction, header parsing, batching and the flush-through-the-delegate
+            path are compiled and reasoned, not observed against a collector.</td>
+          </tr>
+          <tr>
+            <td>That a top-of-file import evaluates too late to patch the library.</td>
+            <td>Reasoning about ECMAScript module evaluation order plus the shipped scaffold's use of a
+            preload for that stated reason. No experiment was constructed in which a top-of-file import
+            demonstrably misses spans a preload catches.</td>
+          </tr>
+          <tr>
+            <td>The signal-handler ordering hazard between the preload and the application.</td>
+            <td>Transcribed from the scaffold's recorded measurement, not re-measured. No shutdown race was
+            reproduced in which root spans end after provider teardown.</td>
+          </tr>
+          <tr>
+            <td>Layer 2, the callback decorators.</td>
+            <td>Typechecked only. Whether the auto-send behaves as the declared string, null or void union
+            suggests when handed each of the three return values was not exercised against a live
+            channel.</td>
+          </tr>
+          <tr>
+            <td>The callback-slot clobbering hazard on registration.</td>
+            <td>Follows from <code>on</code> being a setter and from the internal listener setup calling it.
+            Both registration orderings were not run to observe the silent failure.</td>
+          </tr>
+          <tr>
+            <td>Layer 4, the tool decorator.</td>
+            <td>Typechecked only. Never run with a model runtime dispatching a real tool call, so its timing
+            attribute and its error path are compiled rather than observed.</td>
+          </tr>
+          <tr>
+            <td>That <code>TACTool.implementation</code> is read in exactly two places.</td>
+            <td><b class="warn">Not established.</b> The count comes from a prior grep of the shipped
+            bundle, and a later independent check found the string in seven places, which is consistent with
+            but does not prove two read sites. Someone should confirm them by name.</td>
+          </tr>
+          <tr>
+            <td>The layer 5 voice wiring module.</td>
+            <td>Typechecked only, not run against a live channel. Its use of
+            <code>sendStreamingResponse</code> and <code>getWebsocket</code> was re-verified against the
+            shipped type declarations in this pass.</td>
+          </tr>
+          <tr>
+            <td>The harness import paths for the context manager and the propagator.</td>
+            <td>Rewritten from transitive paths to package names after confirming both packages export the
+            named symbols. Neither was a direct dependency of the verification workspace, so a reader
+            installing them fresh is on a path that was not exercised.</td>
+          </tr>
+          <tr>
+            <td>That supplying a custom logger bypasses the library's own scrubbing log hook.</td>
+            <td>Derived from reading the logger factory and the assignment site, not exercised at runtime.
+            Whether a caller-supplied logger reaches every logging site was not traced to every construction
+            site; at least two internal clients fall back to their own logger when constructed without
+            one.</td>
+          </tr>
+          <tr>
+            <td>That the first turn's memory retrieval lands inside the preceding caller-gap span, and the
+            effect of prompt-frame chaining under an added network hop.</td>
+            <td>Read from the shipped bundle's ordering rather than observed in a trace during this
+            pass.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="font-family:var(--display);font-size:19px;font-weight:600;margin:34px 0 8px">Specifications,
+    documentation, and documented silence</h3>
+
+    <div class="wide tablewrap">
+      <table class="wide-first" style="min-width:760px">
+        <thead>
+          <tr><th>Claim</th><th>What it rests on</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Every <code>gen_ai.*</code> name used on this page.</td>
+            <td>The GenAI conventions were read at a single commit on an untagged development registry with
+            no releases. Every attribute is badged Development and the registry changed within a day of
+            being read. <b class="warn">Re-check the names before publishing</b>, particularly the recently
+            added conversation id on tool spans.</td>
+          </tr>
+          <tr>
+            <td>That the two open GenAI voice proposals are still open.</td>
+            <td>Not re-checked at publication time. One of them was active the day before the source read,
+            so either may since have merged, closed or been superseded.</td>
+          </tr>
+          <tr>
+            <td>The list of attributes arriving free from the model SDK.</td>
+            <td>Read from the installed SDK's telemetry documentation, not from a diff of a live trace
+            against that list. Individual attributes may be absent for a given provider or call shape. An
+            intermediate step-numbered span appears in this project's earlier notes; whether that is a
+            separate span or a rendering artifact of the tracing user interface was not settled.</td>
+          </tr>
+          <tr>
+            <td>That tokens are buffered to sentence boundaries before synthesis.</td>
+            <td>Inferred from the Voice Insights definition of the synthesis latency event. No protocol page
+            states it as a rule.</td>
+          </tr>
+          <tr>
+            <td>That tokens already sent but not yet spoken are discarded on a barge-in.</td>
+            <td>Not stated on any page fetched. The truncation point is inferred from
+            <code>utteranceUntilInterrupt</code>.</td>
+          </tr>
+          <tr>
+            <td>What the TwiML-subscribed speaker and playback event frames would contain.</td>
+            <td>Unknown. Their payload field names do not appear on any page fetched, so what the library
+            would dispatch if it accepted them cannot be described.</td>
+          </tr>
+          <tr>
+            <td>The absence of a first-frame deadline, a WebSocket idle or ping timeout, a
+            time-to-first-token target, a numeric maximum call duration behind error 64104, and a numeric
+            concurrency limit behind 64109.</td>
+            <td>Absence across the pages fetched, not a documented guarantee that no limit exists.</td>
+          </tr>
+          <tr>
+            <td>Voice Insights and Media Streams as the routes to real synthesis and playback timings.</td>
+            <td>Not exercised. They are named on the strength of published event definitions, not on a
+            measurement taken through them. That Media Streams mark events require abandoning the managed
+            relay path is read from the TwiML verb documentation rather than tested by building both.</td>
+          </tr>
+          <tr>
+            <td>That a library depending only on <code>@opentelemetry/api</code> costs nothing when no SDK
+            is registered.</td>
+            <td>Standard documented behaviour for that package, not something benchmarked here.</td>
+          </tr>
+          <tr>
+            <td>That the maintainers would treat a change to the callback signatures as breaking.</td>
+            <td>Inferred from one release note's semantic-versioning reasoning and the 1.x to 2.x history.
+            No written policy exists and no maintainer was asked.</td>
+          </tr>
+          <tr>
+            <td>Statements about what the published API reference does or does not claim.</td>
+            <td>The rendered reference could not be inspected because its documented URL returns 404, so
+            those statements are inferred from the documentation generator configuration and internal tags
+            in source.</td>
+          </tr>
+          <tr>
+            <td>That a private staging repository targets the voice provider layer.</td>
+            <td>That repository's public name and description only. No readable code, plan or maintainer
+            statement behind it.</td>
+          </tr>
+          <tr>
+            <td>The 2.2.0 to 2.3.0 delta.</td>
+            <td>Taken from release notes, the pull request body and the export barrel rather than from a diff
+            of two installed bundles.</td>
+          </tr>
+          <tr>
+            <td>Whether any candidate agent builder accepts or propagates an inbound W3C
+            <code>traceparent</code> on its streaming endpoint.</td>
+            <td><b class="warn">Unknown.</b> The join passage in section 04 states the risk and does not
+            resolve it.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+  <footer>
+    <p>Compiled <b>16 September 2026</b>. Sourced from public product documentation, the public
+    OpenTelemetry GenAI semantic-conventions repository, and from reading a shipped npm package: the
+    <code>twilio-agent-connect</code> 2.2.0 bundle's compiled JavaScript and type declarations as installed.
+    Where a signature or a behaviour is stated, it was read from that package rather than from a document.
+    No account identifiers, customer names or account-specific configuration appear on this page.</p>
+    <p>Anything marked unconfirmed or open above is an open item rather than an assumption. Code blocks
+    compiled against the real declared types; the layers that were compiled but never executed say so next
+    to the code. Every latency figure carries its sample size at the point of use, and where a claim rests on
+    reading rather than measurement, section 05 names it.</p>
+    <p>Companion reading:
+    <a href="https://pages-4296.twil.io/agent-scaffold-architecture">agent-scaffold-architecture</a> for the
+    system architecture, the hop-by-hop turn walkthrough and the full latency table, and
+    <a href="https://pages-4296.twil.io/tac-agent-builder-options">tac-agent-builder-options</a> for the
+    decision this page is the cost side of.</p>
+  </footer>
+</div>
+</body>
+</html>
