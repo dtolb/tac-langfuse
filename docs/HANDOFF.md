@@ -2322,3 +2322,10 @@ The stack moved from the Traefik dev box (`northwind.twilio.dtolb.com`, containe
 - Verified: `/health` reports every capability true and `voicePublicDomain: tac-langfuse.twl.dtolb.com`; `/api/tuning`, `/` and `/tuning` return 200; `twil webhook invoke --type voice` on `/twiml` returned 200 with `wss://tac-langfuse.twl.dtolb.com/ws`. `scripts/repoint-public-host.ts` moved all three host places; the CO backup is under `.superpowers/t14/`.
 - `scripts/preflight.mjs` and `scripts/status.mjs` still describe the dev-box stack; `pnpm stack:up`/`stack:down` now drive the Pi.
 
+
+## gpt-6.1-terra, reasoning off, and the Zero Data Retention org (2026-11-18)
+
+- Calls that got stuck on "I'm sorry, I didn't catch that" were OpenAI 400s on the second step of a tool turn: `Item with id 'rs_…' not found. Items are not persisted for Zero Data Retention organizations`. The OpenAI org is ZDR, so the Responses API cannot reference a prior reasoning item by id. The AI SDK surfaces this only as a stream `error` part, so nothing logged it.
+- Fix, in `OPENAI_PROVIDER_OPTIONS` (`server/agent/model/openai.ts`): `store: false` plus `include: ['reasoning.encrypted_content']`, and an `onError` on `streamText` that logs.
+- `reasoningEffort: 'none'` was silently dropped for GPT-6 models by `@ai-sdk/openai` 4.0.60; 4.0.118 (with `ai` 7.0.173) lists `gpt-6.1-terra` as supporting `'none'`. The raw API rejects `'minimal'` for it. Measured after the upgrade: bench multi-turn tool calls complete in 2 steps with 0 reasoning tokens.
+- `scripts/verify-model.mjs` carries a copy of the same options.
