@@ -24,16 +24,8 @@
  */
 export const AGENT_PORT = 8910;
 
-/**
- * Next's dev server. Also the container port for the `web` service.
- *
- * Langfuse's own web container defaults to 3000 too, which is why the compose override
- * remaps it to 3100 on the host — otherwise `next dev` and `langfuse-web` collide.
- */
+/** Next's dev server. Also the container port for the `web` service. */
 export const WEB_PORT = 3000;
-
-/** Self-hosted Langfuse, remapped off 3000 to avoid the collision above. */
-export const LANGFUSE_HOST_PORT = 3100;
 
 /** Where the browser reaches the agent during local development. */
 export const AGENT_DEV_ORIGIN = `http://localhost:${AGENT_PORT}`;

@@ -35,7 +35,7 @@ test('an unknown config key is rejected rather than stripped', () => {
 test('an empty config parses to the documented defaults', () => {
   const parsed = PromptConfigSchema.parse({});
   expect(parsed).toEqual({
-    model: 'gpt-5.4-mini',
+    model: 'gpt-6.1-terra',
     tools: [],
     toolChoice: 'auto',
     maxSteps: 4,
@@ -310,7 +310,7 @@ test('a live prompt with no config at all gets the schema defaults', async () =>
   const { port } = portWith({ fetcher: async () => fetched({ config: null }) });
   const p = await port.get('demo-agent-voice');
   expect(p.version).toBe(7); // not a fallback — an absent config is legitimate
-  expect(p.config).toEqual({ model: 'gpt-5.4-mini', tools: [], toolChoice: 'auto', maxSteps: 4 });
+  expect(p.config).toEqual({ model: 'gpt-6.1-terra', tools: [], toolChoice: 'auto', maxSteps: 4 });
 });
 
 test('a fetcher that throws yields the compiled default and does not reject', async () => {

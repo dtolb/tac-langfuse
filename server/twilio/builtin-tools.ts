@@ -20,7 +20,7 @@
  *    (`../agent/tools/registry.ts`) has no Zod object to project, so it and the T19 console
  *    inspector get nothing; `jsonSchema()` without an explicit `validate` performs NO argument
  *    validation, where the Zod path validates model output before `execute`; and TAC ships the
- *    identical Zod shape internally (`dist/index.js:633-636` carries
+ *    identical Zod shape internally (`TwilioMemoryConfigSchema` carries
  *    `observationsLimit: z.number().int().min(0).max(100).default(20)` verbatim), so we would be
  *    mirroring a mirror. `defineTool` does four truthiness checks and adds no argument validation of
  *    its own — TAC hands model-supplied JSON straight to the implementation — so the mirrors below

@@ -12,11 +12,16 @@
  * it, it has a real sampled trace id — and it is then silently dropped on the way to Langfuse with
  * no error anywhere. Read the header of `server/obs/spans.ts` before adding anything here.
  *
- * Both operations pick up the AMBIENT OpenTelemetry context, which is why they nest under the
+ * All three operations act on the AMBIENT OpenTelemetry context, which is why they nest under the
  * caller's turn span without being handed it: `runTurn` runs inside the caller's `withTurnSpan`
  * callback.
  */
-import { startStep, timeStep } from '../obs/spans.ts';
+import { annotateTrace, recordStep, withTraceIdentity } from '../obs/spans.ts';
 import type { TurnSpans } from './types.ts';
 
-export const turnSpans: TurnSpans = { timeStep, startStep };
+/** The production `TurnSpans`, over the active turn span's trace. */
+export const turnSpans: TurnSpans = {
+  record: recordStep,
+  annotate: annotateTrace,
+  inherit: withTraceIdentity,
+};

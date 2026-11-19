@@ -23,7 +23,7 @@
  * `memoryConfig.communicationsLimit` protects only the happy path. It defaults to 0
  * (`packages/core/src/types/config.ts:19`), it is process-wide rather than per-channel, and
  * decisively: **the Recall-failure fallback ignores it.** On any throw from the memory path
- * `packages/core/src/lib/tac.ts:597-605` calls `conversationClient.listCommunications(
+ * `TAC.retrieveMemory`'s catch (`packages/core/src/lib/tac.ts`) calls `conversationClient.listCommunications(
  * session.conversationId)`, whose signature takes no limit, and hands the result to the same
  * `TACMemoryResponse` — which renders `## Recent Message History` of `User:` / `Assistant:` lines
  * from the CURRENT conversation. No config value can reach that path. Zeroing communications here
@@ -133,22 +133,14 @@ export interface TacMemoryDeps {
  * Wrap the live TAC handle as a `MemoryComposePort`.
  *
  * NO SPAN IS CREATED HERE, and the profile fetch — the only real I/O in the file — does not get one
- * either. Three reasons, in order of weight:
+ * either:
  *
- *  1. `run-turn.ts:210-220` already wraps this whole port in a `memory.recall` timed step reporting
- *     `chars`. When a profile is fetched that fetch is essentially the entire duration of the step,
- *     so a child span would report the same number under a second name.
- *  2. A span started from in here would not nest under `memory.recall` anyway. `startStep` uses
- *     `startObservation`, which parents to the AMBIENT context and does not make itself active
- *     (`server/obs/spans.ts:132`), so `memory.recall` is not active while we run and our child
- *     would attach to the turn as a SIBLING of it — a waterfall that lies about nesting.
- *  3. The cost is still reported, as `profileMs` on this port's own `memory.recall` obs event, which
- *     is what distinguishes "the step took 180 ms fetching a profile" from "the step took 180 ms
- *     doing something else". `run-turn.ts:201-203` sets the convention: the port that does the work
- *     owns its event, `runTurn` owns the span.
- *
- * If `profileMs` ever turns out to dominate `memory.recall`, the honest fix is a child step created
- * by `run-turn.ts` — not one created here.
+ *  1. `runTurn` times this whole port and writes `memory.recall_ms` and `memory.chars` onto the turn
+ *     span's metadata. When a profile is fetched that fetch is essentially the entire duration, so a
+ *     child span would report the same number under a second name.
+ *  2. The cost is still reported, as `profileMs` on this port's own `memory.recall` obs event, which
+ *     is what distinguishes "recall took 180 ms fetching a profile" from "recall took 180 ms doing
+ *     something else". The port that does the work owns its event; `runTurn` owns the span.
  */
 export function createTacMemoryPort(tac: ProfileFetcher, deps: TacMemoryDeps = {}): MemoryComposePort {
   const logger = deps.logger ?? childLogger('memory');
@@ -163,7 +155,7 @@ export function createTacMemoryPort(tac: ProfileFetcher, deps: TacMemoryDeps = {
    * `tac.fetchProfile` is public with no internal callers.
    *
    * ONE FILTER, NOT TWO. The fetch is filtered by `memoryConfig.traitGroups`
-   * (`packages/core/src/lib/tac.ts:632`) and the render by `AdapterOptions.profileTraits`; two
+   * (`TAC.fetchProfile`) and the render by `AdapterOptions.profileTraits`; two
    * filters that disagree means fetching traits we then discard. We set NEITHER — `./tac.ts` leaves
    * `memoryConfig` at its schema defaults, where `traitGroups` is `.optional()` and unset, and no
    * `AdapterOptions` is passed below. So whatever the account returns is what renders, and the two
@@ -173,7 +165,7 @@ export function createTacMemoryPort(tac: ProfileFetcher, deps: TacMemoryDeps = {
    * Its OWN try/catch, not the outer one: the outer catch returns `null` and would throw away
    * observations we already have, where a profile failure should cost the profile section and
    * nothing else. TAC's own `fetchProfile` already swallows and returns `undefined`
-   * (`packages/core/src/lib/tac.ts:630-637`), so in production this arm fires only if the handle
+   * (`packages/core/src/lib/tac.ts`), so in production this arm fires only if the handle
    * is not TAC — which is exactly what the test drives.
    *
    * No `AbortSignal`: `MemoryComposePort.compose` is not given one and `fetchProfile` takes none.
@@ -183,7 +175,7 @@ export function createTacMemoryPort(tac: ProfileFetcher, deps: TacMemoryDeps = {
    * CACHED PER CONVERSATION, and that is a FIX rather than an optimisation.
    *
    * Voice runs `memoryMode: 'once'`, which caches TAC's Recall on `session.cachedMemory`
-   * (`dist/index.js:3465-3477`) precisely so that a Conversation Orchestrator round-trip does not sit
+   * (`BaseChannel.retrieveMemoryIfEnabled`) precisely so that a Conversation Orchestrator round-trip does not sit
    * in front of every spoken answer. The first version of this port then did an UNCACHED
    * `fetchProfile` on every turn, which partly defeated that. Measured on the first real call:
    * `profileMs` of 76, 623, 113 and 134 ms across four turns — every one of them in front of the
@@ -269,7 +261,7 @@ export function createTacMemoryPort(tac: ProfileFetcher, deps: TacMemoryDeps = {
          * "nothing happened" would bury the turns where something did.
          *
          * `undefined` as well as `null`: voice spreads `userMemory` gated on its own existence
-         * (`packages/core/src/channels/voice.ts:739`), so the key is ABSENT rather than nulled.
+         * (`ConversationRelayProvider.handlePromptMessage`), so the key is ABSENT rather than nulled.
          *
          * Note this also means a `profileId` with memory off buys no profile section. That is the
          * right trade: a fetch on every turn is a Conversation Orchestrator round-trip in front of

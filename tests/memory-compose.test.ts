@@ -11,7 +11,7 @@ import type { ObsEvent } from '../shared/events.ts';
  * The TAC memory compose port.
  *
  * ONLY `fetchProfile` IS FAKED. The parse, the communications guard and the whole of the rendering
- * run the REAL `twilio-agent-connect@2.2.0` code, and that is the point rather than an accident:
+ * run the REAL installed `twilio-agent-connect` code, and that is the point rather than an accident:
  * the middle test asserts that a section TAC's own renderer WOULD emit does not appear, which proves
  * nothing at all if the renderer is a stub. Verified by removing the guard — see its comment.
  *

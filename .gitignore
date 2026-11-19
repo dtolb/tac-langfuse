@@ -16,9 +16,6 @@ coverage/
 # Superpowers / SDD working state. The durable record is git history + docs/.
 .superpowers/
 
-# Langfuse's self-hosted stack writes here if bind-mounted rather than using named volumes.
-langfuse-data/
-
 .DS_Store
 *.log
 logs/
@@ -26,3 +23,6 @@ logs/
 # theme-create-and-host-html writes this cache next to a published page. The live
 # build is the source of truth (`pages.mjs status` reads it), so the cache is noise.
 docs/.twilio-pages.json
+
+# ConversationRelay tuning profile and presets, written by the agent at runtime.
+data/

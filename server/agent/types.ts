@@ -12,7 +12,7 @@
  */
 import type { ObsChannel } from '../../shared/events.ts';
 import type { ObsBus } from '../obs/bus.ts';
-import type { SpanLike } from '../obs/spans.ts';
+import type { SpanLike, TraceAnnotation } from '../obs/spans.ts';
 import type { ModelPort } from './model/port.ts';
 import type { PromptPort } from './prompt/port.ts';
 import type { ToolLogger } from './tools/registry.ts';
@@ -140,11 +140,10 @@ export interface TurnOutput {
    * it — that is what a voice barge-in looks like — so both normal exits are covered.
    *
    * A caller that never touches this at all is the sharp edge, and it costs more than a pending
-   * promise: the `llm.stream` span is ended by `done`, and an OpenTelemetry span that is never ended
-   * does not reach Langfuse AT ALL (see `../obs/spans.ts`). So a turn whose tokens were dropped on
-   * the floor would leave a missing observation with no error anywhere to explain it. `runTurn`
+   * promise: the turn's output and timings are written by `done`, and a caller that awaits `done`
+   * before ending its turn span would wait forever. `runTurn`
    * therefore treats the model's own settlement as a floor on the wait: `done` still settles, the
-   * span still ends, and the timings are reported as `null`, which is honest — no token was ever
+   * attributes are still written, and the timings are reported as `null`, which is honest — no token was ever
    * delivered. A caller that only wants the final text should use `collect()` from
    * `../obs/first-token.ts` rather than skipping the stream.
    */
@@ -219,14 +218,12 @@ export type ToolResolvePort = (
  * at run time.
  */
 export interface TurnSpans {
-  /** A timed child step. Ends on both the success and the error path. */
-  timeStep<T>(
-    name: string,
-    fn: () => Promise<T>,
-    describe?: (result: T) => Record<string, unknown>,
-  ): Promise<T>;
-  /** A child step whose `end()` the caller owns — for a step that outlives `runTurn` itself. */
-  startStep(name: string, input?: Record<string, unknown>): SpanLike;
+  /** Draws a finished child of the turn span from `startMs` to `endMs` (epoch ms). */
+  record(name: string, fields: Record<string, unknown>, startMs: number, endMs: number): void;
+  /** Writes onto the turn's trace: `userId` on the turn and root, root `input` (first only), `output` and `tags`. */
+  annotate(fields: TraceAnnotation): void;
+  /** Runs `fn` so spans a library creates inside it (the AI SDK's) carry the trace's session and user ids. */
+  inherit<T>(fn: () => T): T;
 }
 
 /**

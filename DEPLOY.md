@@ -26,7 +26,8 @@ needs nothing else, and only inbound calls and texts need a public host and a co
 | **Node 24+** | required | Runs the TypeScript directly. There is no build step for the agent |
 | **pnpm 11** | required | Workspace root plus `web/` as its own install root |
 | **`OPENAI_API_KEY`** | for a useful demo | The only variable that unlocks the agent itself |
-| **Docker** | optional | Self-hosted Langfuse (6 containers, ~2.7 GB), and/or running the two services as containers |
+| **Docker** | optional | Running the two services as containers |
+| **A Langfuse Cloud project** | for prompts and traces | Public and secret key from the project's API Keys page |
 | **A public HTTPS host** | for phone traffic | Tunnel, reverse proxy or hosted URL — the scaffold does not care which |
 | **A Twilio account** | for phone traffic | Account SID, auth token, an API key pair, and a number |
 
@@ -53,18 +54,10 @@ possible" in one screen. It is the right first command whenever something is con
 
 ### Traces
 
-```bash
-pnpm langfuse           # 6 containers, ready in ~10s on warm volumes
-pnpm langfuse:down
-```
-
-Langfuse UI at <http://localhost:3100>; the login is whatever you set for `LANGFUSE_INIT_USER_EMAIL`
-and `LANGFUSE_INIT_USER_PASSWORD` in `.env`. Create a project, paste its public and secret keys back
-into `.env`, restart the agent, and every turn becomes a trace.
+Langfuse is Langfuse Cloud (<https://us.cloud.langfuse.com>). Put the project's public and secret keys in `.env`, run `pnpm seed:prompts` once against a new project (until then every turn reports prompt version `fallback`), restart the agent, and every turn becomes a trace.
 
 > [!NOTE]
-> This Langfuse is v4 in `events_only` mode, so **its read API is disabled**. `GET /api/public/traces`
-> returns 404 meaning *disabled*, not *no data*. Verify traces in the UI, or in ClickHouse `events_core`.
+> Langfuse Cloud has **removed the v1 trace read API**: `GET /api/public/traces` and `/traces/<id>` return 410. Read traces in the UI, or via `GET /api/public/v2/observations?traceId=<id>&fromStartTime=<iso>`.
 
 ## Configuration
 
@@ -140,8 +133,8 @@ which expects an existing external network and splits one public host by path.
 > [!IMPORTANT]
 > **The stack does not come back by itself after a reboot, by design.** It runs `restart: "no"`, so
 > starting the public surface is always an explicit act — it publishes unauthenticated endpoints on a
-> stable public host. The Langfuse stack *is* `always` and does return on its own, so tooling survives
-> a restart while the demo does not sit exposed unattended.
+> stable public host. Langfuse is hosted, so tracing and prompts survive a restart
+> while the demo does not sit exposed unattended.
 >
 > Do not "fix" this to `unless-stopped`. `on-failure` is also wrong: on a VM stop the agent exits 0
 > while Next exits 143, so it resurrects half the stack.
@@ -281,7 +274,8 @@ time. The full waterfall and the ranked levers are in
 | Traefik drops the service with no error on either side | The external network was not marked `external: true`, so Compose created `${APP_NAME}_edge` instead |
 | Two demos steal each other's webhooks | Both left `APP_NAME` at the default. Router names are global |
 | Every SMS reply arrives twice | You are texting from a number on the same account. Both legs match the capture rule |
-| `GET /api/public/traces` returns 404 | Langfuse v4 `events_only` disables the read API. That is not "no data" |
+| `GET /api/public/traces` returns 410 | Langfuse Cloud removed the v1 trace API. Use `GET /api/public/v2/observations?traceId=…` |
+| Every turn reports prompt version `fallback` with good keys | The Langfuse project has no prompts yet. Run `pnpm seed:prompts` |
 
 Anything not here is probably in [`docs/HANDOFF.md`](docs/HANDOFF.md), which records what was *measured*
 task by task, including the places reality contradicted the plan.

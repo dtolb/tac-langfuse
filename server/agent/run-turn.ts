@@ -26,7 +26,6 @@
 import { randomUUID } from 'node:crypto';
 import { childLogger } from '../logging.ts';
 import { withFirstTokenMark } from '../obs/first-token.ts';
-import type { SpanLike } from '../obs/spans.ts';
 import { CHANNEL_PROMPT } from './prompt/defaults.ts';
 import type { ResolvedPrompt } from './prompt/port.ts';
 import { compose, type Slots } from './prompt/slots.ts';
@@ -183,80 +182,59 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   });
 
   // Whatever identity is already known goes on the span NOW, before the parallel fetch — not with
-  // the rest of the attributes after `tools.resolve`. `composeMemory` can reject (T13's TAC memory
+  // the rest of the attributes after tool resolution. `composeMemory` can reject (T13's TAC memory
   // port is the realistic case), and a prepare failure was otherwise leaving a bare `turn.<channel>`
   // span carrying no channel, no model and no prompt: present in Langfuse and impossible to
   // attribute, which is the worst of both. The rest follows below, once it exists.
-  span.update({ input: { userText: input.userText }, metadata: { channel } });
+  span.update({ input: input.userText, metadata: { channel } });
+  deps.spans.annotate({ userId: input.profileId, input: input.userText });
 
   // Only what `done` still needs once this function has returned is hoisted out of the try.
   let prompt: ResolvedPrompt;
   let streamed: { tokens: AsyncIterable<string>; done: Promise<ModelStreamResult> };
-  let llmSpan: SpanLike | null = null;
 
   try {
     // ---- 1. prompt fetch and memory recall, genuinely concurrent ----
     // Independent, and both sit in front of the first spoken word on a live call, so they overlap
-    // rather than queue. Each gets its own timed step so the two are separately visible in the
-    // waterfall. Neither publishes an obs event from here: T7's prompt port publishes `prompt.fetch`
-    // itself and T13's TAC memory port will publish `memory.recall` the same way — the port that
-    // does the work owns its event, this function owns the span.
+    // rather than queue. Neither publishes an obs event from here: T7's prompt port publishes
+    // `prompt.fetch` itself and T13's TAC memory port publishes `memory.recall` the same way.
+    const preparedAt = now();
+    let promptMs = 0;
+    let memoryMs = 0;
     const [fetched, memoryContext] = await Promise.all([
-      deps.spans.timeStep(
-        'prompt.fetch',
-        () => deps.prompts.get(CHANNEL_PROMPT[channel]),
-        (p) => ({ name: p.name, version: p.version, label: p.label }),
-      ),
-      deps.spans.timeStep(
-        'memory.recall',
-        () =>
-          deps.composeMemory.compose({
-            memory: input.memory,
-            conversationId,
-            channel,
-            profileId: input.profileId,
-          }),
-        (m) => ({ chars: m === null ? 0 : m.length }),
-      ),
+      deps.prompts.get(CHANNEL_PROMPT[channel]).then((p) => {
+        promptMs = now() - preparedAt;
+        return p;
+      }),
+      deps.composeMemory
+        .compose({ memory: input.memory, conversationId, channel, profileId: input.profileId })
+        .then((m) => {
+          memoryMs = now() - preparedAt;
+          return m;
+        }),
     ]);
     prompt = fetched;
+    if (prompt.fetched === true) {
+      deps.spans.record(
+        'prompt.fetch',
+        { output: { name: prompt.name, version: prompt.version, label: prompt.label } },
+        preparedAt,
+        preparedAt + promptMs,
+      );
+    }
 
     // ---- 2. compose the system prompt, over this conversation's history ----
-    // The history read sits INSIDE this step rather than getting a span of its own, deliberately: it
-    // is a `Map` lookup, and a `history.read` step reporting 0.00 ms on every turn would add a row to
-    // the waterfall that suggests a cost it does not have. (`prompt.fetch`'s ~0 ms cache hit is
-    // different — there the zero is the news.) If this ever becomes a network call, it needs both its
-    // own span and a place in the `Promise.all` above, not this line.
     const priorMessages = deps.history.read(conversationId);
-    const composed = await deps.spans.timeStep(
-      'prompt.compose',
-      async () =>
-        composeTurn(
-          prompt,
-          slotsFor(deps.branding, input, startedAt),
-          memoryContext,
-          priorMessages,
-          input.userText,
-        ),
-      (c) => ({
-        systemChars: c.system.length,
-        messages: c.messages.length,
-        // Named separately from `messages` because it is the number that answers "did the agent
-        // remember?" — and the number that explains a turn-20 prompt costing more than turn 2.
-        historyMessages: priorMessages.length,
-      }),
+    const composed = composeTurn(
+      prompt,
+      slotsFor(deps.branding, input, startedAt),
+      memoryContext,
+      priorMessages,
+      input.userText,
     );
 
     // ---- 3. resolve the tool names this prompt version asked for ----
-    const resolution = await deps.spans.timeStep(
-      'tools.resolve',
-      async () => deps.tools(prompt.config.tools, { conversationId, channel }),
-      (r) => ({
-        resolved: r.resolved.map((t) => t.name),
-        unknown: r.unknown,
-        unavailable: r.unavailable,
-      }),
-    );
+    const resolution = deps.tools(prompt.config.tools, { conversationId, channel });
     const offered = resolution.resolved;
 
     // Attributes go under `metadata`, NOT at the top level, and that is forced. @langfuse/tracing's
@@ -300,12 +278,23 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         'prompt.version': prompt.version,
         'prompt.label': prompt.label,
         model: prompt.config.model,
+        'prompt.fetch_ms': promptMs,
+        'prompt.cached': prompt.fetched !== true,
+        'prompt.system_chars': composed.system.length,
+        'prompt.messages': composed.messages.length,
+        'history.messages': priorMessages.length,
+        'memory.chars': memoryContext === null ? 0 : memoryContext.length,
+        'memory.recall_ms': memoryMs,
         'tools.offered': offered.map((t) => t.name),
         'tools.unknown': resolution.unknown,
+        'tools.unavailable': resolution.unavailable,
       },
       ...(typeof prompt.version === 'number' && {
         prompt: { name: prompt.name, version: prompt.version, isFallback: false },
       }),
+    });
+    deps.spans.annotate({
+      tags: [`prompt:${prompt.name}@${typeof prompt.version === 'number' ? `v${prompt.version}` : 'fallback'}`],
     });
 
     // ---- 4. the model call ----
@@ -346,24 +335,12 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         systemChars: composed.system.length,
       },
     });
-    // Started here, not earlier: this step must cover the model call and the drain of its stream,
-    // not the prompt fetch in front of them. Its `end()` is owned by `done` below — the one place
-    // `startStep` earns its place in `TurnSpans` over `timeStep`, because the step outlives the call
-    // that created it.
-    llmSpan = deps.spans.startStep('llm.stream', {
-      model: prompt.config.model,
-      tools: offered.map((t) => t.name),
-    });
-
-    streamed = deps.model.stream(request);
+    streamed = deps.spans.inherit(() => deps.model.stream(request));
   } catch (err) {
     fail(err, 'prepare');
-    llmSpan?.update({ level: 'ERROR', statusMessage: errorMessage(err) });
-    llmSpan?.end();
     endFailed(err);
     throw err;
   }
-  const stepSpan = llmSpan;
 
   /**
    * Handlers attached NOW, synchronously, and folded into a never-rejecting result.
@@ -479,9 +456,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     // The vendor's settlement is the FLOOR on that wait, and the floor is load-bearing. A caller
     // that never touches `tokens` AT ALL — a session that closed before we spoke, a guard that
     // rejected before the loop — would otherwise leave `drained.promise` pending forever, and with it
-    // `stepSpan` UNENDED. An unended span does not reach Langfuse at all (see `../obs/spans.ts`), so
-    // the symptom is a missing `llm.stream` observation with no error anywhere: the same silent-drop
-    // failure class that module exists to warn about, arriving through a different door. Draining to
+    // `done`; a caller awaiting `done` before ending its turn span would then leave that span UNENDED,
+    // and an unended span does not reach Langfuse at all (see `../obs/spans.ts`). Draining to
     // the end and breaking out mid-stream BOTH resolve `drained`, so barge-in is unaffected.
     //
     // A consumer that has begun draining still owns the timings, hence the re-await: `marks` is
@@ -496,8 +472,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     // the caller's `for await` landing in the SAME continuation as `await runTurn(...)` resolving — and
     // the margin is ONE MICROTASK, measured: a bare `await Promise.resolve()` before the loop still
     // wins, two lose, and so does one `await session.ready()` that awaits anything internally, which is
-    // what T13's voice handler will look like. Losing is silent: `done` settles early, `stepSpan.end()`
-    // fires before the stream drains, and the timings report `null` while the caller goes on to hear the
+    // what T13's voice handler will look like. Losing is silent: `done` settles early, before the
+    // stream drains, and the timings report `null` while the caller goes on to hear the
     // whole answer — the same `totalMs: null` class `observed` exists to prevent, through another door.
     //
     // A macrotask covers any caller whose pre-drain work is microtask-only, which is the constraint
@@ -528,8 +504,6 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       result = { text: '', toolCalls: [], usage: EMPTY_USAGE, steps: 0 };
     } else {
       fail(outcome.error, 'model');
-      stepSpan.update({ level: 'ERROR', statusMessage: errorMessage(outcome.error) });
-      stepSpan.end();
       endFailed(outcome.error);
       throw outcome.error;
     }
@@ -541,9 +515,10 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     // see the comment on `sinceTurnStart` for why the two origins must not share one prefix.
     const ttftMs = sinceTurnStart(marks.ttftMs);
     const totalMs = sinceTurnStart(marks.totalMs);
+    const spoken = result.text !== '' ? result.text : streamedText;
 
     span.update({
-      output: { text: result.text, toolCalls: called },
+      output: spoken,
       metadata: {
         'tools.called': called,
         'turn.ttft_ms': ttftMs,
@@ -551,13 +526,12 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         'turn.total_ms': totalMs,
         'turn.total_model_ms': marks.totalMs,
         'turn.aborted': aborted,
+        'turn.steps': result.steps,
+        'turn.chars': marks.chars,
+        'turn.deltas': marks.deltas,
       },
     });
-    stepSpan.update({
-      output: { chars: marks.chars, deltas: marks.deltas, steps: result.steps },
-      metadata: { ttftMs: marks.ttftMs, totalMs: marks.totalMs, aborted },
-    });
-    stepSpan.end();
+    deps.spans.annotate({ output: spoken });
 
     deps.obs.publish({
       kind: 'llm.response',
@@ -623,7 +597,6 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
      * at all leaves history untouched — the caller speaks a fallback and the human nearly always
      * repeats themselves, which would otherwise store the same utterance twice.
      */
-    const spoken = result.text !== '' ? result.text : streamedText;
     deps.history.append(conversationId, [
       { role: 'user', content: input.userText },
       ...(spoken === '' ? [] : [{ role: 'assistant' as const, content: spoken }]),

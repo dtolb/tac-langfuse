@@ -32,7 +32,7 @@ export interface TimelineLogger {
   warn(fields: Record<string, unknown>, msg: string): void;
 }
 
-/** Why a turn's bot-output boundary landed where it did. Recorded on the turn and on `tts.send`. */
+/** Why a turn's bot-output boundary landed where it did. Recorded on the turn as `turn.ending`. */
 export type TurnEnding =
   /** `sendStreamingResponse` resolved after streaming at least one token, so TAC sent `last: true`. */
   | 'last-token'
@@ -96,7 +96,7 @@ export interface VoiceTimeline {
    */
   recordBoundary(conversationId: string, close: TurnClose): void;
   /**
-   * Close the live turn: draw `tts.send`, write the re-anchored turn metadata, end the span AT the
+   * Close the live turn: write `tts.send_ms` and the re-anchored turn metadata, end the span AT the
    * boundary, and record the boundary for the next `caller.turn`. A recorded boundary
    * (`recordBoundary`) wins over `close`.
    *
@@ -108,7 +108,7 @@ export interface VoiceTimeline {
    * deletes that queue and `shutdown` clears it, and Conversation Orchestrator reuses one
    * conversation id per profile. Measured with two overlapping handlers on one id: the straggler's
    * `finally` closed turn B at turn A's boundary — B exported at 10 ms with A's `turn.ttfa_ms`,
-   * `tts.send` at 0 ms, and B's own close silently no-opping. Passing the span the caller was handed
+   * `tts.send_ms` of 0, and B's own close silently no-opping. Passing the span the caller was handed
    * by `beginTurn` makes that unrepresentable. The interrupt path omits it deliberately: it
    * addresses whatever turn is live NOW.
    */
@@ -136,9 +136,22 @@ export interface VoiceTimeline {
   size(): number;
 }
 
+/** One closed turn, as reported to `VoiceTimelineOptions.onTurnEnd`. Epoch ms throughout. */
+export interface ClosedTurn {
+  readonly promptAt: number;
+  readonly firstTokenAt: number | null;
+  readonly endAt: number;
+  readonly aborted: boolean;
+  readonly ending: TurnEnding;
+}
+
 export interface VoiceTimelineOptions {
   readonly maxConversations?: number;
   readonly logger?: TimelineLogger;
+  /** Called when a turn span becomes live, before anything else is written to it. */
+  readonly onTurnBegin?: (conversationId: string, span: TimelineSpan, atMs: number) => void;
+  /** Called once per turn, after its span has ended. */
+  readonly onTurnEnd?: (conversationId: string, turn: ClosedTurn) => void;
 }
 
 /** Matches `VOICE_MAX_CONVERSATIONS`. The registry's `onClose` is what normally keeps this empty. */
@@ -207,7 +220,7 @@ export function createVoiceTimeline(opts: VoiceTimelineOptions = {}): VoiceTimel
   const closeLive = (
     live: LiveTurn,
     close: TurnClose,
-  ): { atMs: number; ttfaMs: number | null; aborted: boolean } => {
+  ): { atMs: number; ttfaMs: number | null; aborted: boolean; ending: TurnEnding } => {
     const effective = live.recordedClose ?? close;
     // Clamped, because `Date.now()` is not monotonic: an NTP step backwards during a call would
     // otherwise hand OpenTelemetry an end time before the start time.
@@ -223,22 +236,9 @@ export function createVoiceTimeline(opts: VoiceTimelineOptions = {}): VoiceTimel
     const atMs = Math.max(effective.atMs, live.promptAt);
     const ttfaMs = live.firstTokenAt === null ? null : Math.max(0, live.firstTokenAt - live.promptAt);
 
-    if (live.firstTokenAt !== null) {
-      // `tts.send` — from the first `text` frame to the end-of-turn marker. This is the window
-      // ConversationRelay is speaking in, as far as this process can see it: `sendStreamingResponse`
-      // writes each token to the socket synchronously inside its own `for await`, so our generator
-      // yielding and the frame going out are the same instant to within microseconds.
-      const tts = live.span.child(
-        'tts.send',
-        { metadata: { startedBecause: 'first text token sent' } },
-        live.firstTokenAt,
-      );
-      tts.update({ metadata: { durationMs: atMs - live.firstTokenAt, ending: effective.ending } });
-      tts.end(atMs);
-    }
-
     live.span.update({
       metadata: {
+        'tts.send_ms': live.firstTokenAt === null ? null : atMs - live.firstTokenAt,
         // The server-side proxy for time-to-first-AUDIO, and the honest name for it. It cannot see
         // Twilio's TTS synthesis or the media leg, so it is a FLOOR on what the caller waited.
         'turn.ttfa_ms': ttfaMs,
@@ -261,7 +261,7 @@ export function createVoiceTimeline(opts: VoiceTimelineOptions = {}): VoiceTimel
       },
     });
     live.span.end(atMs);
-    return { atMs, ttfaMs, aborted: effective.aborted };
+    return { atMs, ttfaMs, aborted: effective.aborted, ending: effective.ending };
   };
 
   /**
@@ -270,10 +270,17 @@ export function createVoiceTimeline(opts: VoiceTimelineOptions = {}): VoiceTimel
    * Shared by every closer so `turns.count` cannot disagree with the number of `turn.voice` children
    * in the trace — including on the paths no handler of ours observes.
    */
-  const complete = (entry: Entry, close: TurnClose): void => {
+  const complete = (conversationId: string, entry: Entry, close: TurnClose): void => {
     const live = entry.live;
     if (live === null) return;
     const closed = closeLive(live, close);
+    opts.onTurnEnd?.(conversationId, {
+      promptAt: live.promptAt,
+      firstTokenAt: live.firstTokenAt,
+      endAt: closed.atMs,
+      aborted: closed.aborted,
+      ending: closed.ending,
+    });
     entry.live = null;
     entry.turns += 1;
     if (closed.aborted) entry.aborted += 1;
@@ -310,15 +317,16 @@ export function createVoiceTimeline(opts: VoiceTimelineOptions = {}): VoiceTimel
       // abandoned, or one still draining after its queue was dropped. End it here rather than leak
       // the span, and COUNT it: it is a real turn of this call, and the straggler's own
       // `completeTurn` will find its span is no longer the live one and do nothing.
-      complete(entry, { atMs, aborted: true, ending: 'no-output' });
+      complete(conversationId, entry, { atMs, aborted: true, ending: 'no-output' });
 
       entry.live = { span, promptAt: atMs, firstTokenAt: null, recordedClose: null };
+      opts.onTurnBegin?.(conversationId, span, atMs);
 
       while (entries.size > maxConversations) {
         const oldest = entries.entries().next();
         if (oldest.done === true) break;
         const [id, victim] = oldest.value;
-        complete(victim, { atMs, aborted: true, ending: 'evicted' });
+        complete(id, victim, { atMs, aborted: true, ending: 'evicted' });
         entries.delete(id);
         opts.logger?.warn(
           { conversationId: id, maxConversations },
@@ -338,9 +346,9 @@ export function createVoiceTimeline(opts: VoiceTimelineOptions = {}): VoiceTimel
       const live = entries.get(conversationId)?.live;
       if (live === undefined || live === null) return;
       // Not the caller's own turn: a handler that outlived its turn, stamping its successor's
-      // `tts.send` start. See `completeTurn` for the measurement.
+      // first-token instant. See `completeTurn` for the measurement.
       if (ownerSpan !== undefined && live.span !== ownerSpan) return;
-      // First non-empty delta only. A second call would move the `tts.send` start later, which is
+      // First non-empty delta only. A second call would move the `turn.ttfa_ms` anchor later, which is
       // the one number this whole module exists to get right.
       if (live.firstTokenAt === null) live.firstTokenAt = atMs;
     },
@@ -363,7 +371,7 @@ export function createVoiceTimeline(opts: VoiceTimelineOptions = {}): VoiceTimel
       if (entry === undefined) return;
       if (entry.live === null) return; // already completed.
       if (ownerSpan !== undefined && entry.live.span !== ownerSpan) return; // not our turn any more.
-      complete(entry, close);
+      complete(conversationId, entry, close);
     },
 
     markBotOutput(conversationId, atMs) {
@@ -377,7 +385,7 @@ export function createVoiceTimeline(opts: VoiceTimelineOptions = {}): VoiceTimel
       if (entry === undefined) return undefined;
       // BEFORE the statistics are read, which is the whole reason this returns them: a turn still
       // live when the socket closed is a real turn, and reading `turns.count` first reported zero.
-      complete(entry, { atMs: Date.now(), aborted: true, ending: 'no-output' });
+      complete(conversationId, entry, { atMs: Date.now(), aborted: true, ending: 'no-output' });
       const stats = statsOf(entry);
       entries.delete(conversationId);
       return stats;

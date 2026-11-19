@@ -44,6 +44,11 @@ export const OBS_EVENT_KINDS = [
   'sms.outbound',
   'handoff',
 
+  // --- ConversationRelay tuning ---
+  'cr.config.apply',
+  'cr.config.updated',
+  'cr.config.error',
+
   // --- anything that went wrong ---
   'error',
 ] as const;
@@ -106,6 +111,9 @@ export const KIND_TONE: Record<ObsEventKind, 'neutral' | 'accent' | 'success' | 
   'sms.inbound': 'neutral',
   'sms.outbound': 'success',
   handoff: 'warning',
+  'cr.config.apply': 'accent',
+  'cr.config.updated': 'success',
+  'cr.config.error': 'error',
   error: 'error',
 };
 

@@ -1,9 +1,9 @@
 /**
  * The compiled-in prompts. These are the ones that actually run when Langfuse is unreachable.
  *
- * Langfuse is six containers and this gets demoed live in front of customers, so the default is
- * held to the standard of a working agent rather than a placeholder: if `langfuse-web` is
- * restarting during a call, the caller should not be able to tell.
+ * This gets demoed live in front of customers, so the default is held to the standard of a
+ * working agent rather than a placeholder: if Langfuse is unreachable during a call, the caller
+ * should not be able to tell.
  *
  * TWO prompts, not one, because the locked channels are voice and SMS and their response-shape
  * requirements genuinely conflict — brevity and "never emit a character that isn't meant to be
@@ -143,7 +143,7 @@ What you remember about this customer
  * NO `temperature` in either default, deliberately — see `PromptConfigSchema`, which still accepts
  * one from Langfuse.
  *
- * `gpt-5.4-mini` is a reasoning model and IGNORES `temperature`. The OpenAI provider says so out
+ * Reasoning models such as `gpt-5.4-mini` IGNORE `temperature`. The OpenAI provider says so out
  * loud ("The feature \"temperature\" is not supported"), so a Langfuse prompt version that sets one
  * is a self-reporting mistake an operator can fix in the web form with no redeploy — which is the
  * design working, and why there is deliberately no model-name guard in code.
@@ -161,7 +161,7 @@ export const DEFAULT_PROMPTS: Readonly<Record<PromptName, DefaultPrompt>> = {
   'demo-agent-voice': {
     messages: [{ role: 'system', content: VOICE_SYSTEM }],
     config: {
-      model: 'gpt-5.4-mini',
+      model: 'gpt-6.1-terra',
       // `end_call` and `handoff` are both voice-only — one hangs up, the other transfers — and the text
       // prompt must not name either. Note each costs a step: the model calls the tool and then speaks
       // one line, so a closing or transferring turn uses two of the three below.
@@ -195,7 +195,7 @@ export const DEFAULT_PROMPTS: Readonly<Record<PromptName, DefaultPrompt>> = {
   'demo-agent-text': {
     messages: [{ role: 'system', content: TEXT_SYSTEM }],
     config: {
-      model: 'gpt-5.4-mini',
+      model: 'gpt-6.1-terra',
       // Both TAC built-ins are named here and only one is named on voice: writing has no dead air, so
       // an extra tool round-trip costs a second or two of "…" rather than silence on an open line.
       tools: ['lookup_order', 'get_store_hours', 'search_knowledge', 'retrieve_profile_memory'],

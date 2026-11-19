@@ -21,6 +21,11 @@ import { registerHandoffRoutes, type HandoffRoutes } from './routes-handoff.ts';
 import { APP_API_PATHS, BENCH_TURN_PATH, TAC_WEBHOOK_PATHS } from '../../shared/twilio-paths.ts';
 import type { TurnDeps } from '../agent/types.ts';
 import type { App } from './types.ts';
+import { registerTuningRoutes } from './routes-tuning.ts';
+import { createCrTuning, type CrTuning } from '../twilio/cr-live.ts';
+import { createInsightsClient } from '../twilio/cr-insights.ts';
+import { createInsightsBackfill } from '../twilio/insights-backfill.ts';
+import { createProfileStore } from '../twilio/cr-store.ts';
 
 export interface AppDeps {
   readonly config: AppConfig;
@@ -34,6 +39,8 @@ export interface AppDeps {
    * socket must not require an OpenAI key.
    */
   readonly turn?: TurnDeps;
+  /** ConversationRelay tuning; defaults to one over `data/` and the global bus. */
+  readonly tuning?: CrTuning;
 }
 
 export function buildApp(deps: AppDeps): {
@@ -41,6 +48,7 @@ export function buildApp(deps: AppDeps): {
   obs: ObsRoutes;
   bench: BenchRoutes;
   handoff: HandoffRoutes;
+  tuning: CrTuning;
 } {
   const { config, caps } = deps;
 
@@ -88,6 +96,8 @@ export function buildApp(deps: AppDeps): {
   app.get('/health', async () => ({
     status: 'ok',
     appName: config.appName,
+    phoneNumber: config.twilio?.phoneNumber ?? null,
+    langfuseUrl: config.langfuse?.baseUrl ?? null,
     capabilities: caps,
     missing: config.missing.map((m) => m.name),
     wired: {
@@ -196,7 +206,7 @@ export function buildApp(deps: AppDeps): {
         unavailable: ['handoff'],
       },
     });
-    emit('llm.request', 'gpt-5.4-mini, 2 tools offered');
+    emit('llm.request', 'gpt-6.1-terra, 2 tools offered');
     emit('llm.first_token', 'time to first token', { durationMs: 412 });
     emit('tool.execution', 'lookup_order', { durationMs: 88 });
     emit('llm.response', 'Order A4721 has shipped — it should arrive Friday.', { durationMs: 1840 });
@@ -230,7 +240,18 @@ export function buildApp(deps: AppDeps): {
   // via `handoff.setMintToken` — see the route module's header on why it cannot be passed in here.
   const handoff = registerHandoffRoutes(app, { config, caps });
 
-  return { app, obs, bench, handoff };
+  const insights = config.twilio === null ? null : createInsightsClient(config.twilio);
+  const tuning =
+    deps.tuning ??
+    createCrTuning({
+      store: createProfileStore(),
+      bus: obsBus,
+      insights,
+      backfill: insights === null ? null : createInsightsBackfill({ insights }),
+    });
+  registerTuningRoutes(app, tuning);
+
+  return { app, obs, bench, handoff, tuning };
 }
 
 export type { App } from './types.ts';

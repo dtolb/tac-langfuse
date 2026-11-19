@@ -6,7 +6,7 @@ import './globals.css';
 export const viewport: Viewport = { width: 'device-width', initialScale: 1 };
 
 export const metadata: Metadata = {
-  title: 'Demo Scaffold',
+  title: 'Demo Agent',
   description: 'Twilio demo scaffold — customer demo and operator console',
 };
 

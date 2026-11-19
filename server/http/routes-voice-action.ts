@@ -72,7 +72,7 @@ const hangup = (): string => `${DECLARATION}<Response><Hangup/></Response>`;
  * The Studio voice webhook URL.
  *
  * Written out rather than imported from TAC's `studioVoiceHandoffUrl(accountSid, flowSid)` — which
- * produces this exact string (`dist/index.js:4674`) — because this module may not import
+ * produces this exact string (`packages/core/src/util/handoff-urls.ts`) — because this module may not import
  * `twilio-agent-connect`; `tests/architecture.test.ts` confines it to `server/twilio/` and `scripts/`.
  *
  * The divergence guard is real rather than asserted: `tests/voice-action.test.ts` imports

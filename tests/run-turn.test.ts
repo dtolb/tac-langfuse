@@ -17,7 +17,7 @@ import { createToolCatalog } from '../server/agent/tools/catalog.ts';
 import { resolve } from '../server/agent/tools/resolve.ts';
 import type { ToolCtx, ToolDef, ToolLogger } from '../server/agent/tools/registry.ts';
 import { createObsBus } from '../server/obs/bus.ts';
-import type { SpanLike } from '../server/obs/spans.ts';
+import type { SpanLike, TraceAnnotation } from '../server/obs/spans.ts';
 import type { ObsEvent } from '../shared/events.ts';
 import { capabilities, loadConfig } from '../server/config.ts';
 
@@ -55,61 +55,31 @@ const deferred = (): Deferred => {
 
 interface RecordedStep {
   readonly name: string;
-  readonly updates: Record<string, unknown>[];
-  readonly startSeq: number;
-  endSeq: number | null;
+  readonly fields: Record<string, unknown>;
+  readonly startMs: number;
+  readonly endMs: number;
 }
 
-/**
- * A `TurnSpans` that records the tree instead of emitting it. `startSeq`/`endSeq` come from one
- * counter, which is what makes "these two overlapped" expressible: a step that starts before
- * another ends was concurrent with it.
- */
+/** A `TurnSpans` that records drawn steps, trace annotations and `inherit` calls instead of emitting them. */
 const recordingSpans = (): {
   spans: TurnSpans;
   steps: readonly RecordedStep[];
+  annotations: readonly TraceAnnotation[];
+  inherited: () => number;
   names: () => readonly string[];
-  step: (name: string) => RecordedStep;
 } => {
   const steps: RecordedStep[] = [];
-  let seq = 0;
-  const open = (name: string): RecordedStep => {
-    const step: RecordedStep = { name, updates: [], startSeq: seq++, endSeq: null };
-    steps.push(step);
-    return step;
-  };
+  const annotations: TraceAnnotation[] = [];
+  let inherited = 0;
   const spans: TurnSpans = {
-    async timeStep(name, fn, describe) {
-      const step = open(name);
-      try {
-        const result = await fn();
-        step.updates.push({ output: describe?.(result) ?? {} });
-        return result;
-      } finally {
-        step.endSeq = seq++;
-      }
-    },
-    startStep(name, input) {
-      const step = open(name);
-      if (input !== undefined) step.updates.push({ input });
-      return {
-        update: (fields) => void step.updates.push(fields),
-        end: () => {
-          step.endSeq = seq++;
-        },
-      };
+    record: (name, fields, startMs, endMs) => void steps.push({ name, fields, startMs, endMs }),
+    annotate: (fields) => void annotations.push(fields),
+    inherit: (fn) => {
+      inherited += 1;
+      return fn();
     },
   };
-  return {
-    spans,
-    steps,
-    names: () => steps.map((s) => s.name),
-    step: (name) => {
-      const found = steps.find((s) => s.name === name);
-      if (found === undefined) throw new Error(`no step named ${name}; saw ${steps.map((s) => s.name).join(', ')}`);
-      return found;
-    },
-  };
+  return { spans, steps, annotations, inherited: () => inherited, names: () => steps.map((s) => s.name) };
 };
 
 /** The turn span the CALLER owns. `ends` is the assertion that `runTurn` keeps its hands off it. */
@@ -348,29 +318,56 @@ const drive = async (h: Harness): Promise<{ text: string; result: TurnResult }> 
 
 // ------------------------------------------------------------------ 1. the span tree
 
-test('the span tree: named child steps, fetch and recall concurrent, and the turn span is left alone', async () => {
+test('a turn draws no child steps of its own when the prompt came from cache, and leaves the turn span alone', async () => {
   const h = harness({ model: fakeModel({ deltas: () => streamOf('hello') }).port });
   await drive(h);
 
-  expect(h.spans.names()).toEqual([
-    'prompt.fetch',
-    'memory.recall',
-    'prompt.compose',
-    'tools.resolve',
-    'llm.stream',
-  ]);
-
-  // Concurrency, expressed in the tree: recall began before fetch had ended.
-  expect(h.spans.step('memory.recall').startSeq).toBeLessThan(h.spans.step('prompt.fetch').endSeq ?? -1);
-  // Sequencing: compose cannot begin until both have finished, and resolve follows compose.
-  expect(h.spans.step('prompt.compose').startSeq).toBeGreaterThan(h.spans.step('memory.recall').endSeq ?? -1);
-  expect(h.spans.step('tools.resolve').startSeq).toBeGreaterThan(h.spans.step('prompt.compose').endSeq ?? -1);
-  // Every child step this function opened, it also closed — including the one it hands to `done`.
-  expect(h.spans.steps.filter((s) => s.endSeq === null)).toEqual([]);
-
-  // THE constraint from the brief: `withTurnSpan` ends the turn span when the CALLER's callback
-  // settles, so ending it here too is a silent double-end.
+  expect(h.spans.names()).toEqual([]);
+  expect(h.spans.inherited()).toBe(1);
   expect(h.turnSpan.ends()).toBe(0);
+});
+
+test('a prompt that went to the network is drawn as prompt.fetch over the fetch window', async () => {
+  let clock = 1000;
+  const h = harness({
+    now: () => clock,
+    prompts: {
+      async get() {
+        clock = 1180;
+        return { ...promptFixture(), fetched: true };
+      },
+    },
+    model: fakeModel({ deltas: () => streamOf('hello') }).port,
+  });
+  await drive(h);
+
+  expect(h.spans.steps).toEqual([
+    {
+      name: 'prompt.fetch',
+      fields: { output: { name: 'demo-agent-text', version: 2, label: 'production' } },
+      startMs: 1000,
+      endMs: 1180,
+    },
+  ]);
+  expect(h.turnSpan.metadata()['prompt.cached']).toBe(false);
+  expect(h.turnSpan.metadata()['prompt.fetch_ms']).toBe(180);
+});
+
+test('the turn reads as words: input is the utterance, output is the reply, and both reach the trace root', async () => {
+  const h = harness({
+    profileId: 'mem_profile_1',
+    userText: 'where is my order',
+    model: fakeModel({ deltas: () => streamOf('On its way.'), result: { ...EMPTY_RESULT, text: 'On its way.' } }).port,
+  });
+  await drive(h);
+
+  expect(h.turnSpan.updates.find((u) => 'input' in u)?.input).toBe('where is my order');
+  expect(h.turnSpan.updates.find((u) => 'output' in u)?.output).toBe('On its way.');
+  expect(h.spans.annotations).toEqual([
+    { userId: 'mem_profile_1', input: 'where is my order' },
+    { tags: ['prompt:demo-agent-text@v2'] },
+    { output: 'On its way.' },
+  ]);
 });
 
 // ------------------------------------------------------------------ 2. ttft on an injected clock
@@ -527,14 +524,25 @@ test('every documented attribute is set on the turn span, under the exact names'
     'prompt.label': 'production',
     channel: 'bench',
     model: 'gpt-test',
+    'prompt.fetch_ms': 0,
+    'prompt.cached': true,
+    'prompt.system_chars': expect.any(Number),
+    'prompt.messages': 1,
+    'history.messages': 0,
+    'memory.chars': 0,
+    'memory.recall_ms': 0,
     'tools.offered': ['lookup_widget'],
     'tools.unknown': [],
+    'tools.unavailable': [],
     'tools.called': ['lookup_widget'],
     'turn.ttft_ms': 40,
     'turn.ttft_model_ms': 40,
     'turn.total_ms': 90,
     'turn.total_model_ms': 90,
     'turn.aborted': false,
+    'turn.steps': 2,
+    'turn.chars': 2,
+    'turn.deltas': 1,
   });
 });
 
@@ -773,11 +781,10 @@ test('a SLOW consumer still gets final timings: the vendor settling first must n
   expect(result.totalMs).toBe(400);
 });
 
-test('a caller that never touches `tokens` still ends the llm.stream span', async () => {
+test('a caller that never touches `tokens` still gets a settled `done` and a written turn', async () => {
   // The sharp edge of `done` waiting on the drain. A caller that decides not to speak at all — a
   // session closed before we got here, a guard that rejects before the loop — used to leave `done`
-  // pending forever and `llm.stream` UNENDED, and an unended span never reaches Langfuse AT ALL: a
-  // missing observation with no error anywhere to explain it.
+  // pending forever, and a caller that awaits `done` before ending its turn span never ends it.
   const h = harness({
     model: fakeModel({
       deltas: () => streamOf('never heard'),
@@ -788,8 +795,7 @@ test('a caller that never touches `tokens` still ends the llm.stream span', asyn
   const { done } = await runTurn(h.input, h.deps);
   const result = await done;
 
-  expect(h.spans.step('llm.stream').endSeq).not.toBeNull();
-  expect(h.spans.steps.filter((s) => s.endSeq === null)).toEqual([]);
+  expect(h.turnSpan.updates.find((u) => 'output' in u)?.output).toBe('never heard');
   // The vendor's own result still arrives; the timings are null, which is honest — no token was ever
   // delivered to anyone.
   expect(result.text).toBe('never heard');
@@ -805,7 +811,7 @@ test('a caller that AWAITS before its loop still gets timings', async () => {
   // generator BODY, which does not run until the first `next()`, while the race's `settled` branch is
   // registered before `runTurn` returns. So without a macrotask of grace the guarantee rests on the
   // caller's `for await` landing in the same continuation as `await runTurn(...)` resolving: `done`
-  // settles early, `llm.stream` ends before the stream drains, and the timings report `null` while the
+  // settles early, before the stream drains, and the timings report `null` while the
   // caller goes on to hear the entire answer.
   //
   // MEASURED, because the margin turned out to be one hop: with the grace removed, a single bare
@@ -842,8 +848,6 @@ test('a caller that AWAITS before its loop still gets timings', async () => {
   expect(result.totalMs).toBe(200);
   expect(h.turnSpan.metadata()['turn.total_ms']).toBe(200);
   expectTimingsMonotonic(h, result);
-  // And the step span still closed exactly once, on the drain rather than ahead of it.
-  expect(h.spans.step('llm.stream').endSeq).not.toBeNull();
 });
 
 // ------------------------------------------------------------------ 8. the prompt telemetry link

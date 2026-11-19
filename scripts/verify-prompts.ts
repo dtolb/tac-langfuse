@@ -3,19 +3,20 @@
  *
  *   node --env-file-if-exists=.env scripts/verify-prompts.ts
  *
- * Run it three times. Langfuse up: expect `v1` and a non-null telemetry link. Langfuse STOPPED
- * (`docker compose -f docker-compose.langfuse.yml stop langfuse-web`): expect `fallback`, fast,
+ * Run it three times. Langfuse up: expect the live production version and a non-null telemetry
+ * link. Langfuse REFUSED (`LANGFUSE_BASE_URL=http://127.0.0.1:9 node …`): expect `fallback`, fast,
  * because a refused connection fails immediately.
  *
- * Then the run that matters, and the one a `stop` does NOT exercise — Langfuse HUNG:
+ * Then the run that matters, and the one a refused port does NOT exercise — Langfuse HUNG:
  *
- *   docker compose -f docker-compose.langfuse.yml pause langfuse-web   # then ALWAYS unpause
+ *   LANGFUSE_BASE_URL=http://10.255.255.1 node --env-file-if-exists=.env scripts/verify-prompts.ts
  *
- * A paused container accepts the connection and never answers, which is the only way to reach the
+ * A blackholed address never answers the connect, which is the only way to reach the
  * `fetchTimeoutMs` budget in langfuse.ts — and the more realistic live-demo failure than a refused
- * port. Measured: 2009 ms and 2004 ms for the two uncached gets against the 2000 ms budget, then
- * `version: fallback`; the second get of each is a cached fallback at 0 ms. That last part is the
- * point of caching fallbacks: one 2 s pause per TTL window, not one per turn.
+ * port. Measured against the old self-hosted stack with a paused container: 2009 ms and 2004 ms for
+ * the two uncached gets against the 2000 ms budget, then `version: fallback`; the second get of each
+ * is a cached fallback at 0 ms. That last part is the point of caching fallbacks: one 2 s pause per
+ * TTL window, not one per turn.
  *
  * A sibling of verify-model.mjs and verify-telemetry.ts, for the same reason they exist: the
  * failure being guarded against is silent, so it has to be observed rather than reasoned about.

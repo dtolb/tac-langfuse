@@ -17,7 +17,6 @@ import { execFileSync } from 'node:child_process';
 
 const AGENT_PORT = 8910; // must match shared/ports.ts (this file is .mjs, outside tsconfig)
 const WEB_PORT = 3000;
-const LANGFUSE_PORT = 3100;
 
 const G = '\x1b[32m';
 const R = '\x1b[31m';
@@ -77,17 +76,15 @@ row(`agent  :${AGENT_PORT}`, agentHostUp, 'not running here — fine if the cont
 const webHostUp = await listening(WEB_PORT);
 row(`web    :${WEB_PORT}`, webHostUp, 'not running here — fine if the container is up (below)');
 
-const lfUp = await listening(LANGFUSE_PORT);
+// Langfuse Cloud, so reachability is a health probe against the configured base URL rather
+// than a local port. This checks the host only; a bad key still answers ok here and 401s later.
+const langfuseUrl = envFile.get('LANGFUSE_BASE_URL') || '';
+const lfHealth = langfuseUrl ? await getJson(`${langfuseUrl}/api/public/health`) : null;
 row(
-  `langfuse:${LANGFUSE_PORT}`,
-  lfUp,
-  'start with:  docker compose -f docker-compose.langfuse.yml up -d',
+  'langfuse',
+  lfHealth?.status === 'OK',
+  langfuseUrl ? `${langfuseUrl} did not answer /api/public/health` : 'LANGFUSE_BASE_URL unset in .env',
 );
-
-if (lfUp) {
-  const health = await getJson(`http://localhost:${LANGFUSE_PORT}/api/public/health`);
-  console.log(`     ${D}api health: ${health ? 'ok' : 'not ready yet (ClickHouse migrations take 2-3 min on first boot)'}${X}`);
-}
 
 // ---- containers, from compose itself so this cannot drift from what is actually deployed ----
 console.log(`\n\x1b[1mCONTAINERS\x1b[0m  ${D}project ${appName}${X}`);
@@ -202,6 +199,6 @@ console.log(`  ${D}dev web   ${X}http://localhost:${WEB_PORT}`);
 // `dev health` fills the field exactly, so it printed flush against its URL. Shortened rather than
 // widened, so the URLs stay in the one column the other four already share.
 console.log(`  ${D}dev api   ${X}http://localhost:${AGENT_PORT}/health`);
-console.log(`  ${D}langfuse  ${X}http://localhost:${LANGFUSE_PORT}`);
+if (langfuseUrl) console.log(`  ${D}langfuse  ${X}${langfuseUrl}`);
 console.log(`\n${D}build progress: docs/HANDOFF.md${X}`);
 console.log(`${D}checks:         pnpm typecheck && pnpm test${X}\n`);

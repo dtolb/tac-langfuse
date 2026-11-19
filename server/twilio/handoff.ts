@@ -8,16 +8,16 @@
  * loop, before the turn's text exists, so transferring here cuts the caller off mid-sentence — before
  * the model has even written the line that says what is about to happen. `execute` therefore does two
  * things and neither of them touches the WebSocket: it delegates to TAC, which parks a ready-made
- * `{type:'end', handoffData}` frame on the session, and it records the reason. `./voice.ts` sends the
- * frame after the farewell has streamed.
+ * `{type:'end', handoffData}` frame on the session, and it records the reason. TAC's `sendStreamingResponse`
+ * sends the frame after the farewell has streamed.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * WHY TAC'S TOOL RATHER THAN OUR OWN FRAME. `session.pendingHandoffData` is a COMPLETE frame, not raw
- * data (`dist/index.js:6487-6490`), and TAC's tool also does the two Conversation Orchestrator
+ * data (the voice branch of `createStudioHandoffTool`), and TAC's tool also does the two Conversation Orchestrator
  * side-effects a hand-built frame would silently skip: `updateConversation(..., 'INACTIVE')` and
- * `clearStatusCallbacks(...)`. What TAC omits is the DRAIN on a streaming channel — its own five-line
- * drain lives inside `sendResponse` (`dist/index.js:5245-5254`) and `sendStreamingResponse` has zero
- * references to the field. So the split is: TAC builds, we send. Design doc §2.4.
+ * `clearStatusCallbacks(...)`. TAC 2.5.0 also sends it: `ConversationRelayProvider.flushPendingHandoff`
+ * runs after `sendResponse` and after every un-aborted `sendStreamingResponse`. `./voice.ts` sends only
+ * a frame TAC left parked.
  *
  * WHY CONSTRUCTION IS LAZY, inside `execute`, exactly like `./builtin-tools.ts`: TAC's factory has
  * three guards that THROW at construction (flow SID, Conversation Orchestrator, memory store id). At
@@ -64,7 +64,7 @@ const HANDOFF_DESCRIPTION =
   'call this, say one short line telling the caller you are putting them through, and nothing else.';
 
 /**
- * The mirror of TAC's own parameter schema (`dist/index.js:6455-6466`), including the object-level
+ * The mirror of TAC's own parameter schema (in `createStudioHandoffTool`), including the object-level
  * description, so `tests/handoff.test.ts` deep-equals this against
  * `createStudioHandoffTool(...).parameters` — the vendor's real declaration, read out of the installed
  * bundle. That comparison is the only thing standing between a renamed TAC field and a live transfer
@@ -173,7 +173,7 @@ export function handoffTool(deps: HandoffToolDeps): ToolDef<typeof HandoffInput>
       try {
         // `attributes` is the only one of these three options that changes anything we observe. We read
         // exactly ONE field off the returned tool — `.implementation` — and TAC's `name`/`description`
-        // go nowhere but the `TACTool` we discard (`defineTool`, `dist/index.js:6265-6279`, only stores
+        // go nowhere but the `TACTool` we discard (`defineTool` only stores
         // them). What the model reads is `ToolDef.name` / `ToolDef.description` above. They are passed
         // for symmetry, so a reader diffing our tool against TAC's sees one contract, not two.
         const tool = createStudioHandoffTool(deps.tac, session, {

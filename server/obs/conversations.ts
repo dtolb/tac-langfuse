@@ -28,7 +28,7 @@
  * conversationId is stable across turns, so keying here is sufficient AND cannot go stale.
  */
 import { childLogger } from '../logging.ts';
-import { startConversationSpan, type ConversationSpan } from './spans.ts';
+import { aliasRoot, startConversationSpan, type ConversationSpan } from './spans.ts';
 
 /**
  * Just the level this module uses. Structural rather than pino's type or `agent/`'s `ToolLogger`, so
@@ -76,6 +76,11 @@ export interface ConversationRegistryOptions {
    * header), which would turn a bad statistic into a missing trace.
    */
   readonly onClose?: (conversationId: string) => Record<string, unknown> | undefined;
+  /**
+   * A second key `rootContextFor` finds the conversation's root by — voice's CallSid. Asked when the
+   * root opens and again when it closes; `undefined` adds nothing.
+   */
+  readonly aliasOf?: (conversationId: string) => string | undefined;
 }
 
 /** Bench default. A browser tab minting ids is the only source, and a demo tab is short-lived. */
@@ -92,7 +97,12 @@ export function createConversationRegistry(
   const log = opts.logger ?? childLogger('conversations');
   const start =
     opts.start ??
-    ((conversationId: string): ConversationSpan => startConversationSpan(spanName, { conversationId }));
+    ((conversationId: string): ConversationSpan =>
+      startConversationSpan(spanName, undefined, {
+        sessionId: conversationId,
+        tags: [`channel:${spanName.replace(/^conversation\./, '')}`],
+        metadata: { conversationId },
+      }));
 
   interface Entry {
     readonly span: ConversationSpan;
@@ -109,6 +119,7 @@ export function createConversationRegistry(
       log.warn({ err, conversationId, spanName }, `${spanName}: onClose threw — closing without its metadata`);
     }
     entry.span.update({ metadata: { closedBecause: why, ...extra } });
+    aliasRoot(entry.traceparent, opts.aliasOf?.(conversationId));
     entry.span.end();
     entries.delete(conversationId);
   };
@@ -126,6 +137,7 @@ export function createConversationRegistry(
 
       const span = start(conversationId);
       entries.set(conversationId, { span, traceparent: span.traceparent, lastUsedAt: now() });
+      aliasRoot(span.traceparent, opts.aliasOf?.(conversationId));
 
       while (entries.size > maxConversations) {
         const oldest = entries.entries().next();

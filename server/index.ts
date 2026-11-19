@@ -50,7 +50,7 @@ if (config.appName === 'scaffold') {
 // as an opaque 400 from OpenAI in the middle of a call.
 preflightDefaultPromptTools();
 
-const { app, obs, bench, handoff } = buildApp({ config, caps });
+const { app, obs, bench, handoff, tuning } = buildApp({ config, caps });
 
 /** Set once TAC boots, so cleanup can end its conversation roots too. */
 let tacShutdown: (() => void) | null = null;
@@ -99,7 +99,7 @@ app.addHook('preClose', async () => {
 if (caps.sms || caps.voice) {
   try {
     const { bootTac } = await import('./twilio/tac.ts');
-    const tac = await bootTac({ app, config, caps, turn: bench.turnDeps() });
+    const tac = await bootTac({ app, config, caps, turn: bench.turnDeps(), tuning });
     tacShutdown = tac.shutdown;
 
     /**

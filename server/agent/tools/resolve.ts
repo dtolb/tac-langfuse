@@ -10,9 +10,8 @@
  *  - `preflightDefaultPromptTools()` is the loud half. The compiled-in defaults are code, so a name
  *    in one of them that nothing answers to is a bug we can shout about at boot, before a call.
  *
- * No span here. T9 owns the `tools.resolve` span and sets the `tools.unknown` attribute on it, so
- * that number lands in the Metrics tab of the prompt version that caused it. Instrumenting on both
- * sides would put the same step in the Langfuse waterfall twice, which reads as broken tracing.
+ * No span here. `runTurn` writes `tools.unknown` and `tools.unavailable` onto the turn span's
+ * metadata, so that number lands next to the prompt version that caused it.
  */
 import type { ObsChannel } from '../../../shared/events.ts';
 import { isTacToolName } from '../../../shared/tac-tool-names.ts';

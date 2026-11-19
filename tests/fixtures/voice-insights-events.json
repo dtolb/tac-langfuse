@@ -1,0 +1,784 @@
+{
+ "callSid": "CA6e702727faa1cfb926deb093a536d2da",
+ "events": [
+  {
+   "name": "initiated",
+   "group": "connection",
+   "timestamp": "2026-11-06T20:43:58.913Z",
+   "conversation_relay_data": null
+  },
+  {
+   "name": "ringing",
+   "group": "connection",
+   "timestamp": "2026-11-06T20:43:59.011Z",
+   "conversation_relay_data": null
+  },
+  {
+   "name": "configurations",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:43:59.147Z",
+   "conversation_relay_data": {
+    "configurations": {
+     "configurations": {
+      "applicationReconnect": "false",
+      "debug": "[]",
+      "dtmfDetection": "false",
+      "echoPromptFiltering": "false",
+      "events": "[]",
+      "includeInPrompt": "[]",
+      "interruptOptions": "InterruptOptions{interruptConfidenceThreshold=0.7, ignoreBackchannelForInterrupt=false, interruptCheckThresholdType=by-chars, interruptInputLengthThreshold=3, sensitivity=null}",
+      "interruptible": "TRUE",
+      "partialPromptOnHangup": "true",
+      "partialPrompts": "false",
+      "preemptible": "FALSE",
+      "reportInputDuringAgentSpeech": "NONE",
+      "speechProvider": "nova-3-general",
+      "speechTimeout": "0",
+      "transcriptionLanguage": "en-US",
+      "transcriptionProvider": "deepgram",
+      "ttsLanguage": "en-US",
+      "ttsProvider": "google",
+      "turnDetection": "OFF",
+      "voice": "en-US-Neural2-F",
+      "welcomeGreetingInterruptible": "TRUE"
+     },
+     "languages": {
+      "en-US": {
+       "speech_model": "nova-3-general",
+       "transcription_provider": "deepgram",
+       "tts_provider": "google",
+       "voice": "en-US-Neural2-F"
+      }
+     }
+    },
+    "sequence_number": 1,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "answered",
+   "group": "connection",
+   "timestamp": "2026-11-06T20:43:59.304Z",
+   "conversation_relay_data": null
+  },
+  {
+   "name": "start_of_agent_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:00.543Z",
+   "conversation_relay_data": {
+    "sequence_number": 4,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "end_of_agent_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:04.773Z",
+   "conversation_relay_data": {
+    "sequence_number": 5,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "start_of_customer_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:06.104Z",
+   "conversation_relay_data": {
+    "sequence_number": 6,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "end_of_customer_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:14.624Z",
+   "conversation_relay_data": {
+    "sequence_number": 8,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "end_of_customer_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:15.044Z",
+   "conversation_relay_data": {
+    "sequence_number": 11,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "prompt_sent",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:15.044Z",
+   "conversation_relay_data": {
+    "sequence_number": 12,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "stt_latency",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:15.044Z",
+   "conversation_relay_data": {
+    "sequence_number": 10,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1",
+    "stt_latency": {
+     "latency_ms": 2470
+    }
+   }
+  },
+  {
+   "name": "start_of_customer_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:15.044Z",
+   "conversation_relay_data": {
+    "sequence_number": 9,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "first_token_received",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:16.653Z",
+   "conversation_relay_data": {
+    "sequence_number": 13,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "start_of_agent_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:16.829Z",
+   "conversation_relay_data": {
+    "sequence_number": 15,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "tts_latency",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:16.829Z",
+   "conversation_relay_data": {
+    "sequence_number": 14,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1",
+    "tts_latency": {
+     "latency_ms": 175
+    }
+   }
+  },
+  {
+   "name": "final_token_received",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:18.162Z",
+   "conversation_relay_data": {
+    "last_token_received": {
+     "total_tokens": 54,
+     "total_words": 49
+    },
+    "sequence_number": 16,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "start_of_customer_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:26.827Z",
+   "conversation_relay_data": {
+    "sequence_number": 18,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "end_of_agent_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:26.827Z",
+   "conversation_relay_data": {
+    "sequence_number": 19,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "interrupt",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:26.829Z",
+   "conversation_relay_data": {
+    "sequence_number": 20,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "stt_latency",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:28.581Z",
+   "conversation_relay_data": {
+    "sequence_number": 21,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1",
+    "stt_latency": {
+     "latency_ms": 190
+    }
+   }
+  },
+  {
+   "name": "end_of_customer_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:28.581Z",
+   "conversation_relay_data": {
+    "sequence_number": 22,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "prompt_sent",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:28.581Z",
+   "conversation_relay_data": {
+    "sequence_number": 23,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "first_token_received",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:29.955Z",
+   "conversation_relay_data": {
+    "sequence_number": 25,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "final_token_received",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:29.998Z",
+   "conversation_relay_data": {
+    "last_token_received": {
+     "total_tokens": 1,
+     "total_words": 21
+    },
+    "sequence_number": 26,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "tts_latency",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:30.090Z",
+   "conversation_relay_data": {
+    "sequence_number": 27,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1",
+    "tts_latency": {
+     "latency_ms": 134
+    }
+   }
+  },
+  {
+   "name": "start_of_agent_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:30.090Z",
+   "conversation_relay_data": {
+    "sequence_number": 28,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "end_of_agent_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:36.673Z",
+   "conversation_relay_data": {
+    "sequence_number": 29,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "start_of_customer_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:37.951Z",
+   "conversation_relay_data": {
+    "sequence_number": 30,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "prompt_sent",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:40.147Z",
+   "conversation_relay_data": {
+    "sequence_number": 34,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "stt_latency",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:40.147Z",
+   "conversation_relay_data": {
+    "sequence_number": 32,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1",
+    "stt_latency": {
+     "latency_ms": 370
+    }
+   }
+  },
+  {
+   "name": "end_of_customer_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:40.147Z",
+   "conversation_relay_data": {
+    "sequence_number": 33,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "first_token_received",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:40.403Z",
+   "conversation_relay_data": {
+    "sequence_number": 35,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "final_token_received",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:40.453Z",
+   "conversation_relay_data": {
+    "last_token_received": {
+     "total_tokens": 1,
+     "total_words": 8
+    },
+    "sequence_number": 36,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "start_of_agent_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:40.768Z",
+   "conversation_relay_data": {
+    "sequence_number": 38,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "tts_latency",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:40.768Z",
+   "conversation_relay_data": {
+    "sequence_number": 37,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1",
+    "tts_latency": {
+     "latency_ms": 365
+    }
+   }
+  },
+  {
+   "name": "end_of_agent_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:43.833Z",
+   "conversation_relay_data": {
+    "sequence_number": 39,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "start_of_customer_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:45.911Z",
+   "conversation_relay_data": {
+    "sequence_number": 40,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "end_of_customer_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:48.236Z",
+   "conversation_relay_data": {
+    "sequence_number": 42,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "prompt_sent",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:48.236Z",
+   "conversation_relay_data": {
+    "sequence_number": 43,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "stt_latency",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:48.236Z",
+   "conversation_relay_data": {
+    "sequence_number": 41,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1",
+    "stt_latency": {
+     "latency_ms": 270
+    }
+   }
+  },
+  {
+   "name": "first_token_received",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:48.586Z",
+   "conversation_relay_data": {
+    "sequence_number": 44,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "final_token_received",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:48.627Z",
+   "conversation_relay_data": {
+    "last_token_received": {
+     "total_tokens": 1,
+     "total_words": 25
+    },
+    "sequence_number": 45,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "tts_latency",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:49.078Z",
+   "conversation_relay_data": {
+    "sequence_number": 46,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1",
+    "tts_latency": {
+     "latency_ms": 491
+    }
+   }
+  },
+  {
+   "name": "start_of_agent_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:44:49.078Z",
+   "conversation_relay_data": {
+    "sequence_number": 47,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "start_of_customer_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:00.360Z",
+   "conversation_relay_data": {
+    "sequence_number": 50,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "end_of_agent_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:00.361Z",
+   "conversation_relay_data": {
+    "sequence_number": 51,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "interrupt",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:00.363Z",
+   "conversation_relay_data": {
+    "sequence_number": 52,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "end_of_customer_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:02.305Z",
+   "conversation_relay_data": {
+    "sequence_number": 54,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "prompt_sent",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:02.305Z",
+   "conversation_relay_data": {
+    "sequence_number": 55,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "stt_latency",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:02.305Z",
+   "conversation_relay_data": {
+    "sequence_number": 53,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1",
+    "stt_latency": {
+     "latency_ms": 200
+    }
+   }
+  },
+  {
+   "name": "first_token_received",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:02.390Z",
+   "conversation_relay_data": {
+    "sequence_number": 56,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "start_of_agent_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:02.540Z",
+   "conversation_relay_data": {
+    "sequence_number": 58,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "tts_latency",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:02.540Z",
+   "conversation_relay_data": {
+    "sequence_number": 57,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1",
+    "tts_latency": {
+     "latency_ms": 149
+    }
+   }
+  },
+  {
+   "name": "final_token_received",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:04.102Z",
+   "conversation_relay_data": {
+    "last_token_received": {
+     "total_tokens": 53,
+     "total_words": 38
+    },
+    "sequence_number": 59,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "start_of_customer_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:11.723Z",
+   "conversation_relay_data": {
+    "sequence_number": 61,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "end_of_agent_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:11.724Z",
+   "conversation_relay_data": {
+    "sequence_number": 62,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "interrupt",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:11.726Z",
+   "conversation_relay_data": {
+    "sequence_number": 63,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "end_of_customer_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:13.268Z",
+   "conversation_relay_data": {
+    "sequence_number": 65,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "stt_latency",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:13.268Z",
+   "conversation_relay_data": {
+    "sequence_number": 64,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1",
+    "stt_latency": {
+     "latency_ms": 230
+    }
+   }
+  },
+  {
+   "name": "prompt_sent",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:13.268Z",
+   "conversation_relay_data": {
+    "sequence_number": 66,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "first_token_received",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:15.048Z",
+   "conversation_relay_data": {
+    "sequence_number": 67,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "start_of_agent_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:15.202Z",
+   "conversation_relay_data": {
+    "sequence_number": 69,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "tts_latency",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:15.202Z",
+   "conversation_relay_data": {
+    "sequence_number": 68,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1",
+    "tts_latency": {
+     "latency_ms": 153
+    }
+   }
+  },
+  {
+   "name": "final_token_received",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:15.571Z",
+   "conversation_relay_data": {
+    "last_token_received": {
+     "total_tokens": 2,
+     "total_words": 10
+    },
+    "sequence_number": 70,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "end_of_agent_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:19.293Z",
+   "conversation_relay_data": {
+    "sequence_number": 71,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "start_of_customer_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:22.938Z",
+   "conversation_relay_data": {
+    "sequence_number": 73,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "end_of_customer_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:24.296Z",
+   "conversation_relay_data": {
+    "sequence_number": 75,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "prompt_sent",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:24.296Z",
+   "conversation_relay_data": {
+    "sequence_number": 76,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "stt_latency",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:24.296Z",
+   "conversation_relay_data": {
+    "sequence_number": 74,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1",
+    "stt_latency": {
+     "latency_ms": 301
+    }
+   }
+  },
+  {
+   "name": "first_token_received",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:25.298Z",
+   "conversation_relay_data": {
+    "sequence_number": 77,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "start_of_agent_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:25.465Z",
+   "conversation_relay_data": {
+    "sequence_number": 79,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "tts_latency",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:25.465Z",
+   "conversation_relay_data": {
+    "sequence_number": 78,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1",
+    "tts_latency": {
+     "latency_ms": 167
+    }
+   }
+  },
+  {
+   "name": "call_wrap_up",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:25.645Z",
+   "conversation_relay_data": {
+    "call_wrap_up": {
+     "duration_in_seconds": 86,
+     "end_status": "ended"
+    },
+    "sequence_number": 81,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "final_token_received",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:25.645Z",
+   "conversation_relay_data": {
+    "last_token_received": {
+     "total_tokens": 6,
+     "total_words": 3
+    },
+    "sequence_number": 80,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "end_of_agent_speech",
+   "group": "conversation_relay",
+   "timestamp": "2026-11-06T20:45:27.533Z",
+   "conversation_relay_data": {
+    "sequence_number": 82,
+    "session_id": "VX0f3e9e85e1847a76818eac69e96563b1"
+   }
+  },
+  {
+   "name": "completed",
+   "group": "connection",
+   "timestamp": "2026-11-06T20:45:29.399Z",
+   "conversation_relay_data": null
+  }
+ ]
+}

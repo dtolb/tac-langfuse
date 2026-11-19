@@ -121,11 +121,13 @@ it proves; read that rather than inferring from the filename. `GET /events/strea
 live SSE feed of every turn, and its `webhook.inbound` event publishes **the exact URL Twilio's
 signature was validated against**.
 
-**Langfuse here is v4 in `events_only` mode, so its read API is DISABLED** — `GET /api/public/traces`
-returns 404 meaning *disabled*, not *no data*. Verify traces in ClickHouse `events_core`, or the UI.
+**Langfuse is Langfuse Cloud (`us.cloud.langfuse.com`) as of 2026-11-18, and its v1 trace read API is
+GONE** — `GET /api/public/traces` returns 410. Read traces with `GET /api/public/v2/observations?traceId=…&fromStartTime=…`,
+or the UI. Every ClickHouse `events_core` / `events_full` query in `docs/HANDOFF.md` predates the move and
+only reaches the old self-hosted data (stopped, volumes kept).
 
 **Latency: read `attributes.gen_ai.client.operation.time_to_first_chunk` before theorising.** It is a
-native AI SDK attribute on every `GENERATION` in `events_full`, **in seconds**, and it accounts for the
+native AI SDK attribute on every `GENERATION` observation, **in seconds**, and it accounts for the
 generation span almost exactly — so "is it us or is it the model?" is one query, not an investigation.
 Measured 2026-09-15 across 33 generations: the framework costs **84 ms**, and everything else is model
 time-to-first-chunk. Two things follow, both of which will mislead you otherwise:
@@ -144,7 +146,9 @@ so it is not free to trim.
 **A voice trace is now TILED, so read the timeline before asking where the time went.** `turn.voice`
 spans `prompt` receipt → `last: true` sent, `caller.turn` covers every instant between two turns, and the
 two alternate with **0 ms between them** on a real call (measured 2026-09-15: 42.7 s root fully covered,
-against 45.3 s of unexplained gap the day before). Three traps:
+against 45.3 s of unexplained gap the day before).
+
+**Since 2026-11-18 every trace is a Langfuse session, and a no-tool voice turn is four observations.** Each trace (voice, SMS, bench) has `sessionId` = the conversation id (TAC conversation id; call SID for voice without the orchestrator) and `userId` = the memory profile id once known, never a phone number. Both are per-observation on Langfuse Cloud, so every child is created through `inTrace` in `server/obs/spans.ts`, which propagates them and claims the trace id in the `langfuse_trace_id` baggage entry. Without that claim a span drawn after its root ended is exported as a second root. A no-tool turn is `turn.voice > invoke_agent > step > chat`. `memory.recall`, `prompt.compose`, `tools.resolve`, `asr.final`, `tts.send` and `llm.stream` are gone; their numbers are metadata on the turn span (`prompt.fetch_ms`, `prompt.cached`, `memory.recall_ms`, `memory.chars`, `tools.unavailable`, `asr.transcript_chars`, `tts.send_ms`, `turn.steps`…). `prompt.fetch` is drawn only on a real network fetch. Turn input/output are the words; root input = first utterance, output = latest reply; root tags are `channel:*`, `prompt:<name>@v<N>` and `cr.config.revision:<rev>`. **About 2 minutes after hangup, `server/twilio/insights-backfill.ts` adds Twilio's side to the ended root:** `twilio.stt` / `twilio.tts` / `twilio.agent_speech` / `twilio.customer_speech` spans and `twilio.interrupt` / `call_wrap_up` / `language_changed` / `error` events, at Voice Insights' own millisecond timestamps, which can fall outside the root's own start and end. A trace read straight after a call has none of them yet. Three traps:
 
 - **`caller.turn` is a BLEND — bot playback + caller speech + ASR endpointing**, plus TAC's memory Recall
   on turn 1. It was 65% of a real call. Never quote it as "how long the caller talked".

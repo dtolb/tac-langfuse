@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from 'vitest';
-import { AGENT_PORT, WEB_PORT, LANGFUSE_HOST_PORT } from '../shared/ports.ts';
+import { AGENT_PORT, WEB_PORT } from '../shared/ports.ts';
 import { TAC_WEBHOOK_PATHS, APP_API_PATHS } from '../shared/twilio-paths.ts';
 import {
   CLIENT_IDENTITY,
@@ -69,7 +69,7 @@ test('shared/ touches no DOM global', () => {
 });
 
 test('ports are distinct, so nothing silently shadows another listener', () => {
-  const ports = [AGENT_PORT, WEB_PORT, LANGFUSE_HOST_PORT];
+  const ports = [AGENT_PORT, WEB_PORT];
   expect(new Set(ports).size).toBe(ports.length);
 });
 

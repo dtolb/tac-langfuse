@@ -2040,6 +2040,88 @@ Three findings that change how this repo's own code should be read:
 
 `.otel-check/` in the repo root (if still present) holds nine TypeScript files that compile clean against the real 2.2.0 types — the verification behind the published code blocks. It is scratch, not part of the build.
 
+## Langfuse Cloud migration, 2026-11-18
+
+Moved from the self-hosted v4 stack (`docker-compose.langfuse.yml`, now deleted along with `pnpm langfuse` / `langfuse:down`, `LANGFUSE_HOST_PORT`, the `LANGFUSE_INIT_*` / `NEXTAUTH_*` variables and the compose `host.docker.internal:3100` override) to **Langfuse Cloud, `https://us.cloud.langfuse.com`**, project `TAC Langfuse` (`cmwm9mhlw00oqad0dcxmv5r5u`) in "Dan's Organization" — its own project; other apps get their own, never these keys.
+
+- **Prompts were copied, not re-seeded.** The self-hosted instance carried operator edits past the compiled defaults, so every version was exported and replayed in order: `demo-agent-text` v1–v3 and `demo-agent-voice` v1–v6, `production` on text v3 and voice v6, each commit message `migrated from self-hosted vN`. Verified: both production versions' `prompt` and `config` are equal to the source, and `scripts/verify-prompts.ts` resolves voice v6 / text v3 live. `pnpm seed:prompts` would have shipped v1 bodies instead.
+- **Telemetry verified:** `scripts/verify-telemetry.ts` produced one trace with 22 observations (3 `turn.voice`, 2 `caller.turn`, 1 `tts.interrupted`, one root), read back through `v2/observations`.
+- **Traces did not move.** History before 2026-11-18 stays in the stopped self-hosted volumes (`langfuse_*`), which were left in place.
+- **No proxy change needed.** Host Node already trusts the corporate CA via `NODE_EXTRA_CA_CERTS`, and the container gets it from the `corp_ca` secret; both reach Cloud.
+
+## ConversationRelay tuning (2026-11-18)
+
+`/tuning` changes ConversationRelay STT, TTS and turn-taking settings. An Apply sends one `config` frame to every live call and saves the full profile as the next call's TwiML. Each change is tracked on a per-call timeline and in Langfuse. Spec: `docs/superpowers/specs/2026-11-18-cr-tuning-design.md`. Nothing here has run against a real call yet.
+
+**What was built**
+
+- `twilio-agent-connect` 2.2.0 → 2.5.0.
+- `shared/cr-params.ts` holds the parameter catalog, `configFrame` (pairs `ttsProvider`/`voice` and `transcriptionProvider`/`speechModel`, folds the ElevenLabs model into `voice`, drops `next-call` and disabled keys) and `relayAttributes` (next-call TwiML; always emits `welcomeGreeting` and `events="config-updated"`). `shared/tuning-api.ts` is the HTTP contract.
+- `server/twilio/cr-store.ts` keeps `data/cr-profile.json` and `data/cr-presets.json` (gitignored). They are seeded on first access. `data/` is not mounted into the container, so a recreated container starts from the seed.
+- `server/twilio/cr-live.ts` (`createCrTuning`) is the registry of live calls plus the last 10 ended ones. It handles Apply, `configUpdated` matching (`effectiveAt`, `firstTurn`), the `cr.config.apply` / `cr.config.updated` / `cr.config.error` zero-duration spans and bus events, and `cr.config.revision` on every `turn.voice` span. It also merges each call's timeline with Voice Insights.
+- `server/twilio/cr-voice.ts`: `TunableVoiceChannel.handleWebSocketConnection` attaches a second `message`/`close` listener to the raw socket. The `onInboundCallTwiml` customizer splits attributes into TAC's typed fields and `extra`, and never sets `actionUrl`. `webSocketConnected` binds conversation ids.
+- `server/twilio/cr-insights.ts` reads Voice Insights Events (carrier edge, paged) and Summary, and segments turns on `prompt_sent`. A 404, which is what Insights returns for a call it has no data for, reads as "pending".
+- `server/http/routes-tuning.ts` adds `GET /api/tuning`, `POST /api/tuning/apply`, `PUT /api/tuning/presets/:name`, `GET /api/calls` and `GET /api/calls/:callSid/timeline`.
+- `web/src/app/tuning/tuning-client.tsx` is the mockup on live data. It refreshes from `/events/stream`, and re-polls the selected timeline every 15 s while the call is live or its Insights are incomplete.
+- Tests: `tests/cr-tuning.test.ts` boots the real `bootTac` and `TACServer` on port 0 and drives a signed WebSocket. `tests/tac-twiml.test.ts` re-runs the `actionUrl` precedence check through the real `handleIncomingCall`.
+
+**TAC 2.5.0 facts, measured**
+
+- **The `TACServer` constructor now calls `tac.registerChannel(config.voiceChannel)`.** That replaces the single-slot `prompt`, `interrupt`, `error` and `conversationEnded` handlers with TAC's forwarders. Handlers registered before `new TACServer` were silently overwritten, and every voice turn went to `onMessageReady` (the SMS handler) instead of `handleVoicePrompt`. `server/twilio/tac.ts` now registers them after construction (header rule 3). The socket test timed out before the fix and passes after it. Any build between the bump and this fix had the bug.
+- **`sendStreamingResponse` now drains `session.pendingHandoffData` itself** (`ConversationRelayProvider.flushPendingHandoff`) at the end of every stream that is not aborted. `server/twilio/voice.ts` therefore sends a frame only when TAC left one parked, and drops the bare `{type:'end'}` fallback. The handoff event carries `drainedBy: 'tac' | 'agent'`. The barge-in branch now also deletes the parked frame; without that, a caller who interrupted "putting you through" would be transferred at the end of their next turn (the test fails with the delete removed). One open item: the screen-pop transcript snapshot now runs after TAC has already sent the frame, so it races the history clear in `handleVoiceDisconnect`. That is unmeasured.
+- `actionUrl` precedence is unchanged. With `studioHandoffFlowSid` set, `defaultTwimlOptions.actionUrl` still beats Studio, and a customizer that leaves out `actionUrl` keeps it. A customizer that returns `{actionUrl: undefined}` deletes the attribute, and `extra.voice` (shadowing a typed field) throws.
+- Without the orchestrator, TAC registers the socket and fires `webSocketConnected` only on the first `prompt` or DTMF. `getWebsocket()` is null until then, which is why the second listener attaches in `handleWebSocketConnection`.
+- `WebSocketMessageSchema` covers only setup, prompt, interrupt and dtmf. `info`/`configUpdated` and `error` are dropped at debug level, so only our listener sees them. 2.5.0 has no `config` sender of its own.
+
+**Voice Insights payload, measured against CA6e702727faa1cfb926deb093a536d2da (real inbound CR call, 2026-11-06)**
+
+- Events: 76 rows, 72 in group `conversation_relay` and 4 in `connection`. `meta.next_page_url` was null.
+- `session_id`, `sequence_number` and every payload sit under `conversation_relay_data`, not at the top level. Examples: `conversation_relay_data.stt_latency.latency_ms`, `.tts_latency.latency_ms`, `.last_token_received.{total_tokens,total_words}`, `.call_wrap_up.{duration_in_seconds,end_status}`.
+- Event names: configurations, start/end_of_agent_speech, start/end_of_customer_speech, stt_latency, prompt_sent, first_token_received, tts_latency, final_token_received, interrupt, call_wrap_up. `stt_latency` is sequenced just before `end_of_customer_speech`, at the same millisecond.
+- `configurations` uses Insights' own vocabulary, not the catalog's. Examples: `interruptible: "TRUE"`, `reportInputDuringAgentSpeech: "NONE"`, `speechTimeout: "0"`, `turnDetection: "OFF"`, `speechProvider: "nova-3-general"`, `ttsProvider: "google"`. Per-language settings are under `.languages["en-US"]` in snake_case.
+- Summary is at `agent_session_summaries[0]`, with `stt_latency_ms` / `application_latency_ms` / `tts_latency_ms` as `{avg,max,min}`, plus `interruptions`, `turns` and `time_to_first_audio_ms`.
+- Parser cross-check: STT average 575.9 ms against Summary's 576, 7 turns against 7, and 3 interrupted against `interruptions.customer_to_agent` 3. Re-run 2026-11-18: 7 turns, every one with caller, audio start and audio end filled, and `wrappedUp` true.
+- An unknown CallSid answers 404 on Events.
+
+**Review fixes, 2026-11-18**
+
+- `configFrame` now drops keys whose `disabledReason` is set, the same rule `relayAttributes` uses. Example: applying "Twilio defaults" over flux no longer sends `eotThreshold` with nova-3. The registry records changes only for keys that went into the frame, so nothing waits forever on a key that was never sent.
+- A `cr.config.error` now marks the Apply it is attributed to as rejected, so the call's `applying` badge clears. Twilio rejects a `config` frame atomically, so no `configUpdated` will follow. The attribution goes to the latest Apply on that call that still has pending changes. Twilio's `error` frame carries no reference to the frame it rejects, so an unrelated `error` can be misattributed.
+- Smoke (`node` script, real `buildApp` + `bootTac` on port 0, temp data dir): `GET /api/tuning` gave rev 1 with 5 presets. Applying flux gave rev 2. Inbound `/twiml` emitted `<Connect action="https://demo.example.com/api/voice/relay-action">` with `transcriptionProvider="Deepgram" speechModel="flux" eotThreshold="0.7" reportInputDuringAgentSpeech="any" ignoreBackchannel="true" events="config-updated"`. Then, on a live signed socket, applying the defaults preset sent `{"type":"config","language":{"speechModel":"nova-3-general","transcriptionProvider":"Deepgram"},"session":{"ignoreBackchannel":false}}`. `applying` was true and cleared after an `error` frame.
+
+**Still unverified: measure on the first real call**
+
+- Whether `turnDetection` and `deepgramSmartFormat` are accepted in a `config` frame and take effect at end of turn. Neither is in the dynamic-config reference, and an unknown field rejects the WHOLE frame (64107). Applying the "Smart turn detection" preset mid-call may therefore drop its `speechModel` change too. Same check for `includeInPrompt`.
+- How `configUpdated` reports an ElevenLabs model suffix, and what the v3 suffix is. `cr-live.ts` splits the suffix off with `endsWith('-<model>')`, which a speed/stability suffix would defeat.
+- Which Google `speechModel` values ConversationRelay accepts.
+- Clock alignment between Voice Insights and this agent, anchored on `prompt` receipt ↔ `prompt_sent`. The merge takes the median offset and pairs turns by index, so a partial prompt or a missing turn on either side misaligns them.
+- Whether Langfuse renders the zero-duration `cr.config.*` spans on the timeline.
+- What vocabulary `configUpdated` actually uses (lowercase providers, booleans as strings, `speechTimeout`). The mapping back to catalog spelling is case-insensitive matching against the catalog's options. Insights' `"TRUE"`/`"OFF"`/`"0"` vocabulary suggests some values will not map. Also whether exactly three session-start events arrive: `cr.config.initial` assumes the first three before any Apply.
+- `firstTurn` for end-of-turn keys depends on whether `configUpdated` arrives before or after the `prompt` it ends.
+
+## Langfuse sessions and Twilio backfill (2026-11-18)
+
+One trace per voice call is kept (`conversation.voice` root, tiled `caller.turn` / `turn.voice`). What changed is identity, noise and Twilio's side of the call.
+
+- **Sessions and users.** Every trace (voice, SMS, bench) has `sessionId` = the conversation id and `userId` = the caller's memory profile id once `runTurn` sees `input.profileId`, never a phone number. On Langfuse Cloud (v4, observations-first) both are **per observation**: set on the root only, a child created with an explicit parent comes back `sessionId ""` / `userId ""` (measured, probe trace `dd3c2137…`). So `server/obs/spans.ts` keeps a registry of open roots by trace id (retained 15 min after they end), and every child helper (`withTurnSpan`, `startSpanUnder`, `TimelineSpan.event`/`child`, `recordStep`, `drawUnder`, `eventUnder`, `withTraceIdentity` around the AI SDK call) runs through `inTrace`, which wraps creation in `propagateAttributes({ sessionId, userId })`.
+- **A child drawn after its root ended is exported as a second root unless the trace id is claimed.** `LangfuseSpanProcessor` drops the root from its in-memory map on end, so a late child came back `isRootObservation: true` with `traceName` = its own name (measured 8 s and 130 s after the root ended). `inTrace` also sets the baggage entry `langfuse_trace_id` = the trace id, the same thing flight-sandbox does with `setLangfuseTraceIdInBaggage`; measured root:false for late spans and events.
+- **Trace name, tags and I/O come from the root observation.** `setTraceIO` had no visible effect on Cloud; the root's own `input` / `output` are what show. The root gets input = first utterance, output = latest reply, and tags `channel:<ch>`, `prompt:<name>@v<N>` and (voice) `cr.config.revision:<rev>`. Root I/O and tags can only be written while the root is open.
+- **Noise folded.** `memory.recall`, `prompt.compose`, `tools.resolve`, `asr.final`, `tts.send` and our `llm.stream` wrapper are gone. Their numbers are turn-span metadata: `prompt.fetch_ms`, `prompt.cached`, `prompt.system_chars`, `prompt.messages`, `history.messages`, `memory.chars`, `memory.recall_ms`, `tools.unavailable`, `turn.steps` / `turn.chars` / `turn.deltas`, `asr.transcript_chars`, `asr.lang`, `tts.send_ms`. `prompt.fetch` is drawn only when `ResolvedPrompt.fetched` is true (a Langfuse cache miss). A no-tool voice turn is now `turn.voice > invoke_agent > step > chat`; turn input/output are the plain words.
+- **Post-call Voice Insights backfill.** When the ConversationRelay socket closes, `cr-live` `socketClosed` resolves the root through `rootContextFor(callSid)` (the voice registry aliases the CallSid via `aliasOf`, so this works with Conversation Orchestrator too) and calls `insights-backfill.ts` `callEnded`. After `INSIGHTS_BACKFILL_DELAY_MS` (120 000) it fetches the call's Events once through `cr-insights.ts` and draws, under the ended root and at Twilio's own timestamps: `twilio.stt` / `twilio.tts` over `[at − latency_ms, at]`, `twilio.agent_speech` (start paired with the next end in its session), `twilio.customer_speech` (caller start → `end_of_customer_speech` − stt latency, from `insightsTurns`), and zero-duration `twilio.interrupt` / `call_wrap_up` / `language_changed` / `error` events. Sorted by `(session_id, sequence_number)`. A missing `call_wrap_up` is logged as `(no call_wrap_up yet)`; no retry. `prompt_sent` / `first_token_received` / `final_token_received` are not drawn.
+
+### Measured
+
+- `pnpm typecheck` clean; `pnpm vitest run` 23 files, 359 tests. `tests/voice-telemetry.test.ts` runs the real `LangfuseSpanProcessor` into an in-memory exporter (3 turns + a barge-in: exact observation counts, ids on every observation, only the root marked app root even with `drawUnder` / `eventUnder` after it ended). `tests/insights-backfill.test.ts` draws the real-call fixture `tests/fixtures/voice-insights-events.json` (CA6e702727…, 76 events).
+- `scripts/verify-telemetry.ts` against Cloud passed every check on trace `9dcff9127aa0d83efb8d2e396ebbffdf`.
+- Backfill smoke against Cloud (`/tmp/smoke/backfill-smoke.mts`, outside the repo): a `conversation.voice` root opened through `createConversationRegistry` with a CallSid alias, one `turn.voice` setting the profile, root captured with `rootContextFor(CallSid)`, ended and flushed; 10 s later `drawInsights` on the fixture. Trace `5b14b5cbf9c70bb178196fb56ee371de` read back via `v2/observations`: 35 observations (7 stt, 7 tts, 8 agent_speech, 7 customer_speech, 3 interrupt, 1 call_wrap_up), one root, every `twilio.*` parented to the root with the session id and the profile user id, times exactly Twilio's (stt seq 10 = 20:44:12.574 → 20:44:15.044 for a 2470 ms latency; `call_wrap_up` an EVENT at 20:45:25.645).
+- Bench smoke against Cloud (`/tmp/smoke/bench-smoke.mts`: in-process `buildApp` on port 0, one real turn over a socket): trace `900a4a62fa9fbb1aea0e39012aa1f474` is `conversation.bench` > `turn.bench` > `prompt.fetch` (cold cache) + `invoke_agent` > `step 1` > `chat` GENERATION, six observations, all with the session id, root tags `[channel:bench, prompt:demo-agent-text@v4]`, root and turn I/O the words. `userId` is empty because the bench has no profile.
+
+### Not measured
+
+- The backfill has not yet run on a real call end-to-end (hangup → 120 s → Cloud read-back). Every piece has: the socket-close hook order (TAC 2.5.0 dist), the fetch (fixture is a real call), the draw (smoke above).
+- `cr.config.*` spans fired at bind and the root's start attributes carry no `userId`; the profile id is learned at turn 1.
+- Probe and smoke traces remain in the Cloud project (`probe*`, `verify-telemetry-*`, `smoke-backfill-*`, `smoke-bench-*` sessions); the v2 API cannot delete them.
+
 ## Gaps and honest limits
 
 - **The 2026-09-16 agent-builder survey is documentation-only.** Twelve candidates, no execution. Its own open-items section is the authority on what is unproven; the largest single gap is that no candidate's in-process or over-the-wire time to first delta was measured, so none can be compared against the 84 ms preamble ceiling.
@@ -2054,7 +2136,7 @@ Three findings that change how this repo's own code should be read:
   prompt v2 still sets `0.4`** — an operator edit, deliberately not policed in code.
 - **PII does reach Langfuse.** Our own spans and events are scrubbed (verified `+1***4567`), but the
   AI SDK's model spans carry the full prompt and completion. That is largely the point of tracing,
-  and the stack is self-hosted per demo — but do not describe this app as keeping PII out of Langfuse.
+  and since 2026-11-18 it goes to **Langfuse Cloud, a third party**, not a per-demo self-hosted stack — do not describe this app as keeping PII out of Langfuse.
 - **t0 is our first observation, not STT arrival.** Un-measurable upstream: WS frame parse,
   `startStreamTask`, and TAC's `promptQueues` serialisation (`voice.ts:630`). `turn.ttft_ms` is now
   turn-relative and `turn.ttft_model_ms` model-relative; neither includes the upstream gap.
@@ -2070,10 +2152,10 @@ Three findings that change how this repo's own code should be read:
 - **The live barge-in path is unverified.** `tts.interrupted` and `turn.aborted: true` are proven by
   `tests/voice-telemetry.test.ts` and `scripts/verify-telemetry.ts`; both real calls so far have
   `turns.aborted=0`. One call where somebody talks over the agent closes this.
-- **Langfuse v4 `events_only` has no public read API for traces.** `/api/public/traces`,
-  `/observations`, `/metrics/daily` all 404; `/events` and `/spans` are POST-only. Prompts read fine
-  via `/api/public/v2/prompts`. Trace verification is a **UI check via Playwright MCP**, never an API
-  assertion. (Reading ClickHouse directly works for debugging ingestion, as at correction #3.)
+- **Trace reads on Langfuse Cloud go through `v2/observations` only.** `GET /api/public/traces` and
+  `/traces/<id>` return **410** (v1 removed from Cloud 2026-11-19). `GET /api/public/v2/observations?traceId=<id>&fields=core,basic&fromStartTime=<iso>`
+  works and is how the 2026-11-18 migration was verified. (Before the move this was self-hosted v4
+  `events_only`, where the read API 404'd and ClickHouse was the only reader.)
 - **History is process-local and dies with the container.** By decision, not oversight — the plan
   rules out a second durable store and Langfuse owns durable history. Consequences to state out loud:
   a `node --watch` restart drops every conversation mid-call, and a two-instance deploy would not

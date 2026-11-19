@@ -20,7 +20,7 @@ import { z } from 'zod';
  */
 export const PromptConfigSchema = z
   .object({
-    model: z.string().default('gpt-5.4-mini'),
+    model: z.string().default('gpt-6.1-terra'),
     temperature: z.number().min(0).max(2).optional(),
     maxOutputTokens: z.number().int().positive().optional(),
     /**
@@ -65,6 +65,8 @@ export interface ResolvedPrompt {
    * docblock has the full account.
    */
   readonly telemetryLink: unknown | null;
+  /** `true` when this `get()` went to the network; absent on a cache hit or with no Langfuse configured. */
+  readonly fetched?: boolean;
 }
 
 export interface PromptPort {

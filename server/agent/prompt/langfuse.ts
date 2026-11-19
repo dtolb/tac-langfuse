@@ -11,8 +11,8 @@
  *  2. Fetch by LABEL, never by version number. `production` is a pointer the operator moves, and
  *     that pointer is the entire rollback mechanism.
  *
- * No span is created here. T9 owns the `prompt.fetch` span that wraps this call; instrumenting it
- * on both sides puts the same step in the waterfall twice, which reads as a bug in the tracing.
+ * No span is created here. `run-turn.ts` draws the `prompt.fetch` span, only when `fetched` says this
+ * call went to the network; instrumenting it on both sides puts the same step in the waterfall twice.
  */
 import { LangfuseClient } from '@langfuse/client';
 import { z } from 'zod';
@@ -215,7 +215,7 @@ export function createLangfusePromptPort(deps: LangfusePromptDeps): PromptPort {
       // blip is remembered.
       cache.set(name, { at: now(), resolution });
       publish(resolution, now() - startedAt, false);
-      return resolution.resolved;
+      return fetcher === null ? resolution.resolved : { ...resolution.resolved, fetched: true };
     },
   };
 }

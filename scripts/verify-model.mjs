@@ -31,11 +31,16 @@ console.log(`  sample: ${chatish.slice(0, 12).join(', ')}`);
 
 const MODEL =
   process.env.MODEL ??
-  ['gpt-5.4-mini', 'gpt-5-mini', 'gpt-4.1-mini', 'gpt-4o-mini'].find((m) => chatish.includes(m)) ??
+  ['gpt-6.1-terra', 'gpt-5.4-mini', 'gpt-5-mini', 'gpt-4.1-mini', 'gpt-4o-mini'].find((m) => chatish.includes(m)) ??
   chatish[0];
 console.log(`using model: ${MODEL}\n`);
 
 const openai = createOpenAI({ apiKey });
+
+/** Mirrors `OPENAI_PROVIDER_OPTIONS` in server/agent/model/openai.ts: reasoning off, nothing stored (Zero Data Retention). */
+const providerOptions = {
+  openai: { reasoningEffort: 'none', store: false, include: ['reasoning.encrypted_content'] },
+};
 
 // A tool built from RAW JSON Schema — the shape `fromTacTool()` will produce when adapting
 // TAC's built-ins, so this is the path that must work without any Zod mirror.
@@ -62,6 +67,7 @@ async function viaGenerateText() {
     prompt: PROMPT,
     tools: { refund_eta: makeTool(calls) },
     stopWhen: stepCountIs(4),
+    providerOptions,
   });
   return { calls, text: r.text, steps: r.steps?.length ?? 0 };
 }
@@ -73,6 +79,7 @@ async function viaStreamText() {
     prompt: PROMPT,
     tools: { refund_eta: makeTool(calls) },
     stopWhen: stepCountIs(4),
+    providerOptions,
   });
   let text = '';
   let ttft = null;
@@ -91,6 +98,7 @@ async function viaToolLoopAgent() {
     instructions: 'Be brief.',
     tools: { refund_eta: makeTool(calls) },
     stopWhen: stepCountIs(4),
+    providerOptions,
   });
   const r = await agent.stream({ prompt: PROMPT }); // NOTE: returns a Promise
   let text = '';

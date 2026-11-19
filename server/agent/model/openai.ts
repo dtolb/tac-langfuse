@@ -15,9 +15,17 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { stepCountIs, streamText, tool, type ModelMessage, type Tool, type ToolSet } from 'ai';
 import { z } from 'zod';
+import { childLogger } from '../../logging.ts';
 import type { ToolCtx, ToolDef } from '../tools/registry.ts';
 import type { TurnMessage, TurnToolCall, TurnUsage } from '../types.ts';
 import type { ModelPort, ModelRequest, ModelStreamResult } from './port.ts';
+
+const log = childLogger('model');
+
+/** OpenAI Responses options: reasoning off, and nothing stored server-side (the organization is Zero Data Retention). */
+export const OPENAI_PROVIDER_OPTIONS = {
+  openai: { reasoningEffort: 'none', store: false, include: ['reasoning.encrypted_content'] },
+};
 
 /**
  * A `ToolDef` as the AI SDK's `Tool`.
@@ -155,6 +163,8 @@ export function createOpenAiModelPort(deps: OpenAiModelDeps): ModelPort {
         // Only when there is something to choose from — see `toolChoiceOption`.
         ...toolChoiceOption(request.tools.length, request.toolChoice),
         stopWhen: stepCountIs(request.maxSteps),
+        providerOptions: OPENAI_PROVIDER_OPTIONS,
+        onError: ({ error }) => log.error({ err: error, model: request.model }, 'model: stream error'),
         abortSignal: request.abortSignal,
         ...(request.temperature !== undefined && { temperature: request.temperature }),
         ...(request.maxOutputTokens !== undefined && { maxOutputTokens: request.maxOutputTokens }),

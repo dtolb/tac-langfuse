@@ -29,7 +29,7 @@ if (app.langfuse === null) {
   for (const m of named.length > 0 ? named : app.missing) {
     console.error(`  ${m.name} — ${m.breaks}`);
   }
-  console.error('\nStart it with `pnpm langfuse` and check LANGFUSE_* in .env.');
+  console.error('\nCheck LANGFUSE_* in .env against the Langfuse project\'s API keys.');
   process.exit(1);
 }
 

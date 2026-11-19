@@ -30,7 +30,7 @@ import type { ToolLogger } from '../agent/tools/registry.ts';
  * A compile-time constant rather than an env var, following `AGENT_PORT`'s precedent: nothing outside
  * this process needs to agree on it. It exists because SMS gets **no `abortSignal` from TAC** — only
  * the voice `prompt` path supplies one — and `TurnInput.abortSignal` is required. An unbounded turn
- * against a hung model would leave the `llm.stream` span unended, and an unended span never reaches
+ * against a hung model would leave the `turn.sms` span unended, and an unended span never reaches
  * Langfuse at all, so the symptom would be a missing observation rather than a slow one.
  *
  * Generous, because SMS latency is not perceptual the way voice is: the point is to bound the turn,

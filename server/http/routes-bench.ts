@@ -114,8 +114,8 @@ export async function streamBenchTurn(
   const { conversationId } = request;
 
   // A dead socket is discovered by writing to it — SSE has no other disconnect signal. Once gone,
-  // stop writing but let the turn finish: `runTurn`'s `done` owns ending the `llm.stream` span, and
-  // abandoning the drain here would leave it unended and therefore absent from Langfuse.
+  // stop writing but let the turn finish: `runTurn`'s `done` writes the turn span's output and
+  // timings, and abandoning the drain here would leave them unwritten.
   let gone = false;
   const send = (event: string, data: Record<string, unknown>): void => {
     if (gone) return;

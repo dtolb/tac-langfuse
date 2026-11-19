@@ -177,7 +177,7 @@ test("an unset flow SID is a miss, not a boot crash — construction is lazy", a
  *  - `required` needs no defaulting: both sides say `['reason']`.
  *  - The TOP-LEVEL `description` is deliberately COMPARED here, where `builtin-tools.test.ts` has to
  *    strip it. TAC hard-codes this schema and never echoes `options.description` into it
- *    (`dist/index.js:6455-6466`), so the comparison is not circular, and the string is 39 characters
+ *    (in `createStudioHandoffTool`), so the comparison is not circular, and the string is 39 characters
  *    rather than 900 — cheap enough to also send to the model.
  *  - `minLength` IS stripped, and that is a real difference rather than a spelling one: our mirror is
  *    `z.string().min(1)` where TAC's JSON Schema has no bound at all, so `reason: ''` is a mid-turn

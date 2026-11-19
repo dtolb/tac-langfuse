@@ -78,8 +78,9 @@ const fakeTurnDeps = (deltas: string[], text: string): TurnDeps => {
     composeMemory: passthroughMemory,
     obs: bus,
     spans: {
-      timeStep: async (_n, fn) => fn(),
-      startStep: () => ({ update: () => {}, end: () => {} }),
+      record: () => {},
+      annotate: () => {},
+      inherit: (fn) => fn(),
     },
     branding: { persona: 'Ada', companyName: 'Northwind Traders' },
     history: createHistory(),

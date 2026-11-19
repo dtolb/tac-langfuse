@@ -8,7 +8,7 @@ versioned tool selection, and every turn traced.**
 [![Node](https://img.shields.io/badge/node-24+-5FA04E?logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-no%20build%20step-3178C6?logo=typescript&logoColor=white)](https://nodejs.org/api/typescript.html)
 [![Twilio](https://img.shields.io/badge/Twilio-ConversationRelay%20%C2%B7%20Orchestrator-F22F46?logo=twilio&logoColor=white)](https://www.twilio.com/docs)
-[![Langfuse](https://img.shields.io/badge/Langfuse-self--hosted%20v4-0A0A0A)](https://langfuse.com)
+[![Langfuse](https://img.shields.io/badge/Langfuse-cloud-0A0A0A)](https://langfuse.com)
 [![Tests](https://img.shields.io/badge/tests-350%20passing-F22F46)](ARCHITECTURE.md#proof-not-claims)
 
 [What it shows](#what-it-shows) · [Capabilities](#capabilities) · [Tools](#tools) ·
@@ -143,7 +143,8 @@ Infrastructure it needs, in full:
 
 - **Node 24+** and **pnpm 11**. Node runs the TypeScript directly — there is no build step for the agent.
 - An **OpenAI API key**. That alone gets you a working agent and the browser bench.
-- **Docker**, only for the self-hosted Langfuse stack or to run the two services as containers.
+- A **Langfuse Cloud** project, for versioned prompts and traces. Without one the agent runs on compiled-in prompts and records nothing.
+- **Docker**, only to run the two services as containers.
 - A **public HTTPS host**, only for inbound calls and texts. A tunnel, a reverse proxy, or a hosted URL —
   the scaffold does not care which, but three places have to agree on it.
 

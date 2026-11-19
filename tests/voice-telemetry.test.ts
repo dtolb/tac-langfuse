@@ -11,11 +11,11 @@
  * it at a `BasicTracerProvider` + `InMemorySpanExporter` puts every span our helpers create into a
  * list this file can read. No new dependency: `@opentelemetry/sdk-trace-base` is a direct one.
  *
- * It CANNOT show that those spans reach Langfuse. `LangfuseSpanProcessor` is not registered here,
- * and that processor FILTERS — see the header of `server/obs/spans.ts` for the failure mode, which
- * is a span that exists, is sampled, is visible to an in-memory exporter, and is then silently
- * dropped. `scripts/verify-telemetry.ts` is the diagnostic that closes that gap, against the live
- * stack. This file proves the timeline's SHAPE; that script proves it arrives.
+ * Spans pass through the real `LangfuseSpanProcessor` on their way to the in-memory exporter, so its
+ * filter, its copying of propagated session/user ids and its app-root marking all apply here. It
+ * CANNOT show that those spans reach Langfuse: `scripts/verify-telemetry.ts` is the diagnostic that
+ * closes that gap, against the live stack. This file proves the timeline's SHAPE; that script proves
+ * it arrives.
  *
  * TWO PIECES OF THE SDK ARE REIMPLEMENTED HERE, both because they are transitive dependencies of
  * `@opentelemetry/sdk-node` rather than declared ones, and adding a dependency for a test is worse
@@ -48,15 +48,12 @@ import {
   type TextMapGetter,
   type TextMapSetter,
 } from '@opentelemetry/api';
-import {
-  BasicTracerProvider,
-  InMemorySpanExporter,
-  SimpleSpanProcessor,
-  type ReadableSpan,
-} from '@opentelemetry/sdk-trace-base';
+import { BasicTracerProvider, InMemorySpanExporter, type ReadableSpan } from '@opentelemetry/sdk-trace-base';
+import { LangfuseSpanProcessor } from '@langfuse/otel';
 import { setLangfuseTracerProvider } from '@langfuse/tracing';
 import type { ObsEvent } from '../shared/events.ts';
 import { createConversationRegistry } from '../server/obs/conversations.ts';
+import { drawUnder, eventUnder, rootContextFor } from '../server/obs/spans.ts';
 import { createVoiceTimeline } from '../server/obs/voice-timeline.ts';
 import { handleVoiceDisconnect, handleVoiceInterrupt, handleVoicePrompt } from '../server/twilio/voice.ts';
 import { fakeTurnDeps, recordingSender, silentLogger } from './helpers/fake-voice.ts';
@@ -131,7 +128,17 @@ const w3c = {
 // ─────────────────────────────────────────────────────────────────── span readers
 
 const exporter = new InMemorySpanExporter();
-const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+const provider = new BasicTracerProvider({
+  spanProcessors: [
+    new LangfuseSpanProcessor({
+      exporter,
+      exportMode: 'immediate',
+      publicKey: 'pk-test',
+      secretKey: 'sk-test',
+      baseUrl: 'http://127.0.0.1:9',
+    }),
+  ],
+});
 
 /** HrTime (`[seconds, nanos]`) to epoch milliseconds, fractional. */
 const ms = (t: readonly [number, number]): number => t[0] * 1000 + t[1] / 1e6;
@@ -143,6 +150,7 @@ interface Interval {
   readonly parentSpanId: string | undefined;
   readonly spanId: string;
   readonly metadata: Record<string, string>;
+  readonly attributes: ReadableSpan['attributes'];
 }
 
 const METADATA_PREFIX = 'langfuse.observation.metadata.';
@@ -158,6 +166,7 @@ const asInterval = (span: ReadableSpan): Interval => ({
       .filter(([key]) => key.startsWith(METADATA_PREFIX))
       .map(([key, value]) => [key.slice(METADATA_PREFIX.length), String(value)]),
   ),
+  attributes: span.attributes,
 });
 
 const finished = (): Interval[] => exporter.getFinishedSpans().map(asInterval);
@@ -183,6 +192,8 @@ const largestGapMs = (outer: Interval, covering: readonly Interval[]): number =>
 // ─────────────────────────────────────────────────────────────────── the call
 
 const CONVERSATION_ID = 'conv_voice_timeline';
+const CALL_SID = 'CA_voice_timeline';
+const PROFILE_ID = 'mem_profile_voice_timeline';
 /**
  * Deliberately LONGER than the 300 ms slack the coverage assertion allows.
  *
@@ -200,9 +211,11 @@ const conversations = createConversationRegistry({
   // The same hook `server/twilio/tac.ts` installs. Passing it here is what puts requirement 6's
   // call-level statistics on the root span, and asserting them is what proves the hook fires.
   onClose: (conversationId) => timeline.forget(conversationId),
+  aliasOf: () => CALL_SID,
 });
 
 let interruptedUtterance = '';
+let drawnAfterEnd = false;
 
 beforeAll(async () => {
   setLangfuseTracerProvider(provider);
@@ -222,6 +235,7 @@ beforeAll(async () => {
         transcript,
         abortSignal: (over.abort ?? new AbortController()).signal,
         memory: undefined,
+        session: { profileId: PROFILE_ID },
       },
       {
         turn: fakeTurnDeps(deltas, deltas.join(''), events, { deltaDelayMs: 8, firstDelayMs: 25 }),
@@ -272,6 +286,15 @@ beforeAll(async () => {
     { conversationId: CONVERSATION_ID },
     { turn: fakeTurnDeps([], '', events), conversations, timeline },
   );
+
+  // ---- the post-call backfill: drawn under the ENDED root, found by CallSid ----
+  const root = rootContextFor(CALL_SID);
+  if (root !== undefined) {
+    const at = Date.now();
+    drawUnder(root.traceparent, 'twilio.late_span', { metadata: { source: 'test' } }, at - 50, at);
+    eventUnder(root.traceparent, 'twilio.late_event', { metadata: { source: 'test' } }, at);
+    drawnAfterEnd = true;
+  }
   await provider.forceFlush();
 });
 
@@ -372,36 +395,85 @@ test('the interrupted turn still ends at the interrupt, not when the handler fin
   expect(third.endMs).toBeCloseTo(only('tts.interrupted').startMs, 3);
 });
 
-test('tts.send covers first token to end of turn, inside its own turn', () => {
-  const sends = named('tts.send');
-  expect(sends).toHaveLength(3);
+test('a no-tool voice turn has no children of ours; only the barge-in adds tts.interrupted', () => {
   const turns = named('turn.voice');
-  for (const send of sends) {
-    const parent = turns.find((t) => t.spanId === send.parentSpanId);
-    expect(parent, 'tts.send must be a child of a turn.voice span').toBeDefined();
-    expect(send.startMs).toBeGreaterThanOrEqual((parent as Interval).startMs);
-    // Equal, not merely within: the turn ends AT the boundary that ends `tts.send`, which is the
-    // whole reason `withTurnSpan` had to grow `endOnExit: false`.
-    expect(send.endMs).toBeCloseTo((parent as Interval).endMs, 3);
+  const childrenOf = (turn: Interval): string[] =>
+    finished()
+      .filter((s) => s.parentSpanId === turn.spanId)
+      .map((s) => s.name);
+  expect(childrenOf(turns[0] as Interval)).toEqual([]);
+  expect(childrenOf(turns[1] as Interval)).toEqual([]);
+  expect(childrenOf(turns[2] as Interval)).toEqual(['tts.interrupted']);
+});
+
+test('the call is exactly root, three turns, two caller gaps, one interrupt and the backfill', () => {
+  const counts = new Map<string, number>();
+  for (const span of finished()) counts.set(span.name, (counts.get(span.name) ?? 0) + 1);
+  expect(Object.fromEntries(counts)).toEqual({
+    'conversation.voice': 1,
+    'turn.voice': 3,
+    'caller.turn': 2,
+    'tts.interrupted': 1,
+    'twilio.late_span': 1,
+    'twilio.late_event': 1,
+  });
+});
+
+test('tts.send_ms is first token to end of turn, folded onto the turn', () => {
+  const turns = named('turn.voice');
+  expect(Number(turns[0]?.metadata['tts.send_ms'])).toBeGreaterThan(0);
+  expect(Number(turns[1]?.metadata['tts.send_ms'])).toBeGreaterThan(0);
+  for (const turn of turns) {
+    const sendMs = Number(turn.metadata['tts.send_ms']);
+    const ttfa = Number(turn.metadata['turn.ttfa_ms']);
+    expect(Math.abs(sendMs + ttfa - (turn.endMs - turn.startMs))).toBeLessThan(1);
   }
 });
 
-test('asr.final marks the start of each turn and is zero-duration', () => {
-  const marks = named('asr.final');
-  expect(marks).toHaveLength(3);
-  for (const mark of marks) {
-    expect(mark.endMs - mark.startMs).toBe(0);
+test('the transcript length is folded onto the turn, and no lang today', () => {
+  const first = named('turn.voice')[0] as Interval;
+  expect(first.metadata['asr.transcript_chars']).toBe(String('where is order A4721'.length));
+  // TAC 2.2.0 parses `lang` and then drops it before our callback, and a null metadata value is
+  // omitted entirely. This starts failing the day TAC forwards it.
+  expect(first.metadata['asr.lang']).toBeUndefined();
+});
+
+test('every observation of the call carries the session id and the caller profile as user id', () => {
+  for (const span of finished()) {
+    expect(span.attributes['session.id'], span.name).toBe(CONVERSATION_ID);
+    expect(span.attributes['user.id'], span.name).toBe(PROFILE_ID);
   }
 });
 
-test('asr.final carries the transcript length but no lang today', () => {
-  const first = named('asr.final')[0] as Interval;
-  expect(first.metadata['transcriptChars']).toBe(String('where is order A4721'.length));
-  // TAC 2.2.0 parses `lang` and then drops it before our callback, so the forwarded value is
-  // undefined — and `createObservationAttributes` omits a null metadata value entirely rather than
-  // recording it as null. This assertion is what will start failing the day TAC forwards it, which is
-  // the notification we want.
-  expect(first.metadata['lang']).toBeUndefined();
+test('the root is the only app root, including the spans drawn after it ended', () => {
+  expect(drawnAfterEnd).toBe(true);
+  const roots = finished().filter((s) => s.attributes['langfuse.internal.is_app_root'] === true);
+  expect(roots.map((s) => s.name)).toEqual(['conversation.voice']);
+  const root = only('conversation.voice');
+  expect(only('twilio.late_span').parentSpanId).toBe(root.spanId);
+  expect(only('twilio.late_event').parentSpanId).toBe(root.spanId);
+  expect(only('twilio.late_span').startMs).toBeGreaterThan(root.endMs - 60);
+});
+
+test('turns and the root read as words, and the root carries channel and prompt tags', () => {
+  const turns = named('turn.voice');
+  expect(turns[0]?.attributes['langfuse.observation.input']).toBe('where is order A4721');
+  expect(turns[0]?.attributes['langfuse.observation.output']).toBe('Order A4721 has shipped.');
+  const root = only('conversation.voice');
+  expect(root.attributes['langfuse.observation.input']).toBe('where is order A4721');
+  expect(root.attributes['langfuse.observation.output']).toBe(turns[2]?.attributes['langfuse.observation.output']);
+  expect(root.attributes['langfuse.trace.name']).toBe('conversation.voice');
+  expect(root.attributes['langfuse.trace.tags']).toEqual(['channel:voice', 'prompt:demo-agent-voice@v2']);
+});
+
+test('the root stays retrievable by CallSid and by conversation id after the call ended', () => {
+  const byCallSid = rootContextFor(CALL_SID);
+  expect(byCallSid).toEqual({
+    traceparent: expect.stringMatching(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/),
+    sessionId: CONVERSATION_ID,
+    userId: PROFILE_ID,
+  });
+  expect(rootContextFor(CONVERSATION_ID)).toEqual(byCallSid);
 });
 
 test('the interrupted turn carries tts.interrupted with a duration', () => {

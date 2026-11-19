@@ -19,11 +19,11 @@
  *    `if (webhookChannels.length > 0)`. Get it wrong and inbound SMS 404s, with nothing in the log
  *    but "No channels configured for webhook processing".
  *
- * 3. The voice channel is the mirror image: it is passed to `TACServer` and MUST NOT be registered.
- *    `registerChannel` installs TAC's own forwarders into the single-slot `prompt`, `interrupt`,
- *    `error` and `conversationEnded` setters, so ours would be silently replaced — confirmed against
- *    2.2.0 in spike S4. Passing it as `config.voiceChannel` wires every voice route just the same
- *    (`config.voiceChannel ?? tac.getChannel('voice')`) while leaving all eight slots ours.
+ * 3. The voice channel's handlers MUST be registered AFTER `new TACServer(...)`. `registerChannel`
+ *    installs TAC's own forwarders into the single-slot `prompt`, `interrupt`, `error` and
+ *    `conversationEnded` setters, and in 2.5.0 the `TACServer` constructor calls
+ *    `tac.registerChannel` on the `voiceChannel` it is passed. Registered before it, our `prompt` and
+ *    `interrupt` handlers are silently replaced and every caller turn goes to `onMessageReady`.
  *
  * 4. Our routes must already be on the Fastify instance before `start()`. They are: `buildApp()` ran
  *    long before this file is reached. TAC adds its own routes inside `start()`, so ours are first.
@@ -49,6 +49,7 @@ import { AGENT_PORT } from '../../shared/ports.ts';
 import type { AppConfig, Capabilities } from '../config.ts';
 import { childLogger, tacLogger } from '../logging.ts';
 import { createConversationRegistry, type ConversationRegistry } from '../obs/conversations.ts';
+import { annotateTrace, rootContextFor } from '../obs/spans.ts';
 import { createVoiceTimeline } from '../obs/voice-timeline.ts';
 import { createToolCatalog, SHIPPED_TOOLS } from '../agent/tools/catalog.ts';
 import { resolve } from '../agent/tools/resolve.ts';
@@ -57,6 +58,8 @@ import type { App } from '../http/types.ts';
 import { adaptBuiltInTools } from './builtin-tools.ts';
 import { handoffTool } from './handoff.ts';
 import { createTacMemoryPort } from './memory-compose.ts';
+import type { CrTuning } from './cr-live.ts';
+import { TunableVoiceChannel, wireCrTuning } from './cr-voice.ts';
 import { handleInboundMessage } from './messaging.ts';
 import {
   handleVoiceDisconnect,
@@ -111,6 +114,10 @@ export interface TacDeps {
   readonly config: AppConfig;
   readonly caps: Capabilities;
   readonly turn: TurnDeps;
+  /** Receives every ConversationRelay socket and supplies each inbound call's profile. */
+  readonly tuning: CrTuning;
+  /** Port `start()` binds. Default `AGENT_PORT`. */
+  readonly port?: number;
 }
 
 /**
@@ -122,7 +129,7 @@ export interface TacDeps {
  * what makes the `TACConfig` construction below safe.
  */
 export async function bootTac(deps: TacDeps): Promise<TacHandle> {
-  const { app, config, caps, turn } = deps;
+  const { app, config, caps, turn, tuning } = deps;
   if (config.twilio === null || (!caps.sms && !caps.voice)) {
     // Unreachable through `index.ts`, which gates on capabilities first. Explicit because the
     // alternative is a confusing ZodError from inside the vendor.
@@ -234,7 +241,7 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
   const handoff = handoffTool({
     tac,
     sessions: {
-      // The cast crosses TAC's brand: `ConversationId` is `string & { _brand }` (`dist/index.d.ts:1229`)
+      // The cast crosses TAC's brand: `ConversationId` is `string & { _brand }` (`ConversationId` in `dist/index.d.ts`)
       // and ours arrives off `ToolCtx` as a plain string, with `isConversationId` the only widener TAC
       // exports. Narrowest cast that compiles, on purpose — `as never` satisfies ANY parameter type, so
       // a release that changed this argument to a session object would keep building and pass a string.
@@ -361,6 +368,7 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
     });
   }
 
+  let wireVoiceHandlers: (() => void) | null = null;
   if (caps.voice) {
     // UNREACHABLE, and kept as an assertion for the same reason the `config.twilio` check above is:
     // `caps.voice` is a separate boolean, so TypeScript does not narrow `config.voice` from it, and the
@@ -373,7 +381,23 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
      * it. Voice is the only channel that has one, which is what keeps `conversation.sms` and
      * `conversation.bench` traces byte-for-byte what they were.
      */
-    const timeline = createVoiceTimeline({ maxConversations: VOICE_MAX_CONVERSATIONS, logger: log });
+    const timeline = createVoiceTimeline({
+      maxConversations: VOICE_MAX_CONVERSATIONS,
+      logger: log,
+      onTurnBegin: (conversationId, span, atMs) =>
+        tuning.turnBegan(
+          conversationId,
+          {
+            update: (fields) => {
+              span.update(fields);
+              const rev = (fields.metadata as Record<string, unknown> | undefined)?.['cr.config.revision'];
+              if (rev !== undefined) annotateTrace({ tags: [`cr.config.revision:${String(rev)}`] });
+            },
+          },
+          atMs,
+        ),
+      onTurnEnd: (conversationId, closed) => tuning.turnEnded(conversationId, closed),
+    });
 
     const conversations = createConversationRegistry({
       spanName: 'conversation.voice',
@@ -395,6 +419,7 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
        * no handler of ours observes.
        */
       onClose: (conversationId) => timeline.forget(conversationId),
+      aliasOf: (conversationId) => voiceChannel?.getConversationSession(conversationId as ConversationId)?.callSid,
     });
     registries.push(conversations);
 
@@ -416,7 +441,7 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
      *
      * ⚠ UNMEASURED as of this commit. T13 measured a cold first turn at 2405 ms with no Recall in
      * front of it; the Recall is awaited inside TAC BEFORE our handler is called
-     * (`packages/core/src/channels/voice.ts`), so no span of ours can see it and only a real call can
+     * (`ConversationRelayProvider.handlePromptMessage`), so no span of ours can see it and only a real call can
      * price it. If turn 1 becomes unacceptable, the escape hatch is `'never'` plus recalling inside
      * our own port, where it would at least be visible.
      *
@@ -424,53 +449,63 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
      * resolution — which is what makes it, and not Studio, decide where a handoff is routed. See
      * `buildVoiceTwimlOptions`: one key keeps barge-in audible, the other keeps the transfer reachable.
      */
-    voiceChannel = new VoiceChannel(tac, {
-      memoryMode: 'once',
-      defaultTwimlOptions: buildVoiceTwimlOptions(config.voice.publicDomain),
-    });
-
-    // NOT `tac.registerChannel(voiceChannel)` — see rule 3 in the header. These four slots stay ours
-    // precisely because we never registered; TAC's own forwarders would have taken `prompt` and
-    // `interrupt` on registration, silently.
-    voiceChannel.on('setup', (data) => {
-      handleVoiceSetup(data, { turn: turnDeps });
-    });
-    voiceChannel.on('prompt', async (data) =>
-      handleVoicePrompt(
-        {
-          conversationId: data.conversationId,
-          transcript: data.transcript,
-          abortSignal: data.abortSignal,
-          memory: data.userMemory,
-          // Forwarded from T14 on. TAC spreads `session` gated on its own existence rather than on
-          // `memoryMode`, so this has been available on every turn since T13 and was being dropped —
-          // and `session.profileId` is what Conversation Memory and the memory-retrieval tool need.
-          session: data.session,
-          /**
-           * UNDEFINED TODAY, ON PURPOSE. `PromptMessageSchema` parses `lang` and
-           * `handlePromptMessage` then spreads only `conversationId`, `transcript`, `abortSignal`,
-           * `userMemory` and `session` — so TAC 2.2.0 drops it. `BaseChannel.on` types `data` as
-           * `any`, so this compiles and yields undefined rather than failing; `asr.final` records the
-           * absence. Wired rather than omitted because the alternative is working around the vendor,
-           * and this starts carrying a value the day TAC widens that spread. See `VoicePrompt.lang`.
-           */
-          lang: data.lang,
-        },
-        {
-          turn: turnDeps,
-          conversations,
-          sender: voiceChannel as VoiceChannel,
-          timeline,
-          logger: log,
-        },
-      ),
+    const tunable = new TunableVoiceChannel(
+      tac,
+      {
+        memoryMode: 'once',
+        defaultTwimlOptions: buildVoiceTwimlOptions(config.voice.publicDomain),
+      },
+      tuning,
     );
-    voiceChannel.on('interrupt', (data) => {
-      handleVoiceInterrupt(data, { turn: turnDeps, timeline });
-    });
-    voiceChannel.on('webSocketDisconnected', (data) => {
-      handleVoiceDisconnect(data, { turn: turnDeps, conversations, timeline });
-    });
+    voiceChannel = tunable;
+
+    const channel = tunable;
+    wireVoiceHandlers = () => {
+      channel.on('setup', (data) => {
+        handleVoiceSetup(data, { turn: turnDeps });
+      });
+      channel.on('prompt', async (data) =>
+        handleVoicePrompt(
+          {
+            conversationId: data.conversationId,
+            transcript: data.transcript,
+            abortSignal: data.abortSignal,
+            memory: data.userMemory,
+            // Forwarded from T14 on. TAC spreads `session` gated on its own existence rather than on
+            // `memoryMode`, so this has been available on every turn since T13 and was being dropped —
+            // and `session.profileId` is what Conversation Memory and the memory-retrieval tool need.
+            session: data.session,
+            /**
+             * UNDEFINED TODAY, ON PURPOSE. `PromptMessageSchema` parses `lang` and
+             * `handlePromptMessage` then spreads only `conversationId`, `transcript`, `abortSignal`,
+             * `userMemory` and `session` — so TAC 2.2.0 drops it. `BaseChannel.on` types `data` as
+             * `any`, so this compiles and yields undefined rather than failing; `asr.lang` records the
+             * absence. Wired rather than omitted because the alternative is working around the vendor,
+             * and this starts carrying a value the day TAC widens that spread. See `VoicePrompt.lang`.
+             */
+            lang: data.lang,
+          },
+          {
+            turn: turnDeps,
+            conversations,
+            sender: channel,
+            timeline,
+            logger: log,
+          },
+        ),
+      );
+      channel.on('interrupt', (data) => {
+        handleVoiceInterrupt(data, { turn: turnDeps, timeline });
+      });
+      channel.on('webSocketDisconnected', (data) => {
+        handleVoiceDisconnect(data, { turn: turnDeps, conversations, timeline });
+      });
+      wireCrTuning(channel, tuning, {
+        traceparentFor: (conversationId) => conversations.traceparentFor(conversationId),
+        conversationIdIsCallSid: config.conversationConfigurationId === null,
+        rootContextFor,
+      });
+    };
   }
 
   const server = new TACServer(tac, {
@@ -483,20 +518,21 @@ export async function bootTac(deps: TacDeps): Promise<TacHandle> {
     // `FastifyBaseLogger`, and under `exactOptionalPropertyTypes` the two are not assignable in either
     // direction. Structurally identical at runtime — it is the same object TAC would have built.
     fastifyInstance: app as unknown as FastifyInstance,
-    port: AGENT_PORT,
-    // Passed, never registered. Note `messagingChannels` is deliberately NOT passed alongside it:
+    port: deps.port ?? AGENT_PORT,
+    // Passed, not registered by us — TAC 2.5.0's constructor registers it itself. Note `messagingChannels` is deliberately NOT passed alongside it:
     // that option is a WHOLE-ARRAY override of `[sms, rcs, chat, whatsapp].filter(...)`, not an
     // addition, so supplying it here would drop the registered SMS channel out of the `/webhook`
     // fan-out and inbound texts would stop being answered.
     ...(voiceChannel !== null && { voiceChannel }),
   });
+  wireVoiceHandlers?.();
 
   return {
     start: async () => {
       await server.start();
       log.info(
         {
-          port: AGENT_PORT,
+          port: deps.port ?? AGENT_PORT,
           phoneNumber: config.twilio?.phoneNumber,
           sms: caps.sms,
           voice: caps.voice,

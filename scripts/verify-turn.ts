@@ -265,6 +265,6 @@ try {
 
 console.log(
   failures === 0
-    ? '\nall checks passed — now confirm the waterfall in the Langfuse UI:\n  conversation.bench > turn.bench > {prompt.fetch, memory.recall, prompt.compose, tools.resolve, llm.stream > invoke_agent}'
+    ? '\nall checks passed — now confirm the waterfall in the Langfuse UI:\n  conversation.bench > turn.bench > {prompt.fetch (cache miss only), invoke_agent > step > chat}'
     : `\n${failures} check(s) FAILED — see the FAIL lines above (exit 1)`,
 );

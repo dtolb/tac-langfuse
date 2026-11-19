@@ -336,8 +336,8 @@ test("the handoff frame goes out AFTER the farewell, and is TAC's frame verbatim
     'Of course — putting you through now.',
     events,
   );
-  const rec = recordingSender();
   const { session, calls } = await requestHandoff('conv_handoff_1');
+  const rec = recordingSender({ session: session as unknown as { pendingHandoffData?: unknown } });
 
   // Read before the drain, and asserted before it too: the tool did its two Orchestrator round-trips
   // and THEN parked. That ordering is `tests/handoff.test.ts`'s business, but the third entry is what
@@ -388,6 +388,7 @@ test("the handoff frame goes out AFTER the farewell, and is TAC's frame verbatim
     reason: 'caller asked for a person',
     frameSent: true,
     hadPayload: true,
+    drainedBy: 'tac',
   });
 
   forgetHandoffSnapshot('conv_handoff_1');
@@ -538,11 +539,11 @@ test('interrupting the "putting you through" line cancels the transfer', async (
   );
 
   expect(rec.frames).toEqual([]);
+  expect(stillParked(session)).toBeUndefined();
 
   // And the INTENT is gone, not merely skipped — otherwise the next turn transfers a caller who has
-  // just objected. `session.pendingHandoffData` deliberately survives; see the comment at the
-  // barge-in branch in `server/twilio/voice.ts` for why that asymmetry is correct.
-  const rec2 = recordingSender();
+  // just objected. `rec2` drains a parked frame on an un-aborted stream, as TAC 2.5.0 does.
+  const rec2 = recordingSender({ session: session as unknown as { pendingHandoffData?: unknown } });
   await handleVoicePrompt(
     {
       conversationId: 'conv_handoff_4',
@@ -564,7 +565,7 @@ test('the action URL is pinned, non-empty, and points at a path we own', () => {
   // and every pre-2025 example omits this attribute. `none` here would be a silent regression.
   expect(opts.reportInputDuringAgentSpeech).toBe('any');
   expect(opts.actionUrl).toBe(`https://demo.ngrok.app${VOICE_ACTION_PATH}`);
-  // Verified in the 2.2.0 bundle, `generateTwiml` at `dist/index.js:5901`:
+  // Verified in the 2.2.0 and 2.5.0 bundles, `TwiMLBuilderConversationRelay.generateTwiml`:
   // `response.connect(options.actionUrl ? { action: options.actionUrl } : {})`. An empty string is
   // falsy, so it DELETES the attribute and throws nothing — `TwiMLOptionsSchema.actionUrl` declares
   // `.min(1)` but never runs on `defaultTwimlOptions`, which is a plain interface. Hence the boot-time

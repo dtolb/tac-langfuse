@@ -5,11 +5,12 @@
  * Extracted from `../voice.test.ts` when the telemetry proof needed the same harness against a real
  * OpenTelemetry exporter. Nothing here is new behaviour — the fakes and the reasons for their exact
  * shapes moved verbatim, because each one was written to match something measured in the installed
- * `twilio-agent-connect@2.2.0` bundle rather than to be convenient.
+ * `twilio-agent-connect` bundle (2.2.0, re-read at 2.5.0) rather than to be convenient.
  */
 import { capabilities, loadConfig } from '../../server/config.ts';
 import { createHistory } from '../../server/agent/history.ts';
 import { passthroughMemory } from '../../server/agent/memory.ts';
+import { turnSpans } from '../../server/agent/spans.ts';
 import { createToolCatalog } from '../../server/agent/tools/catalog.ts';
 import { resolve } from '../../server/agent/tools/resolve.ts';
 import type { ToolDef, ToolLogger } from '../../server/agent/tools/registry.ts';
@@ -37,7 +38,7 @@ export const promptPort: PromptPort = {
 
 export interface FakeTurnOptions {
   /**
-   * Milliseconds between deltas. Non-zero by default so `turn.ttfa_ms` and `tts.send` are
+   * Milliseconds between deltas. Non-zero by default so `turn.ttfa_ms` and `tts.send_ms` are
    * measurably longer than zero — a harness that emits the whole answer in one tick makes every
    * duration assertion pass for the wrong reason.
    */
@@ -88,10 +89,7 @@ export const fakeTurnDeps = (
     model,
     composeMemory: passthroughMemory,
     obs: bus,
-    spans: {
-      timeStep: async (_n, fn) => fn(),
-      startStep: () => ({ update: () => {}, end: () => {} }),
-    },
+    spans: turnSpans,
     branding: { persona: 'Ada', companyName: 'Northwind Traders' },
     history: createHistory(),
     logger: silentLogger,
@@ -125,7 +123,8 @@ export interface RecordingSender {
  *
  * Pass `session` and this fake emulates TAC's drain: `sendResponse` sends the text, then — if
  * `session.pendingHandoffData` is set — writes that frame to the socket and `delete`s the field
- * (`dist/index.js:5245-5254` in the installed 2.2.0 bundle, read rather than assumed). Without this the
+ * (`ConversationRelayProvider.flushPendingHandoff` in the installed 2.5.0 bundle, which
+ * `sendStreamingResponse` also calls when its signal is not aborted). Without this the
  * fake diverged from the vendor on the exact behaviour this feature is built around, which is why a real
  * double-frame bug was invisible to a suite of eleven voice tests: the fallback `sendResponse` on a
  * zero-token turn sent the parked frame as a side effect, and the drain then sent a second bare
@@ -170,14 +169,18 @@ export const recordingSender = (opts: RecordingSenderOptions = {}): RecordingSen
           opts.onToken?.(chunk, index);
           index += 1;
         }
+        const session = opts.session;
+        if (options?.signal?.aborted !== true && session?.pendingHandoffData !== undefined && socketOpen) {
+          write(JSON.stringify(session.pendingHandoffData));
+          delete session.pendingHandoffData;
+        }
         return all;
       },
       async sendResponse(_id, message) {
         spoken.push(message);
         order.push(`say:${message}`);
         // TAC's drain, in the order the bundle does it: the text frame first, then the parked handoff
-        // frame, then the field is deleted. `sendStreamingResponse` above has NO such drain, which is
-        // the asymmetry `server/twilio/voice.ts` exists to cover.
+        // frame, then the field is deleted.
         const session = opts.session;
         if (session !== undefined && session.pendingHandoffData !== undefined) {
           if (socketOpen) write(JSON.stringify(session.pendingHandoffData));
