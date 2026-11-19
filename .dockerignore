@@ -36,8 +36,7 @@ tests
 vitest.config.ts
 .playwright-mcp
 .superpowers
-langfuse-data
-docker-compose.langfuse.yml
+data
 *.log
 .DS_Store
 
