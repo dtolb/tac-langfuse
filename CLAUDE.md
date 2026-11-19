@@ -41,8 +41,8 @@ guard is not a false alarm — it is passing silently forever, so do not "simpli
 
 ```bash
 pnpm dev:all       # agent :8910 + web :3000
-pnpm stack:up      # containers: preflight, then compose up -d --build
-pnpm stack:down
+pnpm stack:up      # = twl deploy: push HEAD to the Pi, which builds and serves tac-langfuse.twl.dtolb.com
+pnpm stack:down    # stop both containers on the Pi; `twl redeploy` brings them back
 pnpm status        # host processes, containers, capabilities, URLs. Read-only
 pnpm typecheck && pnpm test
 ```
@@ -61,18 +61,16 @@ pnpm typecheck && pnpm test
 hot-reload. Check `ps -p <pid> -o lstart=` against the commit time first — this has burned a whole
 debugging session. Langfuse *prompt* edits do land live (~20s TTL); code does not.
 
-**Containers: after any `.env` change use `docker compose up -d --force-recreate`, never `restart`** —
-`restart` re-runs the container with its original env block, so the change silently does not take.
+**The deployed stack runs on the twl Raspberry Pi (since 2026-11-19), not this machine.** `.env` does not deploy: the Pi's config is `twl env set KEY=VAL …` (applies and redeploys; `twl env show` lists keys). `docker-compose.yml` is written for twl's compose mode — twl's override routes only `web`, so the agent carries its own `twl` network and Traefik labels and takes bare env keys from twl's `--env-file`. `twl deploy` pushes HEAD from the current branch and can exit 0 on a failed build, so read the push output. Logs: `ssh claw@192.168.0.4 docker logs tac-langfuse-agent` (`twl logs` follows forever).
 
-**And after any CODE change, containers need `pnpm stack:up` (i.e. `up -d --build`) — `Dockerfile.agent`
-COPYs the source, it does not mount it.** Measured 2026-09-15: a real call was placed against an image
+**And after any CODE change, the Pi needs `twl deploy` — `Dockerfile.agent` COPYs the source, it does not mount it.** Measured 2026-09-15: a real call was placed against an image
 built 2.5 h earlier, and the trace came back missing every new span. That reads as "the instrumentation
 does not work" rather than "the code was never deployed". Check the image against the commit — the
 container variant of the restart rule above.
 
 **The stack runs `restart: "no"` on purpose — it must NOT come back after a reboot,** because it
 publishes unauthenticated endpoints on a stable public host. Langfuse is `always` and does return, so
-tooling survives a restart while the demo surface needs an explicit `pnpm stack:up`. Do not "fix" this
+tooling survives a restart while the demo surface needs an explicit `twl redeploy` after a Pi reboot. Do not "fix" this
 to `unless-stopped`. `on-failure` is also wrong: it restarts a non-zero exit, and on a VM stop the agent
 exits 0 while Next exits 143, so it resurrects half the stack.
 

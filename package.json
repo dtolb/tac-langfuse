@@ -16,8 +16,8 @@
     "seed:knowledge": "node --env-file-if-exists=.env scripts/seed-knowledge.ts",
     "seed:studio": "node --env-file-if-exists=.env scripts/seed-studio-flow.ts",
     "preflight": "node --env-file-if-exists=.env scripts/preflight.mjs",
-    "stack:up": "if [ -z \"$CORP_CA_PATH\" ] && [ -e \"$HOME/.config/zscaler-root.crt\" ]; then export CORP_CA_PATH=\"$HOME/.config/zscaler-root.crt\"; fi; pnpm preflight && BUILDX_BAKE_ENTITLEMENTS_FS=0 docker compose up -d --build",
-    "stack:down": "docker compose down"
+    "stack:up": "twl deploy",
+    "stack:down": "ssh claw@192.168.0.4 docker stop -t 60 tac-langfuse-agent tac-langfuse-web"
   },
   "license": "UNLICENSED",
   "type": "module",

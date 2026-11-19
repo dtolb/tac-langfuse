@@ -2311,3 +2311,14 @@ One trace per voice call is kept (`conversation.voice` root, tiled `caller.turn`
 - Comments explain *why* and cite what was measured. Read `server/obs/spans.ts` or
   `server/agent/run-turn.ts` before writing one.
 - See `web/README.md` for the Strix and Next rules — several are silent-failure traps.
+
+## Hosted on the twl Pi (2026-11-19)
+
+The stack moved from the Traefik dev box (`northwind.twilio.dtolb.com`, containers removed) to the twl Raspberry Pi at `https://tac-langfuse.twl.dtolb.com`, app `tac-langfuse`, deployed from branch `cr-tuning-twl`.
+
+- `docker-compose.yml` was rewritten for twl's compose mode: no `name:` (twl passes `-p tac-langfuse`); the agent joins the external `twl` network with its own Traefik router (priority 100, same PathPrefix list) and lists every config key bare, resolved from twl's `--env-file`; `web` keeps its own router (priority 1) and twl's override adds `traefik.enable`, `twl.host`, the network and `env_file`. The Pi Traefik is `exposedByDefault: false`, `network: twl`, default rule `Host({twl.host}.twl.dtolb.com)`. Measured: a bare `environment: - FOO` key resolves from `--env-file`.
+- `data/` (CR profile and presets) is the `tuning_data` named volume, and excluded from the build context.
+- `restart: "no"` kept, so a Pi reboot leaves the demo down until `twl redeploy`.
+- Verified: `/health` reports every capability true and `voicePublicDomain: tac-langfuse.twl.dtolb.com`; `/api/tuning`, `/` and `/tuning` return 200; `twil webhook invoke --type voice` on `/twiml` returned 200 with `wss://tac-langfuse.twl.dtolb.com/ws`. `scripts/repoint-public-host.ts` moved all three host places; the CO backup is under `.superpowers/t14/`.
+- `scripts/preflight.mjs` and `scripts/status.mjs` still describe the dev-box stack; `pnpm stack:up`/`stack:down` now drive the Pi.
+

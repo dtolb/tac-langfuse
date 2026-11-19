@@ -102,21 +102,20 @@ paths and is byte-identical in both modes.
 > `scripts/dev.mjs`, the supervisor. And use `lsof -ti :8910 -sTCP:LISTEN` — without `-sTCP:LISTEN`
 > the list includes any tunnel you have open and you take that down too.
 
-### Containers
+### Containers, on the twl Pi
+
+The containerised stack is hosted on the twl Raspberry Pi at `https://tac-langfuse.twl.dtolb.com`. The Pi builds the images itself (linux/arm64).
 
 ```bash
-pnpm stack:up     # preflight, then docker compose up -d --build
-pnpm stack:down
+twl env set KEY=VAL ...   # the Pi's config; .env does not deploy. Applies and redeploys
+pnpm stack:up             # = twl deploy: pushes HEAD from the current branch
+pnpm stack:down           # stops both containers; `twl redeploy` brings them back
 ```
 
 > [!WARNING]
-> **Not `pnpm up`.** `up` is a built-in alias for `pnpm update`, and a package.json script cannot shadow
-> a built-in — it would rewrite the pinned lockfile and start nothing.
+> `twl deploy` can exit 0 when the build failed, leaving the previous version serving. Read the push output.
 
-`pnpm preflight` runs first and refuses to bring the stack up on a misconfiguration that Docker, the
-proxy and the app would all otherwise accept in silence: a default or malformed `APP_NAME`, a missing
-external container network, an unresolvable CA path, or an `APP_NAME` exported in your shell that
-disagrees with `.env`.
+`docker-compose.yml` targets twl's compose mode. twl's generated override adds the `twl` network, `traefik.enable`, `twl.host` and `env_file` to the `web` service only, so the `agent` service declares its own network and Traefik labels and lists its config as bare keys that resolve from twl's `--env-file`. The saved tuning profile and presets live on the `tuning_data` volume.
 
 ## Containers
 
@@ -128,12 +127,12 @@ Two images, both built from the **repo root** because `web/` imports `../shared/
 | `Dockerfile.web` | Next in `standalone` mode |
 
 Both **COPY** the source; they do not mount it. Reverse-proxy labels come from `docker-compose.yml`,
-which expects an existing external network and splits one public host by path.
+which joins the Pi's external `twl` network and splits one public host by path.
 
 > [!IMPORTANT]
 > **The stack does not come back by itself after a reboot, by design.** It runs `restart: "no"`, so
 > starting the public surface is always an explicit act — it publishes unauthenticated endpoints on a
-> stable public host. Langfuse is hosted, so tracing and prompts survive a restart
+> stable public host; after a Pi reboot, `twl redeploy` brings it back. Langfuse is hosted, so tracing and prompts survive a restart
 > while the demo does not sit exposed unattended.
 >
 > Do not "fix" this to `unless-stopped`. `on-failure` is also wrong: on a VM stop the agent exits 0
@@ -154,7 +153,7 @@ that looks like a Twilio problem. The same test pins the compose filename and th
 Inbound calls and texts need a public URL. The same value builds the media WebSocket (`wss://<host>/ws`)
 and the call-action callback, and **three places must agree**:
 
-1. `TWILIO_VOICE_PUBLIC_DOMAIN` in `.env`
+1. `TWILIO_VOICE_PUBLIC_DOMAIN` in `.env` (and via `twl env set` for the Pi)
 2. The phone number's `voice_url`
 3. The Conversation Orchestrator configuration's `statusCallbacks[0].url`
 
