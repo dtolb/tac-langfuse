@@ -9,10 +9,10 @@ versioned tool selection, and every turn traced.**
 [![TypeScript](https://img.shields.io/badge/TypeScript-no%20build%20step-3178C6?logo=typescript&logoColor=white)](https://nodejs.org/api/typescript.html)
 [![Twilio](https://img.shields.io/badge/Twilio-ConversationRelay%20%C2%B7%20Orchestrator-F22F46?logo=twilio&logoColor=white)](https://www.twilio.com/docs)
 [![Langfuse](https://img.shields.io/badge/Langfuse-cloud-0A0A0A)](https://langfuse.com)
-[![Tests](https://img.shields.io/badge/tests-350%20passing-F22F46)](ARCHITECTURE.md#proof-not-claims)
+[![Tests](https://img.shields.io/badge/tests-359%20passing-F22F46)](ARCHITECTURE.md#proof-not-claims)
 
 [What it shows](#what-it-shows) · [Capabilities](#capabilities) · [Tools](#tools) ·
-[How it fits together](#how-it-fits-together) · [Architecture](ARCHITECTURE.md) ·
+[Tuning](#tuning-conversationrelay-live) · [How it fits together](#how-it-fits-together) · [Architecture](ARCHITECTURE.md) ·
 [Deploy](DEPLOY.md) · [Deep record](docs/HANDOFF.md)
 
 </div>
@@ -23,8 +23,7 @@ A clonable starting point for customer-facing Twilio demos. The agent answers a 
 text, remembers the caller between conversations, searches a knowledge base, and hands the call to a
 human when asked — all from one channel-agnostic core.
 
-The interesting part is not that it works. It is **what is wired up around it**: the three things
-mature implementations have and proofs-of-concept never do.
+The interesting part is not that it works. It is **what is wired up around it**: the things mature implementations have and proofs-of-concept never do.
 
 > [!IMPORTANT]
 > **This is a demo scaffold, not a production service.** It is built for the "art of the possible"
@@ -36,8 +35,9 @@ mature implementations have and proofs-of-concept never do.
 
 **1. Telemetry you can argue with**
 
-- Every turn is one Langfuse trace: prompt fetch, tool selection, model call, each tool, first-token latency.
-- Voice traces are **tiled** — `turn.voice` and `caller.turn` alternate with 0 ms of gap, so the root span is fully accounted for.
+- Every conversation is one Langfuse **session**, keyed by the conversation id, with the caller's memory profile as the user — never a phone number.
+- A voice call is one trace. It is **tiled** — `turn.voice` and `caller.turn` alternate with 0 ms of gap, so the root span is fully accounted for. A no-tool turn is four observations; the rest of what used to be spans is metadata on the turn.
+- About two minutes after hangup, **Twilio's side of the call is backfilled** from Voice Insights: STT, TTS, agent and caller speech, interrupts, at Twilio's own timestamps.
 - "Is it us or the model?" is one attribute, not an investigation.
 
 **2. Prompts that ship without a deploy**
@@ -52,7 +52,13 @@ mature implementations have and proofs-of-concept never do.
 - A three-way resolver reconciles the prompt's list against a compiled-in catalog and the live credentials.
 - Descriptions are load-bearing: one long one is the difference between the knowledge base being used and being ignored.
 
-**4. A core that provably does not know about Twilio**
+**4. ConversationRelay settings you can change mid-call**
+
+- `/tuning` changes STT, TTS and turn-taking settings and applies them to **every live call** on its next turn, and to the next call's TwiML.
+- Each Apply is a `cr.config.*` event on the call's trace, and every turn carries the config revision it ran under, so Langfuse can filter turns by profile.
+- A per-call timeline merges this agent's turns with Voice Insights, so a change can be judged by its effect on wait time. See [Tuning](#tuning-conversationrelay-live).
+
+**5. A core that provably does not know about Twilio**
 
 - `/bench` streams a full agent turn with **no Twilio credentials at all**.
 - The Twilio SDK and `twilio-agent-connect` may only be imported from `server/twilio/` — enforced by a test.
@@ -63,16 +69,16 @@ mature implementations have and proofs-of-concept never do.
 | Capability | What it does |
 |---|---|
 | **Voice** | Inbound calls over ConversationRelay — streaming STT/TTS, barge-in on real audio, and the agent can hang up by itself |
+| **Live tuning** | `/tuning` pushes ConversationRelay settings to live calls and the next call, with presets, compare, and a per-call timeline |
 | **SMS** | Inbound texts through Conversation Orchestrator, answered by the same agent code |
 | **Memory** | Conversation Memory across *separate* conversations — a fact from last week comes back with zero tool calls |
 | **Knowledge** | `search_knowledge` against a real Twilio Knowledge Base, on both channels |
 | **Human handoff** | The caller asks for a person; the call transfers to a browser softphone with a screen pop carrying the reason and the transcript so far |
-| **Observability** | Every turn is a Langfuse trace, with a live SSE feed of the same events at `GET /events/stream` |
+| **Observability** | One Langfuse session per conversation, Twilio's Voice Insights backfilled onto each call's trace, and a live SSE feed of the same events at `GET /events/stream` |
 | **Versioned prompts** | Prompt + model + tool list in Langfuse, with compiled-in fallback |
 | **Twilio-free bench** | A full streaming turn in a browser with no credentials |
 
-Each is independent — see the [capability matrix](ARCHITECTURE.md#capabilities-and-what-each-one-costs)
-for what its absence costs.
+Each is independent — see the [capability matrix](ARCHITECTURE.md#capabilities-and-what-each-one-costs) for what its absence costs. The home page reads `/health` and marks each entry point live or not configured.
 
 ## Tools
 
@@ -93,6 +99,17 @@ Which tools a given turn actually offers is the **prompt's** call, not the catal
 `demo-agent-voice` names five and deliberately omits `retrieve_profile_memory`, `demo-agent-text` names
 four. Both lists are editable in Langfuse without touching code.
 
+## Tuning ConversationRelay live
+
+`/tuning` is a settings rail on the left and a call workspace on the right.
+
+- **Settings** are grouped as turn-taking, speech-to-text and text-to-speech, each under a subhead saying *when* a change lands: now, at the end of the caller's turn, on the next reply, or only on the next call. Dependencies disable a control and say why — for example, the end-of-turn threshold needs Deepgram flux.
+- **Apply** sends one `config` frame to every live call and saves the full profile as the next call's TwiML. The bar then shows each call's took-effect time, read from ConversationRelay's `configUpdated`. "Show wire" prints the exact frame and TwiML.
+- **Presets** stage a partial overlay — only the keys they define. **Compare** puts two call-and-revision segments side by side.
+- **Timeline** shows per-turn wait as `STT · App · TTS`, with each Apply as a divider before the turn it landed in, plus the median change against the previous revision.
+
+Twilio's dynamic-config reference does not list every setting the catalog exposes, and an unknown field rejects the whole frame. `docs/HANDOFF.md` → "ConversationRelay tuning" lists what is still to be measured on a real call.
+
 ## How it fits together
 
 ```mermaid
@@ -110,6 +127,7 @@ flowchart LR
   core["agent core — one turn<br/>prompt → model → tools → stream"]:::core
   bench["/bench<br/>no credentials"]:::app
   soft["/softphone<br/>screen pop + transcript"]:::app
+  tune["/tuning<br/>live CR settings"]:::app
 
   model["OpenAI"]:::ext
   lf["Langfuse<br/>prompt + tools in · trace out"]:::ext
@@ -118,6 +136,8 @@ flowchart LR
   text --> co --> adapters
   adapters --> core
   bench --> core
+  tune --> adapters
+  adapters -. "config frame" .-> cr
   core --> model
   core --> tsvc
   core <--> lf
@@ -142,7 +162,7 @@ layout, the five boundaries enforced by tests, and what a trace actually contain
 Infrastructure it needs, in full:
 
 - **Node 24+** and **pnpm 11**. Node runs the TypeScript directly — there is no build step for the agent.
-- An **OpenAI API key**. That alone gets you a working agent and the browser bench.
+- An **OpenAI API key**. That alone gets you a working agent and the browser bench. Zero Data Retention orgs work: the agent sends `store: false` and carries reasoning as encrypted content.
 - A **Langfuse Cloud** project, for versioned prompts and traces. Without one the agent runs on compiled-in prompts and records nothing.
 - **Docker**, only to run the two services as containers.
 - A **public HTTPS host**, only for inbound calls and texts. A tunnel, a reverse proxy, or a hosted URL —
