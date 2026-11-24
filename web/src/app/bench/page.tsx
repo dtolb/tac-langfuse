@@ -10,6 +10,7 @@
  */
 import { Typography } from '@gtmi/strix-react/atoms/typography';
 import { Separator } from '@gtmi/strix-react/atoms/separator';
+import { CallNumber } from '../call-number.tsx';
 import { BenchChat } from './bench-chat.tsx';
 
 export default function BenchPage() {
@@ -25,6 +26,7 @@ export default function BenchPage() {
         The same agent voice and SMS will use, driven over HTTP. If this answers, the agent core works
         independently of Twilio.
       </Typography>
+      <CallNumber hint="the same agent by phone" />
 
       <Separator />
 

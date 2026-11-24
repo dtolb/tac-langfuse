@@ -10,6 +10,7 @@
  */
 import { Typography } from '@gtmi/strix-react/atoms/typography';
 import { Separator } from '@gtmi/strix-react/atoms/separator';
+import { CallNumber } from '../call-number.tsx';
 import { SoftphoneClient } from './softphone-client.tsx';
 
 export default function SoftphonePage() {
@@ -24,6 +25,7 @@ export default function SoftphonePage() {
         Register, then wait. When the agent transfers a caller, this rings and shows why they were
         transferred plus what was already said.
       </Typography>
+      <CallNumber hint="then ask for a person" />
 
       <Separator />
 

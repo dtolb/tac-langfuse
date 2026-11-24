@@ -12,6 +12,7 @@ import { Badge } from '@gtmi/strix-react/atoms/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@gtmi/strix-react/atoms/card';
 import { InfoRow } from '@gtmi/strix-react/atoms/info-row';
 import { Typography } from '@gtmi/strix-react/atoms/typography';
+import { formatPhone } from './call-number.tsx';
 
 /** The subset of the agent's `/health` body this page reads (`server/http/app.ts`). */
 interface Health {
@@ -23,12 +24,6 @@ interface Health {
 }
 
 type Load = { state: 'loading' } | { state: 'ok'; health: Health } | { state: 'error' };
-
-/** Formats a NANP E.164 number as `+1 555-123-4567`; any other number is returned unchanged. */
-const formatPhone = (e164: string): string => {
-  const m = e164.match(/^\+1(\d{3})(\d{3})(\d{4})$/);
-  return m ? `+1 ${m[1]}-${m[2]}-${m[3]}` : e164;
-};
 
 /** A green or grey badge for one capability, or nothing while `/health` is still loading. */
 function Availability({ on }: { readonly on: boolean | undefined }) {
